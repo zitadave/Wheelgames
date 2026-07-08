@@ -1,65 +1,155 @@
-class VoiceCallerEngine {
-    audioContext: AudioContext | null;
+// Robust audio management layer built specifically for Telegram WebApps / mobile WebViews.
 
-    constructor() {
-        this.audioContext = null;
-        this.initAudioContext();
+export class VoiceCallerEngine {
+  private audioCtx: AudioContext | null = null;
+  private audioBuffers: Map<string, AudioBuffer> = new Map();
+  private baseDir: string;
+  private isInitialized: boolean = false;
+
+  constructor() {
+    // Use an environment-aware or relative base path to prevent asset breaks inside WebViews
+    const baseUrl = window.location.origin + window.location.pathname;
+    this.baseDir = baseUrl.endsWith('/') ? 'audio/voices' : '/audio/voices';
+  }
+
+  public initPipeline(): void {
+    // No-op for backward compatibility
+  }
+
+  /**
+   * Safe initialization method to unlock the AudioContext on first user interaction.
+   * This guarantees that decodeAudioData will never read properties of null.
+   */
+  public init(): void {
+    if (this.isInitialized) return;
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        this.audioCtx = new AudioContextClass();
+      }
+      this.isInitialized = true;
+      console.log("🔊 VoiceCallerEngine context initialized successfully.");
+    } catch (e) {
+      console.error("❌ Failed to initialize Web Audio API Context:", e);
     }
+  }
 
-    initAudioContext() {
-        try {
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-            if (AudioContextClass) this.audioContext = new AudioContextClass();
-        } catch (e) { console.error(e); }
-    }
+  /**
+   * Helper to resolve the completely safe path across all deployment environments.
+   */
+  private getAudioUrl(fileName: string, ext: 'mp3' | 'm4a'): string {
+    // Strip leading slashes to prevent deployment routing breakdowns
+    const sanitizedBase = this.baseDir.replace(/\/$/, "");
+    return `${sanitizedBase}/${fileName}.${ext}`;
+  }
 
-    initPipeline() {
-        // No-op for backward compatibility
-    }
+  /**
+   * Gracefully preload voice assets without halting runtime execution on error.
+   */
+  public async preloadAllVoices(ballNumbers: number[]): Promise<void> {
+    this.init(); // Auto-fallback initialization guarantee
+    if (!this.audioCtx) return;
 
-    getResolvedPath(relativeAudioPath: string) {
-        const url = new URL(window.location.href);
-        let pathname = url.pathname;
-        if (!pathname.endsWith('/')) {
-            const segments = pathname.split('/');
-            segments.pop();
-            pathname = segments.join('/') + '/';
+    const fetchPromises = ballNumbers.map(async (num) => {
+      const fileName = num.toString();
+      if (this.audioBuffers.has(fileName)) return;
+
+      try {
+        const url = this.getAudioUrl(fileName, 'mp3');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP Error Status: ${response.status}`);
+        
+        const arrayBuffer = await response.arrayBuffer();
+        
+        // Context state recovery checks
+        if (this.audioCtx?.state === 'suspended') {
+          await this.audioCtx.resume();
         }
-        const cleanPath = relativeAudioPath.startsWith('/') ? relativeAudioPath.slice(1) : relativeAudioPath;
-        return `${url.origin}${pathname}${cleanPath}`;
+
+        this.audioCtx?.decodeAudioData(
+          arrayBuffer,
+          (buffer) => this.audioBuffers.set(fileName, buffer),
+          (err) => console.warn(`⚠️ Native Web Audio decode failed for asset [${fileName}]:`, err)
+        );
+      } catch (error) {
+        console.warn(`⚠️ Preloader skipped buffering for asset [${fileName}]. Fallback layer will handle dynamic playback.`);
+      }
+    });
+
+    await Promise.allSettled(fetchPromises);
+  }
+
+  /**
+   * Executes voice clip playback utilizing a dual-layer approach.
+   * Layer 1: High-performance Web Audio API buffer scheduling.
+   * Layer 2: Graceful HTML5 Native Element stream fallback.
+   */
+  public async playBallNumber(num: number): Promise<void> {
+    this.init(); // Double-ensure instantiation stability
+    const fileName = num.toString();
+
+    // Auto-resume if client context lifecycle became suspended
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume();
+      } catch (e) {
+        console.warn("Could not resume audio context, defaulting forward.", e);
+      }
     }
 
-    async playBallNumber(number: number) {
-        const primaryPath = this.getResolvedPath(`audio/voices/${number}.mp3`);
-        try {
-            const response = await fetch(primaryPath);
-            if (!response.ok) throw new Error(`Status: ${response.status}`);
-            const contentType = response.headers.get('content-type') || '';
-            if (contentType.includes('text/html')) {
-                console.error(`❌ DEPLOYMENT ERROR: The server at "${primaryPath}" returned an HTML webpage layout instead of a binary MP3 file!`);
-                return;
-            }
-            const arrayBuffer = await response.arrayBuffer();
-            const sampleBytes = new Uint8Array(arrayBuffer.slice(0, 5));
-            const textSignature = String.fromCharCode(...sampleBytes);
-            if (textSignature.includes("<!DOC") || textSignature.includes("<html")) {
-                console.error(`❌ VALIDATION ERROR: Downloaded file starts with HTML layout syntax.`);
-                return;
-            }
-            if (this.audioContext) {
-                if (this.audioContext.state === 'suspended') await this.audioContext.resume().catch(() => {});
-                const audioBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
-                    this.audioContext!.decodeAudioData(arrayBuffer, (buffer) => resolve(buffer), (err) => reject(err));
-                });
-                const source = this.audioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(this.audioContext.destination);
-                source.start(0);
-            } else {
-                const audio = new Audio(primaryPath);
-                await audio.play();
-            }
-        } catch (error) { console.error(error); }
+    // Try Layer 1: Buffered Audio Execution
+    if (this.audioCtx && this.audioBuffers.has(fileName)) {
+      try {
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = this.audioBuffers.get(fileName) || null;
+        source.connect(this.audioCtx.destination);
+        source.start(0);
+        return;
+      } catch (webAudioError) {
+        console.error("❌ Layer 1 buffer runtime failure. Redirecting execution to Layer 2 fallback.", webAudioError);
+      }
     }
+
+    // Try Layer 2: Native HTML5 Fallback Engine 
+    await this.playViaAudioElementFallback(fileName);
+  }
+
+  /**
+   * Native HTML5 Audio streams with multi-format extension traversal loops.
+   */
+  private playViaAudioElementFallback(fileName: string): Promise<void> {
+    return new Promise((resolve) => {
+      const extensions: ('mp3' | 'm4a')[] = ['mp3', 'm4a'];
+      let currentExtensionIndex = 0;
+
+      const attemptPlayback = () => {
+        if (currentExtensionIndex >= extensions.length) {
+          console.error(`❌ Critical Audio failure: All resource source pathways exhausted for asset [${fileName}].`);
+          resolve();
+          return;
+        }
+
+        const currentExt = extensions[currentExtensionIndex];
+        const targetUrl = this.getAudioUrl(fileName, currentExt);
+        const audioNode = new Audio(targetUrl);
+
+        audioNode.play()
+          .then(() => {
+            resolve();
+          })
+          .catch((playbackError) => {
+            console.warn(`⚠️ Fallback source format [.${currentExt}] rejected for asset [${fileName}]. Trying next extension option.`);
+            currentExtensionIndex++;
+            attemptPlayback(); // Recursive extension lookup loop
+          });
+      };
+
+      attemptPlayback();
+    });
+  }
 }
-(window as any).voiceEngine = new VoiceCallerEngine();
+
+// Global engine instanced context export for backward compatibility
+export const globalVoiceEngine = new VoiceCallerEngine();
+(window as any).voiceEngine = globalVoiceEngine;
