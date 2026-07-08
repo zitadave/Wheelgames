@@ -1408,27 +1408,59 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const { data: bets } = await supabase.from('bets').select('*').eq('user_id', targetId);
       const { data: logs } = await supabase.from('game_logs').select('*').eq('user_id', targetId);
 
-      // Even/Odd game
+      // Even/Odd game (ሞላ/ጎደለ)
       const evenOddBets = bets || [];
       const totalEvenOddWagered = evenOddBets.reduce((s, b) => s + Number(b.amount), 0) || 0;
       const evenOddWins = logs?.filter(l => l.game_type?.startsWith('Even/Odd')) || [];
       const totalEvenOddWins = evenOddWins.reduce((s, l) => s + Number(l.win_amount), 0) || 0;
 
-      // Wheel of Chance
-      const wheelPlays = logs?.filter(l => l.game_type?.toLowerCase().includes('wheel') || l.game_type?.toLowerCase().includes('chance')) || [];
-      const totalWheelWins = wheelPlays.reduce((s, l) => s + Number(l.win_amount), 0) || 0;
+      // Bingo (ቢንጎ)
+      const bingo10Txs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('bingo-10')) || [];
+      const bingo10Bets = bingo10Txs.filter(t => t.type === 'bet');
+      const bingo10Wagered = Math.abs(bingo10Txs.reduce((s, t) => s + Number(t.amount), 0));
+      const bingo10Wins = txs?.filter(t => t.type === 'win' && t.description?.includes('Bingo Win (bingo-10)')) || [];
+      const bingo10Won = bingo10Wins.reduce((s, t) => s + Number(t.amount), 0);
 
-      // Jackpot Arena
-      const jackpotPlays = logs?.filter(l => l.game_type?.toLowerCase().includes('jackpot')) || [];
-      const totalJackpotWins = jackpotPlays.reduce((s, l) => s + Number(l.win_amount), 0) || 0;
+      const bingo20Txs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('bingo-20')) || [];
+      const bingo20Bets = bingo20Txs.filter(t => t.type === 'bet');
+      const bingo20Wagered = Math.abs(bingo20Txs.reduce((s, t) => s + Number(t.amount), 0));
+      const bingo20Wins = txs?.filter(t => t.type === 'win' && t.description?.includes('Bingo Win (bingo-20)')) || [];
+      const bingo20Won = bingo20Wins.reduce((s, t) => s + Number(t.amount), 0);
 
-      const totalRoundsPlayed = evenOddBets.length + wheelPlays.length + jackpotPlays.length;
+      // Fast Game (ፈጣን - 1-10, 1-20)
+      const fast10Txs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('in 1-10')) || [];
+      const fast10Bets = fast10Txs.filter(t => t.type === 'bet');
+      const fast10Wagered = Math.abs(fast10Txs.reduce((s, t) => s + Number(t.amount), 0));
+      const fast10Wins = txs?.filter(t => t.type === 'win' && t.description?.includes('in 1-10')) || [];
+      const fast10Won = fast10Wins.reduce((s, t) => s + Number(t.amount), 0);
+
+      const fast20Txs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('in 1-20')) || [];
+      const fast20Bets = fast20Txs.filter(t => t.type === 'bet');
+      const fast20Wagered = Math.abs(fast20Txs.reduce((s, t) => s + Number(t.amount), 0));
+      const fast20Wins = txs?.filter(t => t.type === 'win' && t.description?.includes('in 1-20')) || [];
+      const fast20Won = fast20Wins.reduce((s, t) => s + Number(t.amount), 0);
+
+      // Jackpot (ዕድል - mini, grand)
+      const jackpotMiniTxs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('in mini')) || [];
+      const jackpotMiniBets = jackpotMiniTxs.filter(t => t.type === 'bet');
+      const jackpotMiniWagered = Math.abs(jackpotMiniTxs.reduce((s, t) => s + Number(t.amount), 0));
+      const jackpotMiniWins = txs?.filter(t => t.type === 'win' && t.description?.includes('in mini')) || [];
+      const jackpotMiniWon = jackpotMiniWins.reduce((s, t) => s + Number(t.amount), 0);
+
+      const jackpotGrandTxs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('in grand')) || [];
+      const jackpotGrandBets = jackpotGrandTxs.filter(t => t.type === 'bet');
+      const jackpotGrandWagered = Math.abs(jackpotGrandTxs.reduce((s, t) => s + Number(t.amount), 0));
+      const jackpotGrandWins = txs?.filter(t => t.type === 'win' && t.description?.includes('in grand')) || [];
+      const jackpotGrandWon = jackpotGrandWins.reduce((s, t) => s + Number(t.amount), 0);
+
+      const totalRoundsPlayed = evenOddBets.length + bingo10Bets.length + bingo20Bets.length + fast10Bets.length + fast20Bets.length + jackpotMiniBets.length + jackpotGrandBets.length;
       const directReferralsCount = (await supabase.from('users').select('id', { count: 'exact', head: true }).eq('referrer_id', targetId)).count || 0;
 
-      // Player Lifetime GGR (Wagered minus payouts across all games)
-      // Note: Only Even/Odd records bets in the bets table directly. Let's provide clear, split details.
-      const playerProfit = (totalEvenOddWins + totalWheelWins + totalJackpotWins) - totalEvenOddWagered;
-      const netHouseGGR = totalEvenOddWagered - (totalEvenOddWins + totalWheelWins + totalJackpotWins);
+      const totalWon = totalEvenOddWins + bingo10Won + bingo20Won + fast10Won + fast20Won + jackpotMiniWon + jackpotGrandWon;
+      const totalWagered = totalEvenOddWagered + bingo10Wagered + bingo20Wagered + fast10Wagered + fast20Wagered + jackpotMiniWagered + jackpotGrandWagered;
+      
+      const playerProfit = totalWon - totalWagered;
+      const netHouseGGR = totalWagered - totalWon;
 
       let referrerStr = 'None';
       if (user.referrer_id) {
@@ -1459,10 +1491,17 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
                    `🎁 <b>Total Rewards/Comms:</b> <code>${totalRewards.toLocaleString()} ETB</code>\n\n` +
                    `🎮 <b>Gaming Statistics:</b>\n` +
                    `🔄 <b>Total Rounds:</b> ${totalRoundsPlayed} rounds played\n` +
-                   `🎲 <b>Even/Odd Wagered:</b> <code>${totalEvenOddWagered.toLocaleString()} ETB</code> (${evenOddBets.length} plays)\n` +
-                   `🏆 <b>Even/Odd Wins:</b> <code>${totalEvenOddWins.toLocaleString()} ETB</code>\n` +
-                   `🎡 <b>Wheel Spins:</b> ${wheelPlays.length} spins (Wins: <code>${totalWheelWins.toLocaleString()} ETB</code>)\n` +
-                   `🎟️ <b>Jackpot Plays:</b> ${jackpotPlays.length} entries (Wins: <code>${totalJackpotWins.toLocaleString()} ETB</code>)\n` +
+                   `🎲 <b>ሞላ/ጎደለ (Even/Odd):</b> <code>${totalEvenOddWagered.toLocaleString()} ETB</code> (${evenOddBets.length} plays)\n` +
+                   `  └ Wins: <code>${totalEvenOddWins.toLocaleString()} ETB</code>\n` +
+                   `🎡 <b>ፈጣን (Fast Games):</b>\n` +
+                   `  └ 1-10: <code>${fast10Wagered.toLocaleString()} ETB</code> (${fast10Bets.length} plays, Wins: <code>${fast10Won.toLocaleString()} ETB</code>)\n` +
+                   `  └ 1-20: <code>${fast20Wagered.toLocaleString()} ETB</code> (${fast20Bets.length} plays, Wins: <code>${fast20Won.toLocaleString()} ETB</code>)\n` +
+                   `🏆 <b>ዕድል (Jackpot):</b>\n` +
+                   `  └ Mini (1-50): <code>${jackpotMiniWagered.toLocaleString()} ETB</code> (${jackpotMiniBets.length} plays, Wins: <code>${jackpotMiniWon.toLocaleString()} ETB</code>)\n` +
+                   `  └ Grand (1-100): <code>${jackpotGrandWagered.toLocaleString()} ETB</code> (${jackpotGrandBets.length} plays, Wins: <code>${jackpotGrandWon.toLocaleString()} ETB</code>)\n` +
+                   `🎱 <b>ቢንጎ (Bingo):</b>\n` +
+                   `  └ ባለ 10: <code>${bingo10Wagered.toLocaleString()} ETB</code> (${bingo10Bets.length} plays, Wins: <code>${bingo10Won.toLocaleString()} ETB</code>)\n` +
+                   `  └ ባለ 20: <code>${bingo20Wagered.toLocaleString()} ETB</code> (${bingo20Bets.length} plays, Wins: <code>${bingo20Won.toLocaleString()} ETB</code>)\n` +
                    `📈 <b>Net Player Profit:</b> <code>${playerProfit > 0 ? '+' : ''}${playerProfit.toLocaleString()} ETB</code>\n` +
                    `📉 <b>House GGR (Revenue):</b> <code>${netHouseGGR > 0 ? '+' : ''}${netHouseGGR.toLocaleString()} ETB</code>\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
@@ -2330,9 +2369,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const chatId = msg.chat.id;
     const userId = msg.from?.id.toString();
     if (!userId) return;
-
-    // Update last_seen in background
-    supabase.from('users').update({ last_seen: new Date().toISOString() }).eq('id', userId).then(({ error }) => { if (error) console.error(error); });
 
     const text = msg.text?.trim() || "";
     const supportState = userStates.get(userId);
@@ -4038,9 +4074,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     try {
       logBot(`[Callback Query] data=${data} user=${userId} chat=${chatId}`);
-
-      // Update last_seen in background
-      supabase.from('users').update({ last_seen: new Date().toISOString() }).eq('id', userId).then(({ error }) => { if (error) console.error(error); });
 
     if (data?.startsWith("analysis_")) {
       if (!isStartingAdmin(parseInt(userId, 10))) {

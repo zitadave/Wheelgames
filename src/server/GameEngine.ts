@@ -184,12 +184,28 @@ class Room {
               // Need a way to notify client to refund their local balance,
               // for this prototype, we'll emit a specific event or they get balance updated at end.
               this.io.to(p.userId).emit('refund', refund);
+
+              // Log refund to DB for factual reporting
+              supabase.from("transactions").insert({
+                user_id: p.userId,
+                amount: refund,
+                type: "refund",
+                description: `Even/Odd Partial Refund (Pool Limit, Round #${this.state.roundId})`
+              }).then(({ error }) => { if (error) console.error("Refund log failed:", error); });
             } else {
               // Reject the whole bet
               const refund = p.amount;
               p.amount = 0; // effectively removed
               this.state.feed.unshift(`${p.username}'s bet skipped (pool limit).`);
               this.io.to(p.userId).emit('refund', refund);
+
+              // Log refund to DB for factual reporting
+              supabase.from("transactions").insert({
+                user_id: p.userId,
+                amount: refund,
+                type: "refund",
+                description: `Even/Odd Refund (Pool Limit, Round #${this.state.roundId})`
+              }).then(({ error }) => { if (error) console.error("Refund log failed:", error); });
             }
           }
         }

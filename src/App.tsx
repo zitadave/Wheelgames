@@ -10,6 +10,7 @@ import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Sett
 import { motion, AnimatePresence } from 'motion/react';
 import { playWin, playLoss, suspendAudio, resumeAudio } from './utils/sound';
 import { triggerHaptic } from './utils/haptic';
+import './utils/BingoVoiceEngine';
 
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || window.location.origin;
 const SOCKET_URL = BACKEND_URL;
@@ -138,6 +139,9 @@ export default function App() {
   }, [notification]);
 
   useEffect(() => {
+    if (window.voiceEngine) {
+      (window as any).voiceEngine.preloadAllVoices(75);
+    }
     if (window.Telegram?.WebApp) {
       const webApp = window.Telegram.WebApp as any;
       webApp.ready();

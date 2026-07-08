@@ -20,23 +20,60 @@ const eventAudioCache: Record<string, HTMLAudioElement> = {};
 class BingoVoiceEngine {
   audioCtx: AudioContext | null = null;
   audioCache: Record<number, AudioBuffer> = {};
+  isHeartbeatRunning: boolean = false;
 
   constructor() {
     this.audioCtx = null;
     this.audioCache = {};
+    this.isHeartbeatRunning = false;
   }
 
+  // 1. MUST run synchronously inside the user's direct click event callback
   initPipeline() {
     if (this.audioCtx) return;
+
     try {
+      // Establish primary hardware stream connection
       // @ts-ignore
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      
+      if (this.audioCtx.state === 'suspended') {
         this.audioCtx.resume();
       }
-      console.log("🔊 Bingo Voice Pipeline successfully opened and unlocked!");
+
+      // Kick off the heartbeat immediately to lock the hardware gate open
+      this.startAudioHeartbeat();
+      console.log("🚀 Silent Heartbeat active. Mobile inactivity suspension bypassed.");
     } catch (e) {
-      console.error("Failed to initialize Web Audio context:", e);
+      console.error("Web Audio context initialization failed:", e);
+    }
+  }
+
+  // Generates a continuous, sub-audible signal keeping the processor processing audio
+  startAudioHeartbeat() {
+    if (this.isHeartbeatRunning || !this.audioCtx) return;
+    
+    try {
+      this.isHeartbeatRunning = true;
+      
+      // Create a sub-audible oscillator (20Hz is threshold of hearing)
+      const oscillator = this.audioCtx.createOscillator();
+      const gainNode = this.audioCtx.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(20, this.audioCtx.currentTime); 
+      
+      // Volume so low it's effectively silent but enough to keep the context "active"
+      gainNode.gain.setValueAtTime(0.00001, this.audioCtx.currentTime);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(this.audioCtx.destination);
+      
+      oscillator.start();
+      console.log("🔊 Continuous hardware lock engaged.");
+    } catch (e) {
+      this.isHeartbeatRunning = false;
+      console.error("Heartbeat failed:", e);
     }
   }
 
@@ -55,7 +92,8 @@ class BingoVoiceEngine {
 
       if (!audioBuffer) {
         const extension = (number === 3 || number === 4) ? 'm4a' : 'mp3';
-        const response = await fetch(`/audio/voices/${number}.${extension}`);
+        // Note: Using /bingo_audio/ path as preloader uses it
+        const response = await fetch(`/bingo_audio/${number}.${extension}`);
         if (!response.ok) throw new Error(`Audio file for ball ${number} not found.`);
         
         const arrayBuffer = await response.arrayBuffer();
@@ -74,10 +112,7 @@ class BingoVoiceEngine {
   }
 }
 
-// Instantiate globally
-if (typeof window !== 'undefined') {
-  (window as any).voiceEngine = new BingoVoiceEngine();
-}
+// Global engine initialized in src/utils/BingoVoiceEngine.ts
 
 const preloadAudio = () => {
   // Preload ball numbers 1-75
@@ -372,6 +407,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   const handleJoin = (cards: number[]) => {
     if (!selectedRoomId || cards.length === 0) return;
+    
+    if ((window as any).voiceEngine) {
+      (window as any).voiceEngine.initPipeline();
+    }
     
     socket?.emit('bingo_join', {
       roomId: selectedRoomId,
