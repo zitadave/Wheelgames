@@ -46,6 +46,22 @@
         if (window.scrollX !== 0) window.scrollTo(0, window.scrollY);
       });
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>
+      try {
+        if (typeof eruda !== 'undefined') {
+          eruda.init({
+            defaults: {
+              displaySize: 50,
+              theme: 'dark'
+            }
+          });
+          console.log("🛠️ Eruda DevTools successfully initialized inside Telegram wrapper.");
+        }
+      } catch (e) {
+        console.error("Failed to load Eruda console:", e);
+      }
+    </script>
   </body>
 </html>
 
