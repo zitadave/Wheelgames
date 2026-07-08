@@ -139,7 +139,7 @@ export default function App() {
   }, [notification]);
 
   useEffect(() => {
-    if (window.voiceEngine) {
+    if ((window as any).voiceEngine) {
       (window as any).voiceEngine.preloadAllVoices(75);
     }
     if (window.Telegram?.WebApp) {

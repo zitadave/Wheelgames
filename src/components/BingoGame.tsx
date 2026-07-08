@@ -114,33 +114,6 @@ class BingoVoiceEngine {
 
 // Global engine initialized in src/utils/BingoVoiceEngine.ts
 
-const preloadAudio = () => {
-  // Preload ball numbers 1-75
-  for (let i = 1; i <= 75; i++) {
-    if (!ballAudioCache[i]) {
-      const extension = (i === 3 || i === 4) ? 'm4a' : 'mp3';
-      const audio = new Audio(`/bingo_audio/${i}.${extension}`);
-      audio.preload = 'auto';
-      audio.load();
-      ballAudioCache[i] = audio;
-    }
-  }
-
-  // Preload common events
-  ['/bingo_audio/the_game_has_started.mp3', '/bingo_audio/bingo.mp3'].forEach(src => {
-    if (!eventAudioCache[src]) {
-      const audio = new Audio(src);
-      audio.preload = 'auto';
-      audio.load();
-      eventAudioCache[src] = audio;
-    }
-  });
-};
-
-// Start preloading immediately
-if (typeof window !== 'undefined') {
-  preloadAudio();
-}
 
 const clearAudioQueue = () => {
   audioQueue.length = 0;
