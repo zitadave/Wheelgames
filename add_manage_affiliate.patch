@@ -1,0 +1,56 @@
+--- src/server/telegramBot.ts
++++ src/server/telegramBot.ts
+@@ -1075,6 +1075,7 @@
+     text += `• <b>Start:</b> <code>https://t.me/${botUsername}?start=1</code>\n`;
+     text += `• <b>Deposit:</b> <code>https://t.me/${botUsername}?start=deposit</code>\n`;
+     text += `• <b>Withdraw:</b> <code>https://t.me/${botUsername}?start=withdraw</code>\n`;
++    text += `• <b>Affiliate:</b> <code>/affiliate</code>\n`;
+     text += `• <b>Referral:</b> <code>/referral</code>\n`;
+     text += `• <b>Play:</b> <code>/play</code>\n\n`;
+     
+@@ -1082,6 +1083,7 @@
+     text += `• <code>/control</code> - Main Panel\n`;
+     text += `• <code>/setadmin</code> - Admins\n`;
+     text += `• <code>/edit</code> - Prompt Editor\n`;
++    text += `• <code>/manage_affiliate</code> - House Affiliate Settings\n`;
+     text += `• <code>/broadcast</code> - Message\n`;
+     text += `• <code>/analysis</code> - Report\n`;
+ 
+@@ -1092,6 +1094,36 @@
+     });
+   });
+ 
++  bot.onText(/\/manage(?:_| )affiliate/, async (msg) => {
++    const chatId = msg.chat.id;
++    const userId = msg.from?.id;
++    if (!isStartingAdmin(userId)) {
++      return;
++    }
++
++    try {
++        const { data: txs } = await supabase.from('transactions').select('amount').eq('type', 'reward').ilike('description', 'Referral Commission%');
++        const totalHousePaidOut = txs ? txs.reduce((sum, t) => sum + Number(t.amount || 0), 0) : 0;
++        
++        const { data: referrals } = await supabase.from('transactions').select('id').eq('type', 'referral_link');
++        const totalHouseReferrals = referrals ? referrals.length : 0;
++        
++        const text = `🤝 <b>House Affiliate Report</b>\n\n` +
++          `Current Commission Rate: <b>1% of Bet Amount</b>\n\n` +
++          `👥 <b>Total House Referrals:</b> ${totalHouseReferrals}\n` +
++          `💵 <b>Total Payouts to Influencers:</b> ${totalHousePaidOut.toLocaleString()} ETB\n\n` +
++          `<i>To adjust the commission rate, update the backend configuration. The 1% rate is active across all GameEngine mechanics.</i>`;
++          
++        bot.sendMessage(chatId, text, {
++          parse_mode: "HTML",
++          reply_markup: {
++            inline_keyboard: [[{ text: "🔙 Back", callback_data: "control_panel_back" }]]
++          }
++        });
++    } catch (e: any) {
++        bot.sendMessage(chatId, `Error loading affiliate stats: ${e.message}`);
++    }
++  });
++
+   bot.onText(/\/edit/, (msg) => {
+     const chatId = msg.chat.id;
+     const userId = msg.from?.id;

@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    @apply overflow-hidden w-full h-full;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    padding: 0;
+    touch-action: pan-y;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    @apply h-full w-full overflow-hidden flex flex-col;
+    position: relative;
+    touch-action: pan-y;
+  }
+}
+

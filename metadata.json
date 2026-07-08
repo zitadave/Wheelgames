@@ -1,0 +1,6 @@
+{
+  "name": "Wheel Bet",
+  "description": "An interactive, real-time multiplayer wheel betting arena and traditional Bingo game with elegant statistics and simulated ledger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

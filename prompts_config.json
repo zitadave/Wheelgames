@@ -1,0 +1,82 @@
+{
+  "deposit_start_msg": "💰 *ማስገባት የሚፈልጉትን መጠን ከ10 ብር ጀምሮ ያስገቡ።*\n\n_(Please type the amount of ETB you want to deposit, minimum 10 ETB):_",
+  "deposit_success_msg": "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
+  "deposit_approved_msg": "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
+  "deposit_declined_msg": "❌ *Your deposit of {amount} ETB is Declined.*",
+  "support_text": "ሚያጋጥማቹ የክፍያ ችግር:\n@scofiled1 ላይ ፃፉልን።",
+  "withdraw_start_msg": "💰 *ማውጣት የሚፈልጉትን የገንዘብ መጠን ያስገቡ ?*\n\n💳 *የእርስዎ ባላንስ:* `{balance} ETB`\n\n_(Please type the amount you want to withdraw):_",
+  "withdraw_telebirr_prompt": "📱 *እባክዎን ስልክ ቁጥርን ያስገቡ:*",
+  "withdraw_other_bank_prompt": "🏦 *እባክዎን አካውንት ቁጥርን ያስገቡ:*",
+  "withdraw_success_msg": "✅ *Your withdrawal Request of {amount} ETB have been sent to admins please wait 1 min.*",
+  "withdraw_approved_msg": "✅ *Your withdrawal of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
+  "withdraw_declined_msg": "❌ *Withdrawal Declined*\n\nYour withdrawal of *{amount} Birr* was declined and refunded.",
+  "welcome_msg": "👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\nExperience the thrill of real-time multiplayer gaming right here in Telegram!\n\n💰 *Your current balance:* `{balance}`\n\n🚀 *Available Games:*\n• 🟢 *Even/Odd* - High-octane multipliers and double-ups\n• 🏆 *Jackpot Arena* - Secure spots and sweep the pool prize\n• 🎡 *Wheel of Chance* - High stakes wheel of fortune\n\n👇 Click the button below to launch the Mini App and start playing immediately!",
+  "welcome_image": "",
+  "welcome_guest_msg": "🎮 <b>Welcome to ETB Game Hub!</b> 🚀\n\nExperience the ultimate Telegram gaming destination! Test your prediction skills with 🟢 <b>Even/Odd</b>, enter the 🏆 <b>Jackpot Arena</b>, or spin the 🎡 <b>Wheel of Chance</b> to win incredible rewards.\n\n💎 <i>Play instantly, win with real-time multipliers, and withdraw directly to your favorite wallet!</i>",
+  "welcome_guest_image": "",
+  "support_card_msg": "📞 <b>Contact Support</b>\n\n📱 <b>Phone:</b> <code>+251-931-50-35-59</code>\n📧 <b>Email:</b> <code>support@wheelgame.et</code>\n💬 <b>Telegram:</b> @scofiled1\n\n⏰ <b>Support Hours:</b>\nMonday - Sunday: 9 AM - 9 PM\n\nWe're here to help!",
+  "welcome_buttons": [
+    [
+      {
+        "text": "🎮 Play Game Hub 🚀",
+        "type": "webapp",
+        "value": "appUrl"
+      }
+    ],
+    [
+      {
+        "text": "💸 Deposit / ማስገቢያ",
+        "type": "callback",
+        "value": "menu_deposit"
+      },
+      {
+        "text": "🏦 Withdraw / ማውጫ",
+        "type": "callback",
+        "value": "menu_withdraw"
+      }
+    ],
+    [
+      {
+        "text": "📞 Contact Support",
+        "type": "callback",
+        "value": "menu_support"
+      }
+    ]
+  ],
+  "referral_msg": "🎯 ዲጂታል ዕጣ! አስደሳች የዊል ጌሞች ለወጣቶች። አሁኑኑ ይጫወቱ።🥰🥰",
+  "referral_image": "AgACAgQAAxkBAAICCmpH_mD-he6bCDENqiGp48KaxRvfAAJcDWsbMvNAUtXFFtDGgaWcAQADAgADeQADPAQ",
+  "referral_share_text": "Join me on ፈጣን ዕጣ Game Hub and win Big!🏆🍾",
+  "referral_share_image": "",
+  "referral_buttons": [
+    [
+      {
+        "text": "invite your friend",
+        "type": "url",
+        "value": "https://t.me/share/url?url=https://t.me/{bot_username}?start=ref_{user_id}&text={referral_share_text}"
+      }
+    ]
+  ],
+  "custom_commands": {},
+  "banks": {
+    "Telebirr": {
+      "name": "📱 Telebirr",
+      "account": "0931503559",
+      "owner_name": "Tadese"
+    },
+    "CBE": {
+      "name": "🏦 CBE (የኢትዮጵያ ንግድ ባንክ)",
+      "account": "1000123456789",
+      "owner_name": "Tadese"
+    },
+    "Abyssinia": {
+      "name": "🏦 Abyssinia Bank",
+      "account": "987654321",
+      "owner_name": "Tadese"
+    },
+    "Dashen": {
+      "name": "🏦 Dashen Bank",
+      "account": "555444332",
+      "owner_name": "Tadese"
+    }
+  }
+}

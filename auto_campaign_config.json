@@ -1,0 +1,10 @@
+{
+  "isEnabled": false,
+  "promptText": "👋 Hey {name}! You haven't visited us in a while. Come play Even/Odd or Jackpot and double your ETB! 🎮",
+  "targetCategory": "all",
+  "balanceThresholdOperator": "any",
+  "balanceThresholdValue": 1000,
+  "inactivityDays": 3,
+  "intervalHours": 24,
+  "lastRunTime": 0
+}

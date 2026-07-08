@@ -1,0 +1,74 @@
+[
+  {
+    "id": "vip_slots_1",
+    "type": "vip_slots",
+    "text": "vip_slots placeholder",
+    "photoUrl": "https://images.unsplash.com/photo-1596838132731-3301c3fd4317?w=800",
+    "intervalHours": 12,
+    "lastRunTime": 0,
+    "enabled": true
+  },
+  {
+    "id": "promo_1",
+    "type": "promotion",
+    "text": "🎉 <b>Special Promotion!</b> 🎉\n\nInvite your friends and earn 20% more commission this week! Share your referral link now.\n\n👇 Play Now!",
+    "photoUrl": "https://images.unsplash.com/photo-1557200134-90327ee9fafa?w=800",
+    "intervalHours": 48,
+    "lastRunTime": 0,
+    "enabled": true
+  },
+  {
+    "id": "guide_1",
+    "type": "guide",
+    "text": "📚 <b>How to Play & Win!</b> 📚\n\n1️⃣ Deposit ETB to your account easily.\n2️⃣ Choose a game: Even/Odd or Jackpot.\n3️⃣ Win and withdraw directly to Telebirr or your bank!\n\n💬 Need help? Contact @scofiled1.",
+    "photoUrl": "https://images.unsplash.com/photo-1506880018603-83d5b814b5a6?w=800",
+    "intervalHours": 72,
+    "lastRunTime": 0,
+    "enabled": true
+  },
+  {
+    "id": "high_withdrawal_1",
+    "type": "high_withdrawal",
+    "text": "high withdrawal placeholder",
+    "photoUrl": "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800",
+    "intervalHours": 8,
+    "lastRunTime": 0,
+    "enabled": true
+  },
+  {
+    "id": "high_deposit_1",
+    "type": "high_deposit",
+    "text": "high deposit placeholder",
+    "photoUrl": "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800",
+    "intervalHours": 12,
+    "lastRunTime": 0,
+    "enabled": true
+  },
+  {
+    "id": "weekly_promoter_1",
+    "type": "weekly_promoter",
+    "text": "weekly promoter placeholder",
+    "photoUrl": "https://images.unsplash.com/photo-1579621970588-a35d0e7ab9b6?w=800",
+    "intervalHours": 168,
+    "lastRunTime": 1783342566134,
+    "enabled": true
+  },
+  {
+    "id": "join_play_1",
+    "type": "join_play",
+    "text": "join play placeholder",
+    "photoUrl": "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=800",
+    "intervalHours": 4,
+    "lastRunTime": 1783342566134,
+    "enabled": true
+  },
+  {
+    "id": "event_1",
+    "type": "event",
+    "text": "🏆 <b>Monthly Grand Tournament!</b> 🏆\n\nCompete for the ultimate prize! Play any VIP room this weekend to enter the leaderboard.\n\n💰 Top 3 winners will share a MASSIVE jackpot!\n\n👉 Good luck and play responsibly!",
+    "photoUrl": "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800",
+    "intervalHours": 168,
+    "lastRunTime": 1783342566134,
+    "enabled": true
+  }
+]

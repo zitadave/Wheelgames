@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>ETB Game Hub</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Prevent horizontal scrolling and bouncing
+      document.addEventListener('touchmove', function(e) {
+        // Allow vertical scroll on scrollable elements
+        var isScrollable = e.target.closest('.overflow-y-auto');
+        if (isScrollable) {
+          // If we are at the top or bottom, prevent bounce
+          if (isScrollable.scrollTop === 0 && e.touches[0].screenY > e.touches[0].pageY) {
+            // e.preventDefault(); // This can be tricky, let's keep it simple first
+          }
+          return; 
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      // Handle Telegram WebApp
+      if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+        // Force the app to stay fixed
+        document.body.style.overflow = 'hidden';
+        document.body.style.position = 'fixed';
+        document.documentElement.style.overflow = 'hidden';
+        document.documentElement.style.position = 'fixed';
+        
+        try {
+          if (window.Telegram.WebApp.disableVerticalSwipes) {
+            window.Telegram.WebApp.disableVerticalSwipes();
+          }
+        } catch (e) {}
+      }
+
+      // Final insurance against any weird horizontal shifts
+      window.addEventListener('scroll', function() {
+        if (window.scrollX !== 0) window.scrollTo(0, window.scrollY);
+      });
+    </script>
+  </body>
+</html>
+
