@@ -7,110 +7,9 @@ import { getDeterministicCard } from '../utils/bingo';
 
 type QueueItem = { type: 'event' | 'ball'; src: string };
 
+// Audio Queue Management (kept global to persist through minor re-renders)
 const audioQueue: QueueItem[] = [];
-let isPlayingAudio = false;
-let persistentAudio: HTMLAudioElement | null = null;
-
-const getPersistentAudio = (): HTMLAudioElement | null => {
-  if (typeof window === 'undefined') return null;
-  if (!persistentAudio) {
-    try {
-      persistentAudio = new Audio();
-      persistentAudio.setAttribute('playsinline', 'true');
-      persistentAudio.setAttribute('webkit-playsinline', 'true');
-      persistentAudio.preload = 'auto';
-      
-      persistentAudio.onended = () => {
-        playNextAudio();
-      };
-      persistentAudio.onerror = (e) => {
-        console.warn("Persistent audio playback error, skipping to next:", e);
-        playNextAudio();
-      };
-    } catch (e) {
-      console.warn("Failed to create persistent Audio element:", e);
-    }
-  }
-  return persistentAudio;
-};
-
-const unlockAudioContext = () => {
-  const audio = getPersistentAudio();
-  if (audio) {
-    audio.src = '/bingo_audio/the_game_has_started.mp3';
-    audio.load();
-    audio.play()
-      .then(() => {
-        audio.pause();
-        console.log("Audio successfully unlocked on user gesture!");
-      })
-      .catch(err => {
-        console.warn("Failed to unlock audio on user gesture:", err);
-      });
-  }
-};
-
-const clearAudioQueue = () => {
-  audioQueue.length = 0;
-  if (persistentAudio) {
-    try {
-      persistentAudio.pause();
-    } catch (e) {}
-  }
-  isPlayingAudio = false;
-};
-
-const playNextAudio = () => {
-  if (audioQueue.length === 0) {
-    isPlayingAudio = false;
-    return;
-  }
-
-  isPlayingAudio = true;
-  const item = audioQueue.shift();
-  if (!item) {
-    playNextAudio();
-    return;
-  }
-
-  try {
-    const audio = getPersistentAudio();
-    if (!audio) {
-      playNextAudio();
-      return;
-    }
-    
-    audio.src = item.src;
-    audio.load();
-    audio.play().catch(err => {
-      console.warn("Autoplay blocked or play failed for:", item.src, err);
-      playNextAudio();
-    });
-  } catch (err) {
-    console.warn("Error playing audio item:", item.src, err);
-    playNextAudio();
-  }
-};
-
-const queueAudioItem = (item: { type: 'event'; src: string } | { type: 'ball'; ball: number }, enabled: boolean) => {
-  if (!enabled) {
-    clearAudioQueue();
-    return;
-  }
-
-  let src = '';
-  if (item.type === 'event') {
-    src = item.src;
-  } else {
-    src = `/bingo_audio/${item.ball}.mp3`;
-  }
-
-  audioQueue.push({ type: item.type, src });
-
-  if (!isPlayingAudio) {
-    playNextAudio();
-  }
-};
+let isPlayingAudioGlobal = false;
 
 interface BingoGameProps {
   bingoRoomsMeta?: any;
@@ -138,6 +37,78 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   const [manuallyMarked, setManuallyMarked] = useState<Set<string>>(new Set());
   const [activeWinnerIdx, setActiveWinnerIdx] = useState<number>(0);
   const [showHelp, setShowHelp] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Play next in queue
+  const playNextInQueue = () => {
+    if (!audioRef.current || audioQueue.length === 0 || !soundEnabled) {
+      isPlayingAudioGlobal = false;
+      return;
+    }
+
+    isPlayingAudioGlobal = true;
+    const item = audioQueue.shift();
+    if (!item) {
+      playNextInQueue();
+      return;
+    }
+
+    audioRef.current.src = item.src;
+    audioRef.current.load();
+    const playPromise = audioRef.current.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn("Audio play failed, skipping to next:", item.src, err);
+        playNextInQueue();
+      });
+    }
+  };
+
+  const queueAudio = (item: { type: 'event'; src: string } | { type: 'ball'; ball: number }) => {
+    if (!soundEnabled) return;
+
+    const src = item.type === 'event' ? item.src : `/bingo_audio/${item.ball}.mp3`;
+    audioQueue.push({ type: item.type, src });
+
+    if (!isPlayingAudioGlobal) {
+      playNextInQueue();
+    }
+  };
+
+  const unlockAudio = () => {
+    if (audioRef.current) {
+      // Try to play a silent/tiny sound to unlock the element
+      // Use the 'game started' sound but immediately pause it after play starts
+      audioRef.current.src = '/bingo_audio/the_game_has_started.mp3';
+      audioRef.current.load();
+      audioRef.current.play()
+        .then(() => {
+          audioRef.current?.pause();
+          console.log("Audio element unlocked!");
+        })
+        .catch(err => {
+          console.warn("Audio unlock failed:", err);
+        });
+    }
+  };
+
+  // Listen for audio ended to play next
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleEnded = () => playNextInQueue();
+    const handleError = () => playNextInQueue();
+
+    audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
+
+    return () => {
+      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
+    };
+  }, [soundEnabled]);
 
   const allSelectedCards = useMemo(() => {
     const cards = new Set<number>();
@@ -154,7 +125,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   // Unlock the Web Audio API Context on any first touch or click gesture (safari/telegram workaround)
   useEffect(() => {
     const handleGesture = () => {
-      unlockAudioContext();
+      unlockAudio();
     };
     
     window.addEventListener('click', handleGesture, { capture: true, passive: true });
@@ -175,7 +146,13 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   useEffect(() => {
     if (!soundEnabled) {
-      clearAudioQueue();
+      audioQueue.length = 0;
+      if (audioRef.current) {
+        try {
+          audioRef.current.pause();
+        } catch (e) {}
+      }
+      isPlayingAudioGlobal = false;
     }
   }, [soundEnabled]);
 
@@ -183,10 +160,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   useEffect(() => {
     if (prevStatusRef.current === 'lobby' && roomState?.status === 'playing') {
-      queueAudioItem({ type: 'event', src: '/bingo_audio/the_game_has_started.mp3' }, soundEnabled);
+      queueAudio({ type: 'event', src: '/bingo_audio/the_game_has_started.mp3' });
     } else if (prevStatusRef.current === 'playing' && roomState?.status === 'result') {
-      clearAudioQueue();
-      queueAudioItem({ type: 'event', src: '/bingo_audio/bingo.mp3' }, soundEnabled);
+      audioQueue.length = 0;
+      queueAudio({ type: 'event', src: '/bingo_audio/bingo.mp3' });
     }
     prevStatusRef.current = roomState?.status;
   }, [roomState?.status, soundEnabled]);
@@ -198,7 +175,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
       const currentLength = roomState.calledBalls.length;
       if (currentLength > prevCalledBallsLengthRef.current) {
         const latestBall = roomState.calledBalls[currentLength - 1];
-        queueAudioItem({ type: 'ball', ball: latestBall }, soundEnabled);
+        queueAudio({ type: 'ball', ball: latestBall });
       }
       prevCalledBallsLengthRef.current = currentLength;
     } else {
@@ -328,6 +305,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (!selectedRoomId) {
     return (
       <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
+        <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
         {/* Help Modal Overlay */}
         <AnimatePresence>
           {showHelp && (
@@ -442,7 +420,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
           <div className="flex flex-col gap-3">
             {/* 10 ETB Card */}
             <button
-              onClick={() => onRoomSelect('bingo-10')}
+              onClick={() => {
+                unlockAudio();
+                onRoomSelect('bingo-10');
+              }}
               className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
@@ -468,7 +449,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
             {/* 20 ETB Card */}
             <button
-              onClick={() => onRoomSelect('bingo-20')}
+              onClick={() => {
+                unlockAudio();
+                onRoomSelect('bingo-20');
+              }}
               className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
@@ -505,6 +489,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (selectedRoomId && roomState?.status === 'lobby') {
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
+        <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
           {/* Dense Grid - smaller buttons, full width, 8 columns */}
@@ -573,6 +558,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (roomState?.status === 'playing' || roomState?.status === 'result') {
       return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0b14] w-full text-white select-none relative">
+          <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
           {/* Top Bar: Game Stats & Live Called Balls */}
           <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-1 shrink-0 h-12 w-full">
             {/* Left: Compact Game Stats - Distributed evenly */}
