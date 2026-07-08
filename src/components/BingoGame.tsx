@@ -11,6 +11,9 @@ type QueueItem = { type: 'event' | 'ball'; src: string };
 const audioQueue: QueueItem[] = [];
 let isPlayingAudioGlobal = false;
 
+// Silent 1-pixel/1-sample audio to unlock Web Audio / HTML5 Audio on mobile
+const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFav7//7//v/+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+';
+
 interface BingoGameProps {
   bingoRoomsMeta?: any;
   selectedRoomId: string | null;
@@ -38,6 +41,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   const [activeWinnerIdx, setActiveWinnerIdx] = useState<number>(0);
   const [showHelp, setShowHelp] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const unlockedRef = useRef(false);
 
   // Play next in queue
   const playNextInQueue = () => {
@@ -85,20 +89,25 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   };
 
   const unlockAudio = () => {
-    if (audioRef.current) {
+    if (audioRef.current && !unlockedRef.current) {
       // In Safari/Telegram, we must play a sound directly in the gesture handler
-      // We try to play the "game started" sound but immediately pause it.
-      // This "primes" the element for future src changes.
-      audioRef.current.src = '/bingo_audio/the_game_has_started.mp3';
-      audioRef.current.load();
+      // Using a silent base64 WAV ensures no network delay and instant "priming"
+      const currentSrc = audioRef.current.src;
+      audioRef.current.src = SILENT_WAV;
+      
       const playPromise = audioRef.current.play();
       
       if (playPromise !== undefined) {
         playPromise.then(() => {
           audioRef.current?.pause();
-          console.log("Audio element successfully unlocked");
+          unlockedRef.current = true;
+          // Restore previous src if any, otherwise leave it primed
+          if (currentSrc && !currentSrc.startsWith('data:')) {
+            audioRef.current!.src = currentSrc;
+          }
+          console.log("Audio element successfully unlocked via silent WAV");
         }).catch(err => {
-          console.log("Audio unlock failed (expected if no interaction yet):", err.name);
+          console.log("Audio unlock attempted:", err.name);
         });
       }
     }
@@ -149,8 +158,8 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     window.addEventListener('touchstart', handleGesture, { capture: true, passive: true });
     
     return () => {
-      window.removeEventListener('click', handleGesture);
-      window.removeEventListener('touchstart', handleGesture);
+      window.removeEventListener('click', handleGesture, { capture: true });
+      window.removeEventListener('touchstart', handleGesture, { capture: true });
     };
   }, []);
 
@@ -423,12 +432,23 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
           animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-sm flex flex-col gap-6 text-center relative"
         >
-          <button 
-            onClick={() => setShowHelp(true)}
-            className="absolute -top-12 right-0 p-2 text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
-          >
-            <HelpCircle className="w-6 h-6" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={() => {
+                setSoundEnabled(!soundEnabled);
+                if (!soundEnabled) unlockAudio();
+              }}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 transition-colors"
+            >
+              {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            </button>
+            <button 
+              onClick={() => setShowHelp(true)}
+              className="p-2 text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
+            >
+              <HelpCircle className="w-6 h-6" />
+            </button>
+          </div>
           <div>
             <span className="text-purple-400 font-black text-[10.5px] tracking-[0.25em] uppercase block mb-1">BINGO ROOM SELECT</span>
             <h2 className="text-2xl font-black text-white tracking-tight">የቢንጎ መደብ ይምረጡ</h2>
@@ -737,7 +757,13 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                             : '--'}
                          </span>
                       </div>
-                      <button onClick={() => setSoundEnabled(!soundEnabled)} className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform">
+                      <button 
+                        onClick={() => {
+                          setSoundEnabled(!soundEnabled);
+                          if (!soundEnabled) unlockAudio();
+                        }} 
+                        className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform"
+                      >
                          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                       </button>
                    </div>
