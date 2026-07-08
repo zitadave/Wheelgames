@@ -192,15 +192,18 @@ export async function playAudioUrlRaw(url: string): Promise<void> {
 
   stopCurrentAudio();
 
-  let buffer = decodedCache.get(url);
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const absoluteUrl = url.startsWith('http') || url.startsWith('data:') ? url : `${baseUrl}${url}`;
+
+  let buffer = decodedCache.get(absoluteUrl);
   if (!buffer) {
-    const response = await fetch(url);
+    const response = await fetch(absoluteUrl);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const arrayBuffer = await response.arrayBuffer();
     buffer = await safeDecodeAudioData(arrayBuffer);
-    decodedCache.set(url, buffer);
+    decodedCache.set(absoluteUrl, buffer);
   }
 
   return new Promise<void>((resolve, reject) => {
@@ -269,14 +272,17 @@ export function playAudioViaElement(url: string, onEnded?: () => void, onError?:
       globalUnlockedAudio.pause();
     } catch (e) {}
 
-    globalUnlockedAudio.src = url;
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const absoluteUrl = url.startsWith('http') || url.startsWith('data:') ? url : `${baseUrl}${url}`;
+
+    globalUnlockedAudio.src = absoluteUrl;
 
     globalUnlockedAudio.onended = () => {
       if (onEnded) onEnded();
     };
 
     globalUnlockedAudio.onerror = (e) => {
-      console.warn("Audio element error on playing:", url, e);
+      console.warn("Audio element error on playing:", absoluteUrl, e);
       if (onError) onError(e);
       else if (onEnded) onEnded();
     };
@@ -284,7 +290,7 @@ export function playAudioViaElement(url: string, onEnded?: () => void, onError?:
     const playPromise = globalUnlockedAudio.play();
     if (playPromise !== undefined) {
       playPromise.catch(err => {
-        console.warn("Audio element play failed for:", url, err);
+        console.warn("Audio element play failed for:", absoluteUrl, err);
         if (onError) onError(err);
         else if (onEnded) onEnded();
       });
@@ -302,9 +308,19 @@ export function playCallerVoice(
   fallbackToTTSCallback: (ball: number, cb: () => void) => void
 ) {
   let completed = false;
+  
+  // Set a safety timeout of 4 seconds to prevent the queue from ever locking up!
+  const timeoutId = setTimeout(() => {
+    if (!completed) {
+      console.warn("playCallerVoice timed out after 4s for:", url);
+      done();
+    }
+  }, 4000);
+
   const done = () => {
     if (!completed) {
       completed = true;
+      clearTimeout(timeoutId);
       onEnded();
     }
   };
