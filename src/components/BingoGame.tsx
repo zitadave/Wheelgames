@@ -5,29 +5,100 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Users, Clock, History, AlertCircle, Coins, ChevronLeft, Volume2, VolumeX, RefreshCw, RotateCw, HelpCircle, X } from 'lucide-react';
 import { getDeterministicCard } from '../utils/bingo';
 
-type QueueItem = 
-  | { type: 'event', src: string, audio: HTMLAudioElement }
-  | { type: 'ball', ball: number, audio: HTMLAudioElement };
+type QueueItem = { type: 'event' | 'ball'; src: string };
 
 const audioQueue: QueueItem[] = [];
 let isPlayingAudio = false;
-let currentAudioElement: HTMLAudioElement | null = null;
+
+// Web Audio API Global States
+let audioCtx: AudioContext | null = null;
+const audioBufferCache: Record<string, AudioBuffer> = {};
+let activeSourceNode: AudioBufferSourceNode | null = null;
+let currentHtmlAudio: HTMLAudioElement | null = null;
+
+const getAudioContext = (): AudioContext | null => {
+  if (typeof window === 'undefined') return null;
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    } catch (e) {
+      console.warn("Web Audio API not supported:", e);
+    }
+  }
+  return audioCtx;
+};
+
+const unlockAudioContext = () => {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(err => {
+      console.warn("Failed to resume AudioContext:", err);
+    });
+  }
+};
+
+const stopCurrentAudio = () => {
+  if (activeSourceNode) {
+    try {
+      activeSourceNode.stop();
+    } catch (e) {}
+    activeSourceNode = null;
+  }
+  if (currentHtmlAudio) {
+    try {
+      currentHtmlAudio.pause();
+    } catch (e) {}
+    currentHtmlAudio = null;
+  }
+};
 
 const clearAudioQueue = () => {
   audioQueue.length = 0;
-  if (currentAudioElement) {
-    currentAudioElement.pause();
-    currentAudioElement = null;
-  }
+  stopCurrentAudio();
   isPlayingAudio = false;
 };
 
-const playNextAudio = () => {
+const fetchAndDecode = async (src: string): Promise<AudioBuffer> => {
+  if (audioBufferCache[src]) {
+    return audioBufferCache[src];
+  }
+
+  const response = await fetch(src);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio from ${src}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const ctx = getAudioContext();
+  if (!ctx) {
+    throw new Error("AudioContext not initialized");
+  }
+
+  return new Promise<AudioBuffer>((resolve, reject) => {
+    try {
+      ctx.decodeAudioData(
+        arrayBuffer,
+        (decoded) => {
+          audioBufferCache[src] = decoded;
+          resolve(decoded);
+        },
+        (err) => {
+          reject(err || new Error("Decoding error"));
+        }
+      ).catch(err => {
+        reject(err);
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+};
+
+const playNextAudio = async () => {
   if (audioQueue.length === 0) {
     isPlayingAudio = false;
     return;
   }
-  
+
   isPlayingAudio = true;
   const item = audioQueue.shift();
   if (!item) {
@@ -35,45 +106,75 @@ const playNextAudio = () => {
     return;
   }
 
-  currentAudioElement = item.audio;
-  currentAudioElement.onended = () => {
-    currentAudioElement = null;
-    playNextAudio();
-  };
-  currentAudioElement.onerror = () => {
-    currentAudioElement = null;
-    playNextAudio();
-  };
-  currentAudioElement.play().catch(err => {
-    console.warn("Audio play failed", err);
-    currentAudioElement = null;
-    playNextAudio();
-  });
+  try {
+    const buffer = await fetchAndDecode(item.src);
+    const ctx = getAudioContext();
+    if (!ctx) {
+      throw new Error("AudioContext not ready");
+    }
+
+    stopCurrentAudio();
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = 1.0;
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    activeSourceNode = source;
+
+    source.onended = () => {
+      if (activeSourceNode === source) {
+        activeSourceNode = null;
+      }
+      playNextAudio();
+    };
+
+    source.start(0);
+  } catch (err) {
+    console.warn("Web Audio API failed or blocked, falling back to HTML5 Audio for:", item.src, err);
+    try {
+      stopCurrentAudio();
+      const audio = new Audio(item.src);
+      currentHtmlAudio = audio;
+      audio.onended = () => {
+        currentHtmlAudio = null;
+        playNextAudio();
+      };
+      audio.onerror = () => {
+        currentHtmlAudio = null;
+        playNextAudio();
+      };
+      audio.play().catch(playErr => {
+        console.warn("HTML5 audio playback blocked too:", playErr);
+        currentHtmlAudio = null;
+        playNextAudio();
+      });
+    } catch (fallbackErr) {
+      currentHtmlAudio = null;
+      playNextAudio();
+    }
+  }
 };
 
-const queueAudioItem = (item: { type: 'event', src: string } | { type: 'ball', ball: number }, enabled: boolean) => {
+const queueAudioItem = (item: { type: 'event'; src: string } | { type: 'ball'; ball: number }, enabled: boolean) => {
   if (!enabled) {
     clearAudioQueue();
     return;
   }
 
-  let audio: HTMLAudioElement | undefined;
-  try {
-    if (item.type === 'event') {
-      audio = new Audio(item.src);
-    } else {
-      const extension = (item.ball === 3 || item.ball === 4) ? 'm4a' : 'mp3';
-      audio = new Audio(`/bingo_audio/${item.ball}.${extension}`);
-    }
-    audio.preload = 'auto';
-  } catch(e) {
-    console.warn("Could not preload audio", e);
+  let src = '';
+  if (item.type === 'event') {
+    src = item.src;
+  } else {
+    const extension = (item.ball === 3 || item.ball === 4) ? 'm4a' : 'mp3';
+    src = `/bingo_audio/${item.ball}.${extension}`;
   }
 
-  if (!audio) return;
-  
-  audioQueue.push({ ...item, audio } as QueueItem);
-  
+  audioQueue.push({ type: item.type, src });
+
   if (!isPlayingAudio) {
     playNextAudio();
   }
@@ -117,6 +218,21 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     }
     return cards;
   }, [roomState?.players, userId]);
+
+  // Unlock the Web Audio API Context on any first touch or click gesture (safari/telegram workaround)
+  useEffect(() => {
+    const handleGesture = () => {
+      unlockAudioContext();
+    };
+    
+    window.addEventListener('click', handleGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', handleGesture, { capture: true, passive: true });
+    
+    return () => {
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('touchstart', handleGesture);
+    };
+  }, []);
 
 
   useEffect(() => {
