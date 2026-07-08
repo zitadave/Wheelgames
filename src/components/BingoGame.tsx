@@ -49,19 +49,27 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     isPlayingAudioGlobal = true;
     const item = audioQueue.shift();
     if (!item) {
+      isPlayingAudioGlobal = false;
       playNextInQueue();
       return;
     }
 
-    audioRef.current.src = item.src;
-    audioRef.current.load();
-    const playPromise = audioRef.current.play();
-    
-    if (playPromise !== undefined) {
-      playPromise.catch(err => {
-        console.warn("Audio play failed, skipping to next:", item.src, err);
-        playNextInQueue();
-      });
+    try {
+      audioRef.current.src = item.src;
+      audioRef.current.load();
+      const playPromise = audioRef.current.play();
+      
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.warn("Audio play failed, skipping to next:", item.src, err);
+          isPlayingAudioGlobal = false;
+          playNextInQueue();
+        });
+      }
+    } catch (err) {
+      console.warn("Audio playback error:", err);
+      isPlayingAudioGlobal = false;
+      playNextInQueue();
     }
   };
 
@@ -78,18 +86,21 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   const unlockAudio = () => {
     if (audioRef.current) {
-      // Try to play a silent/tiny sound to unlock the element
-      // Use the 'game started' sound but immediately pause it after play starts
+      // In Safari/Telegram, we must play a sound directly in the gesture handler
+      // We try to play the "game started" sound but immediately pause it.
+      // This "primes" the element for future src changes.
       audioRef.current.src = '/bingo_audio/the_game_has_started.mp3';
       audioRef.current.load();
-      audioRef.current.play()
-        .then(() => {
+      const playPromise = audioRef.current.play();
+      
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
           audioRef.current?.pause();
-          console.log("Audio element unlocked!");
-        })
-        .catch(err => {
-          console.warn("Audio unlock failed:", err);
+          console.log("Audio element successfully unlocked");
+        }).catch(err => {
+          console.log("Audio unlock failed (expected if no interaction yet):", err.name);
         });
+      }
     }
   };
 
@@ -98,8 +109,14 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     const audio = audioRef.current;
     if (!audio) return;
 
-    const handleEnded = () => playNextInQueue();
-    const handleError = () => playNextInQueue();
+    const handleEnded = () => {
+      isPlayingAudioGlobal = false;
+      playNextInQueue();
+    };
+    const handleError = () => {
+      isPlayingAudioGlobal = false;
+      playNextInQueue();
+    };
 
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
@@ -302,10 +319,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     });
   };
 
-  if (!selectedRoomId) {
-    return (
-      <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
-        <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
+  const renderContent = () => {
+    if (!selectedRoomId) {
+      return (
+        <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
         {/* Help Modal Overlay */}
         <AnimatePresence>
           {showHelp && (
@@ -486,10 +503,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     );
   }
 
-  if (selectedRoomId && roomState?.status === 'lobby') {
-    return (
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
-        <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
+    if (selectedRoomId && roomState?.status === 'lobby') {
+      return (
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
           {/* Dense Grid - smaller buttons, full width, 8 columns */}
@@ -555,10 +571,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     );
   }
 
-  if (roomState?.status === 'playing' || roomState?.status === 'result') {
+    if (roomState?.status === 'playing' || roomState?.status === 'result') {
       return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0b14] w-full text-white select-none relative">
-          <audio ref={audioRef} playsInline webkit-playsinline="true" preload="auto" />
           {/* Top Bar: Game Stats & Live Called Balls */}
           <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-1 shrink-0 h-12 w-full">
             {/* Left: Compact Game Stats - Distributed evenly */}
@@ -892,10 +907,25 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
       );
     }
 
+    return (
+      <div className="flex-1 flex flex-col h-full items-center justify-center bg-[#121421] text-white/20 p-10 text-center">
+         <RotateCw className="w-10 h-10 mb-4 animate-spin opacity-20" />
+         <p className="text-xs font-black uppercase tracking-[0.2em]">Connecting to Game Server...</p>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full items-center justify-center bg-[#121421] text-white/20 p-10 text-center">
-       <RotateCw className="w-10 h-10 mb-4 animate-spin opacity-20" />
-       <p className="text-xs font-black uppercase tracking-[0.2em]">Connecting to Game Server...</p>
+    <div className="flex-1 flex flex-col h-full w-full relative overflow-hidden">
+      {/* PERSISTENT AUDIO ELEMENT - NEVER UNMOUNTS */}
+      <audio 
+        ref={audioRef} 
+        playsInline 
+        webkit-playsinline="true" 
+        preload="auto" 
+        className="hidden" 
+      />
+      {renderContent()}
     </div>
   );
 };
