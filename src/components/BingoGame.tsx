@@ -17,6 +17,68 @@ let currentAudioElement: HTMLAudioElement | null = null;
 const ballAudioCache: Record<number, HTMLAudioElement> = {};
 const eventAudioCache: Record<string, HTMLAudioElement> = {};
 
+class BingoVoiceEngine {
+  audioCtx: AudioContext | null = null;
+  audioCache: Record<number, AudioBuffer> = {};
+
+  constructor() {
+    this.audioCtx = null;
+    this.audioCache = {};
+  }
+
+  initPipeline() {
+    if (this.audioCtx) return;
+    try {
+      // @ts-ignore
+      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+      console.log("🔊 Bingo Voice Pipeline successfully opened and unlocked!");
+    } catch (e) {
+      console.error("Failed to initialize Web Audio context:", e);
+    }
+  }
+
+  async playBallNumber(number: number) {
+    if (!this.audioCtx) {
+      console.warn("Audio Context not initialized. User must click entry button first.");
+      return;
+    }
+
+    try {
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
+      }
+
+      let audioBuffer = this.audioCache[number];
+
+      if (!audioBuffer) {
+        const extension = (number === 3 || number === 4) ? 'm4a' : 'mp3';
+        const response = await fetch(`/audio/voices/${number}.${extension}`);
+        if (!response.ok) throw new Error(`Audio file for ball ${number} not found.`);
+        
+        const arrayBuffer = await response.arrayBuffer();
+        audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
+        this.audioCache[number] = audioBuffer;
+      }
+
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioCtx.destination);
+      source.start(0);
+
+    } catch (error) {
+      console.error(`Bingo Voice Caller failed for ball ${number}:`, error);
+    }
+  }
+}
+
+// Instantiate globally
+if (typeof window !== 'undefined') {
+  (window as any).voiceEngine = new BingoVoiceEngine();
+}
+
 const preloadAudio = () => {
   // Preload ball numbers 1-75
   for (let i = 1; i <= 75; i++) {
@@ -211,7 +273,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
       const currentLength = roomState.calledBalls.length;
       if (currentLength > prevCalledBallsLengthRef.current) {
         const latestBall = roomState.calledBalls[currentLength - 1];
-        queueAudioItem({ type: 'ball', ball: latestBall }, soundEnabled);
+        if (soundEnabled && (window as any).voiceEngine) {
+          (window as any).voiceEngine.playBallNumber(latestBall);
+        }
       }
       prevCalledBallsLengthRef.current = currentLength;
     } else {
@@ -276,6 +340,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   }, [roomState?.players, userId, roomState?.status]);
 
   const toggleCard = (cardId: number) => {
+    if ((window as any).voiceEngine) {
+      (window as any).voiceEngine.initPipeline();
+    }
     if (roomState?.status !== 'lobby') {
       showNotification("Game already in progress. Wait for next round.", "info");
       return;
@@ -328,6 +395,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   };
 
   const handleClaimBingo = () => {
+    if ((window as any).voiceEngine) {
+      (window as any).voiceEngine.initPipeline();
+    }
     if (!selectedRoomId) return;
     socket?.emit('bingo_claim', { roomId: selectedRoomId, userId }, (res: any) => {
       if (res.success) {
@@ -455,7 +525,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
           <div className="flex flex-col gap-3">
             {/* 10 ETB Card */}
             <button
-              onClick={() => onRoomSelect('bingo-10')}
+              onClick={() => {
+                if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
+                onRoomSelect('bingo-10');
+              }}
               className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
@@ -481,7 +554,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
             {/* 20 ETB Card */}
             <button
-              onClick={() => onRoomSelect('bingo-20')}
+              onClick={() => {
+                if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
+                onRoomSelect('bingo-20');
+              }}
               className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
