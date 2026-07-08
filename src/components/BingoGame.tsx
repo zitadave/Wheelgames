@@ -9,91 +9,58 @@ type QueueItem = { type: 'event' | 'ball'; src: string };
 
 const audioQueue: QueueItem[] = [];
 let isPlayingAudio = false;
+let persistentAudio: HTMLAudioElement | null = null;
 
-// Web Audio API Global States
-let audioCtx: AudioContext | null = null;
-const audioBufferCache: Record<string, AudioBuffer> = {};
-let activeSourceNode: AudioBufferSourceNode | null = null;
-let currentHtmlAudio: HTMLAudioElement | null = null;
-
-const getAudioContext = (): AudioContext | null => {
+const getPersistentAudio = (): HTMLAudioElement | null => {
   if (typeof window === 'undefined') return null;
-  if (!audioCtx) {
+  if (!persistentAudio) {
     try {
-      audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      persistentAudio = new Audio();
+      persistentAudio.setAttribute('playsinline', 'true');
+      persistentAudio.setAttribute('webkit-playsinline', 'true');
+      persistentAudio.preload = 'auto';
+      
+      persistentAudio.onended = () => {
+        playNextAudio();
+      };
+      persistentAudio.onerror = (e) => {
+        console.warn("Persistent audio playback error, skipping to next:", e);
+        playNextAudio();
+      };
     } catch (e) {
-      console.warn("Web Audio API not supported:", e);
+      console.warn("Failed to create persistent Audio element:", e);
     }
   }
-  return audioCtx;
+  return persistentAudio;
 };
 
 const unlockAudioContext = () => {
-  const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') {
-    ctx.resume().catch(err => {
-      console.warn("Failed to resume AudioContext:", err);
-    });
-  }
-};
-
-const stopCurrentAudio = () => {
-  if (activeSourceNode) {
-    try {
-      activeSourceNode.stop();
-    } catch (e) {}
-    activeSourceNode = null;
-  }
-  if (currentHtmlAudio) {
-    try {
-      currentHtmlAudio.pause();
-    } catch (e) {}
-    currentHtmlAudio = null;
+  const audio = getPersistentAudio();
+  if (audio) {
+    audio.src = '/bingo_audio/the_game_has_started.mp3';
+    audio.load();
+    audio.play()
+      .then(() => {
+        audio.pause();
+        console.log("Audio successfully unlocked on user gesture!");
+      })
+      .catch(err => {
+        console.warn("Failed to unlock audio on user gesture:", err);
+      });
   }
 };
 
 const clearAudioQueue = () => {
   audioQueue.length = 0;
-  stopCurrentAudio();
+  if (persistentAudio) {
+    try {
+      persistentAudio.pause();
+    } catch (e) {}
+  }
   isPlayingAudio = false;
 };
 
-const fetchAndDecode = async (src: string): Promise<AudioBuffer> => {
-  if (audioBufferCache[src]) {
-    return audioBufferCache[src];
-  }
-
-  const response = await fetch(src);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch audio from ${src}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  const ctx = getAudioContext();
-  if (!ctx) {
-    throw new Error("AudioContext not initialized");
-  }
-
-  return new Promise<AudioBuffer>((resolve, reject) => {
-    try {
-      ctx.decodeAudioData(
-        arrayBuffer,
-        (decoded) => {
-          audioBufferCache[src] = decoded;
-          resolve(decoded);
-        },
-        (err) => {
-          reject(err || new Error("Decoding error"));
-        }
-      ).catch(err => {
-        reject(err);
-      });
-    } catch (e) {
-      reject(e);
-    }
-  });
-};
-
-const playNextAudio = async () => {
+const playNextAudio = () => {
   if (audioQueue.length === 0) {
     isPlayingAudio = false;
     return;
@@ -107,55 +74,21 @@ const playNextAudio = async () => {
   }
 
   try {
-    const buffer = await fetchAndDecode(item.src);
-    const ctx = getAudioContext();
-    if (!ctx) {
-      throw new Error("AudioContext not ready");
-    }
-
-    stopCurrentAudio();
-
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = 1.0;
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
-    activeSourceNode = source;
-
-    source.onended = () => {
-      if (activeSourceNode === source) {
-        activeSourceNode = null;
-      }
+    const audio = getPersistentAudio();
+    if (!audio) {
       playNextAudio();
-    };
-
-    source.start(0);
+      return;
+    }
+    
+    audio.src = item.src;
+    audio.load();
+    audio.play().catch(err => {
+      console.warn("Autoplay blocked or play failed for:", item.src, err);
+      playNextAudio();
+    });
   } catch (err) {
-    console.warn("Web Audio API failed or blocked, falling back to HTML5 Audio for:", item.src, err);
-    try {
-      stopCurrentAudio();
-      const audio = new Audio(item.src);
-      currentHtmlAudio = audio;
-      audio.onended = () => {
-        currentHtmlAudio = null;
-        playNextAudio();
-      };
-      audio.onerror = () => {
-        currentHtmlAudio = null;
-        playNextAudio();
-      };
-      audio.play().catch(playErr => {
-        console.warn("HTML5 audio playback blocked too:", playErr);
-        currentHtmlAudio = null;
-        playNextAudio();
-      });
-    } catch (fallbackErr) {
-      currentHtmlAudio = null;
-      playNextAudio();
-    }
+    console.warn("Error playing audio item:", item.src, err);
+    playNextAudio();
   }
 };
 
@@ -169,8 +102,7 @@ const queueAudioItem = (item: { type: 'event'; src: string } | { type: 'ball'; b
   if (item.type === 'event') {
     src = item.src;
   } else {
-    const extension = (item.ball === 3 || item.ball === 4) ? 'm4a' : 'mp3';
-    src = `/bingo_audio/${item.ball}.${extension}`;
+    src = `/bingo_audio/${item.ball}.mp3`;
   }
 
   audioQueue.push({ type: item.type, src });
