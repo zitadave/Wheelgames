@@ -40,13 +40,24 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   const [manuallyMarked, setManuallyMarked] = useState<Set<string>>(new Set());
   const [activeWinnerIdx, setActiveWinnerIdx] = useState<number>(0);
   const [showHelp, setShowHelp] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const unlockedRef = useRef(false);
 
+  const handleStartGame = () => {
+    unlockAudio();
+    setHasStarted(true);
+  };
+
   // Play next in queue
   const playNextInQueue = () => {
-    if (!audioRef.current || audioQueue.length === 0 || !soundEnabled) {
+    if (audioQueue.length === 0 || !soundEnabled) {
       isPlayingAudioGlobal = false;
+      return;
+    }
+
+    if (!audioRef.current) {
+      console.warn("Audio ref is null");
       return;
     }
 
@@ -59,6 +70,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     }
 
     try {
+      // Ensure unmuted and volume up for mobile
+      audioRef.current.muted = false;
+      audioRef.current.volume = 1;
+      
       audioRef.current.src = item.src;
       audioRef.current.load();
       const playPromise = audioRef.current.play();
@@ -90,8 +105,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   const unlockAudio = () => {
     if (audioRef.current && !unlockedRef.current) {
-      // In Safari/Telegram, we must play a sound directly in the gesture handler
-      // Using a silent base64 WAV ensures no network delay and instant "priming"
+      audioRef.current.muted = false;
+      audioRef.current.volume = 1;
+      
       const currentSrc = audioRef.current.src;
       audioRef.current.src = SILENT_WAV;
       
@@ -101,13 +117,13 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
         playPromise.then(() => {
           audioRef.current?.pause();
           unlockedRef.current = true;
-          // Restore previous src if any, otherwise leave it primed
           if (currentSrc && !currentSrc.startsWith('data:')) {
             audioRef.current!.src = currentSrc;
           }
-          console.log("Audio element successfully unlocked via silent WAV");
+          console.log("Audio unlocked successfully");
         }).catch(err => {
-          console.log("Audio unlock attempted:", err.name);
+          console.warn("Audio unlock failed:", err);
+          unlockedRef.current = false;
         });
       }
     }
@@ -329,6 +345,33 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   };
 
   const renderContent = () => {
+    if (!hasStarted) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0b14] p-8 text-center">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-xs space-y-8"
+          >
+            <div className="space-y-4">
+              <div className="w-20 h-20 bg-purple-500/20 rounded-3xl flex items-center justify-center mx-auto border border-purple-500/30">
+                <Volume2 className="w-10 h-10 text-purple-400" />
+              </div>
+              <h1 className="text-3xl font-black text-white tracking-tight">የኢትዮጵያ ቢንጎ</h1>
+              <p className="text-gray-400 text-sm leading-relaxed">ወደ ጨዋታው ለመግባት እና ድምጽ ለመክፈት ከታች ያለውን ይጫኑ</p>
+            </div>
+            
+            <button
+              onClick={handleStartGame}
+              className="w-full py-5 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl text-white font-bold text-lg shadow-xl shadow-purple-500/20 active:scale-95 transition-transform"
+            >
+              ጨዋታውን ይጀምሩ
+            </button>
+          </motion.div>
+        </div>
+      );
+    }
+
     if (!selectedRoomId) {
       return (
         <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
@@ -528,9 +571,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
-          {/* Dense Grid - smaller buttons, full width, 8 columns */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 custom-scrollbar">
-            <div className={`grid grid-cols-8 gap-1 ${selectedCards.length > 0 ? 'pb-52' : 'pb-16'}`}>
+          {/* Cleaner Grid - larger buttons */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 custom-scrollbar">
+            <div className={`grid grid-cols-6 gap-2 ${selectedCards.length > 0 ? 'pb-52' : 'pb-16'}`}>
               {Array.from({ length: 400 }, (_, i) => i + 1).map(id => {
                 const isTaken = allSelectedCards.has(id);
                 const isSelectedByMe = selectedCards.includes(id);
@@ -543,12 +586,12 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                         toggleCard(id);
                       }
                     }}
-                    className={`h-9 rounded-md font-medium text-[10px] transition-all border flex items-center justify-center shadow-sm ${
+                    className={`h-11 rounded-xl font-black text-xs transition-all border flex items-center justify-center shadow-sm ${
                       isSelectedByMe
                         ? 'bg-green-600 border-green-500 text-white shadow-green-500/30 scale-105 z-10 active:scale-90 cursor-pointer'
                         : isTaken
-                        ? 'bg-red-600 border-red-500 text-white cursor-not-allowed'
-                        : 'bg-[#1a1c2e] border-gray-800/50 text-gray-400 hover:border-gray-600 hover:bg-[#252841] active:scale-90 cursor-pointer'
+                        ? 'bg-red-600/20 border-red-500/30 text-red-400/50 cursor-not-allowed opacity-50'
+                        : 'bg-[#1a1c2e] border-white/5 text-gray-400 hover:border-gray-600 hover:bg-[#252841] active:scale-90 cursor-pointer'
                     }`}
                   >
                     <span>{id}</span>
@@ -595,64 +638,70 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
       return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0b14] w-full text-white select-none relative">
           {/* Top Bar: Game Stats & Live Called Balls */}
-          <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-1 shrink-0 h-12 w-full">
-            {/* Left: Compact Game Stats - Distributed evenly */}
-            <div className="flex items-center justify-between w-[135px] shrink-0">
-              <div className="flex flex-col flex-1 text-left">
-                <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-tighter">GAME ID</span>
-                <span className="text-[11px] font-black text-purple-400 font-mono leading-none">{roomState.gameId}</span>
+          <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-2 shrink-0 h-14 w-full">
+            {/* Left: Prize & Sound */}
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest leading-none mb-1">PRIZE (80%)</span>
+                <div className="flex items-center gap-1">
+                   <Coins className="w-4 h-4 text-yellow-500" />
+                   <span className="text-sm font-black text-white leading-none">
+                      {roomState.players && roomState.betAmount 
+                        ? (Object.keys(roomState.players).length * roomState.betAmount * 0.8).toFixed(0) 
+                        : '--'}
+                   </span>
+                </div>
               </div>
-              <div className="w-px h-5 bg-white/10 shrink-0 mx-1.5" />
-              <div className="flex flex-col flex-1 text-left">
-                <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-tighter">BET</span>
-                <span className="text-[11px] font-black text-white font-mono leading-none">{roomState.betAmount}</span>
-              </div>
+              <div className="w-px h-6 bg-white/10" />
+              <button 
+                onClick={() => {
+                  setSoundEnabled(!soundEnabled);
+                  if (!soundEnabled) unlockAudio();
+                }} 
+                className="p-2 text-green-400 active:scale-90 transition-transform bg-white/5 rounded-lg"
+              >
+                 {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              </button>
             </div>
 
-            {/* Right: Caller Ball + 4 Preceding Called Numbers (Horizontal layout) */}
+            {/* Right: Caller Ball + History */}
             <div className="flex items-center gap-2 justify-end">
-              {/* Dynamic Caller Ball (Latest) - Larger */}
               {roomState.calledBalls.length > 0 ? (
                 <motion.div 
                   key={`caller-ball-${roomState.calledBalls[roomState.calledBalls.length - 1]}`}
-                  initial={{ scale: 0.2, rotate: -180, opacity: 0 }}
-                  animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 20 }}
-                  className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-600 flex items-center justify-center shadow-[0_0_10px_rgba(249,115,22,0.7)] border border-white/25 select-none shrink-0"
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-400 to-orange-600 flex items-center justify-center shadow-lg border border-white/20 shrink-0"
                 >
-                  <span className="text-[17px] font-black text-purple-950 font-mono leading-none tracking-tighter drop-shadow-sm">
+                  <span className="text-xl font-black text-purple-950 font-mono tracking-tighter">
                     {(() => {
                       const lastBall = roomState.calledBalls[roomState.calledBalls.length - 1];
                       const letter = lastBall <= 15 ? 'B' : lastBall <= 30 ? 'I' : lastBall <= 45 ? 'N' : lastBall <= 60 ? 'G' : 'O';
-                      return `${letter}-${lastBall}`;
+                      return `${letter}${lastBall}`;
                     })()}
                   </span>
                 </motion.div>
               ) : (
-                <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-                  <span className="text-[13px] font-black text-gray-500 font-mono leading-none">--</span>
+                <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                  <span className="text-lg font-black text-gray-500 font-mono">--</span>
                 </div>
               )}
 
-              {/* 4 Preceding Called Numbers (horizontal layout, larger size) */}
-              <div className="flex items-center gap-1 select-none shrink-0">
+              <div className="flex items-center gap-1 shrink-0 overflow-hidden">
                 {(roomState.calledBalls.length > 1 
-                  ? roomState.calledBalls.slice(0, -1).slice(-4).reverse() 
+                  ? roomState.calledBalls.slice(0, -1).slice(-3).reverse() 
                   : []
                 ).map((ball, i) => (
-                  <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black border leading-none text-center shrink-0 shadow-sm ${
+                  <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black border leading-none shrink-0 ${
                     ball <= 15 ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
                     ball <= 30 ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
                     ball <= 45 ? 'bg-pink-500/10 border-pink-500/30 text-pink-400' :
                     ball <= 60 ? 'bg-green-500/10 border-green-500/30 text-green-400' :
                     'bg-orange-500/10 border-orange-500/30 text-orange-400'
                   }`}>
-                    {ball <= 15 ? 'B' : ball <= 30 ? 'I' : ball <= 45 ? 'N' : ball <= 60 ? 'G' : 'O'}-{ball}
+                    {ball}
                   </div>
                 ))}
-                {roomState.calledBalls.length <= 1 && (
-                  <span className="text-[9px] text-gray-500 font-black">--</span>
-                )}
               </div>
             </div>
           </div>
@@ -750,22 +799,13 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                    
                    {/* Main Large Ball */}
                    <div className="relative">
-                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-600 flex items-center justify-center shadow-[0_0_20px_rgba(249,115,22,0.4)] border-2 border-white/10 ring-2 ring-orange-500/20">
-                         <span className="text-xl font-black text-purple-900 drop-shadow-sm">
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-600 flex items-center justify-center shadow-[0_0_30px_rgba(249,115,22,0.4)] border-2 border-white/20 ring-4 ring-orange-500/10 scale-110">
+                         <span className="text-2xl font-black text-purple-900 drop-shadow-sm">
                            {roomState.calledBalls.length > 0 
-                            ? `${roomState.calledBalls[roomState.calledBalls.length - 1] <= 15 ? 'B' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 30 ? 'I' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 45 ? 'N' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 60 ? 'G' : 'O'}-${roomState.calledBalls[roomState.calledBalls.length - 1]}`
+                            ? `${roomState.calledBalls[roomState.calledBalls.length - 1] <= 15 ? 'B' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 30 ? 'I' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 45 ? 'N' : roomState.calledBalls[roomState.calledBalls.length - 1] <= 60 ? 'G' : 'O'}${roomState.calledBalls[roomState.calledBalls.length - 1]}`
                             : '--'}
                          </span>
                       </div>
-                      <button 
-                        onClick={() => {
-                          setSoundEnabled(!soundEnabled);
-                          if (!soundEnabled) unlockAudio();
-                        }} 
-                        className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform"
-                      >
-                         {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                      </button>
                    </div>
 
                    <div className="w-10" /> {/* Spacer */}
@@ -820,28 +860,21 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
             </div>
           </div>
 
-          {/* Action Footer - Very compact */}
-          <div className="p-1.5 bg-[#121421] border-t border-white/10 flex gap-1.5 shrink-0">
-            <button onClick={() => { handleLeave(); onRoomSelect(null); }} className="flex-1 bg-gradient-to-br from-orange-500 to-orange-600 text-white font-black py-2 rounded-lg shadow-md active:scale-95 transition-transform text-[10px] uppercase">Leave</button>
+          {/* Action Footer - Very prominent Bingo button */}
+          <div className="p-3 bg-[#121421] border-t border-white/10 flex gap-2 shrink-0">
             <button 
-              onClick={() => {
-                if (selectedRoomId) {
-                  socket?.emit('bingo_get_state', selectedRoomId);
-                  showNotification("Game state refreshed", "success");
-                }
-              }}
-              className="flex-1 bg-gradient-to-br from-red-500 to-red-600 text-white font-black py-2 rounded-lg shadow-md active:scale-95 transition-transform text-[10px] uppercase flex items-center justify-center gap-1"
+              onClick={() => { handleLeave(); onRoomSelect(null); }} 
+              className="px-4 bg-white/5 text-gray-400 font-bold py-4 rounded-xl active:scale-95 transition-transform text-xs uppercase"
             >
-              <RotateCw className="w-3 h-3" />
-              Refresh
+              Leave
             </button>
             <button 
               disabled={selectedCards.length === 0}
               onClick={handleClaimBingo} 
-              className={`flex-[1.5] bg-gradient-to-br text-black font-black py-2 rounded-lg shadow-md active:scale-95 transition-transform text-xs uppercase tracking-wider ${
+              className={`flex-1 bg-gradient-to-br text-black font-black py-4 rounded-xl shadow-xl active:scale-95 transition-transform text-lg uppercase tracking-widest ${
                 selectedCards.length === 0 
                   ? 'from-gray-600 to-gray-700 text-gray-400 cursor-not-allowed opacity-50 shadow-none' 
-                  : 'from-yellow-400 via-yellow-500 to-yellow-600 shadow-yellow-500/20'
+                  : 'from-yellow-400 via-yellow-500 to-yellow-600 shadow-yellow-500/30'
               }`}
             >
               BINGO!
@@ -949,6 +982,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
         playsInline 
         webkit-playsinline="true" 
         preload="auto" 
+        muted
         className="hidden" 
       />
       {renderContent()}
