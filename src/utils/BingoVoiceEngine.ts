@@ -1,6 +1,6 @@
 class BingoVideoAudioEngine {
   audioCtx: AudioContext | null;
-  audioCache: Record<number, AudioBuffer>;
+  audioCache: Record<number, AudioBuffer | HTMLAudioElement>;
   videoKey: HTMLVideoElement | null;
 
   constructor() {
@@ -26,37 +26,59 @@ class BingoVideoAudioEngine {
       }).catch(err => console.error(err));
     } catch (e) { console.error(e); }
   }
-
-  async preloadAllVoices(totalBalls = 75) {
-    if (!this.audioCtx) {
-       this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    for (let i = 1; i <= totalBalls; i++) {
+  async playBallNumber(number: number) {
+    const audioUrl = `/audio/voices/${number}.mp3`;
+    try {
+      if (this.audioCtx && this.audioCtx.state === 'suspended') await this.audioCtx.resume();
+      if (this.audioCache[number] instanceof AudioBuffer) {
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = this.audioCache[number];
+        source.connect(this.audioCtx.destination);
+        source.start(0);
+        return;
+      }
+      if (this.audioCache[number] instanceof Audio) {
+        this.audioCache[number].currentTime = 0;
+        this.audioCache[number].play().catch(e => console.error(e));
+        return;
+      }
+      const response = await fetch(audioUrl);
+      if (!response.ok) throw new Error(`Status ${response.status}`);
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        console.error(`❌ CRITICAL: Fetching "${audioUrl}" returned an HTML webpage instead of an MP3 audio file! Paths or public routing are incorrect.`);
+        this.playViaAudioElementFallback(number, audioUrl);
+        return;
+      }
+      const arrayBuffer = await response.arrayBuffer();
       try {
-        const response = await fetch(`/audio/voices/${i}.mp3`);
-        if (!response.ok) continue;
-        const arrayBuffer = await response.arrayBuffer();
-        this.audioCache[i] = await this.audioCtx.decodeAudioData(arrayBuffer);
-      } catch (e) { console.warn(e); }
+        const decodedBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
+        this.audioCache[number] = decodedBuffer;
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = decodedBuffer;
+        source.connect(this.audioCtx.destination);
+        source.start(0);
+      } catch (decodeError) {
+        console.warn(`⚠️ decodeAudioData failed for ${number}. Falling back to native HTML5 Audio element.`, decodeError);
+        this.playViaAudioElementFallback(number, audioUrl);
+      }
+    } catch (error) {
+      console.error(error);
+      this.playViaAudioElementFallback(number, audioUrl);
     }
   }
-
-  async playBallNumber(number: number) {
-    if (!this.audioCtx) return;
+  playViaAudioElementFallback(number: number, url: string) {
     try {
-      if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
-      let audioBuffer = this.audioCache[number];
-      if (!audioBuffer) {
-        const response = await fetch(`/audio/voices/${number}.mp3`);
-        const arrayBuffer = await response.arrayBuffer();
-        audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
-        this.audioCache[number] = audioBuffer;
-      }
-      const source = this.audioCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioCtx.destination);
-      source.start(0);
-    } catch (error) { console.error(error); }
+      const audio = new Audio(url);
+      this.audioCache[number] = audio;
+      audio.play().catch(err => {
+        console.warn(`Primary audio playback failed for ${url}, trying alternative extension.`, err);
+        const altUrl = url.endsWith('.mp3') ? url.replace('.mp3', '.m4a') : url.replace('.m4a', '.mp3');
+        const audioAlt = new Audio(altUrl);
+        this.audioCache[number] = audioAlt;
+        audioAlt.play().catch(errAlt => console.error(`Fallback playback also failed for ${altUrl}`, errAlt));
+      });
+    } catch (e) { console.error(e); }
   }
 }
 (window as any).voiceEngine = new BingoVideoAudioEngine();
