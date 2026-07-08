@@ -1,6 +1,6 @@
 {
   "name": "Wheel Bet",
-  "description": "An interactive, real-time multiplayer wheel betting arena and traditional Bingo game with elegant statistics and simulated ledger.",
+  "description": "An interactive traditional Bingo game featuring a custom-made human caller voice (1-75) and a highly simplified, user-friendly interface, alongside a real-time multiplayer wheel betting arena.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

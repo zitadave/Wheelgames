@@ -4,55 +4,22 @@ import { BingoRoomState } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, Clock, History, AlertCircle, Coins, ChevronLeft, Volume2, VolumeX, RefreshCw, RotateCw, HelpCircle, X } from 'lucide-react';
 import { getDeterministicCard } from '../utils/bingo';
-import { playAudioUrl, stopCurrentAudio, resumeAudio, playAudioViaElement, stopAudioViaElement, initUnlockedAudio, playCallerVoice } from '../utils/sound';
 
 type QueueItem = 
-  | { type: 'event', src: string }
-  | { type: 'ball', ball: number };
+  | { type: 'event', src: string, audio: HTMLAudioElement }
+  | { type: 'ball', ball: number, audio: HTMLAudioElement };
 
 const audioQueue: QueueItem[] = [];
 let isPlayingAudio = false;
-
-// Audio context and user-gesture unlocking for mobile/Telegram WebApp
-let audioUnlocked = false;
-
-export const unlockBingoAudio = () => {
-  if (audioUnlocked) return;
-  try {
-    resumeAudio();
-    initUnlockedAudio();
-    audioUnlocked = true;
-    console.log("Bingo audio successfully unlocked on user gesture");
-  } catch (e) {
-    console.warn("Error unlocking audio:", e);
-  }
-};
-
-if (typeof document !== 'undefined') {
-  const triggerUnlock = () => {
-    unlockBingoAudio();
-    document.removeEventListener('click', triggerUnlock);
-    document.removeEventListener('touchstart', triggerUnlock);
-  };
-  document.addEventListener('click', triggerUnlock, { passive: true });
-  document.addEventListener('touchstart', triggerUnlock, { passive: true });
-}
+let currentAudioElement: HTMLAudioElement | null = null;
 
 const clearAudioQueue = () => {
   audioQueue.length = 0;
-  try {
-    stopCurrentAudio();
-    stopAudioViaElement();
-  } catch (e) {
-    console.warn("stopCurrentAudio failed:", e);
+  if (currentAudioElement) {
+    currentAudioElement.pause();
+    currentAudioElement = null;
   }
-  if (typeof window !== 'undefined' && window.speechSynthesis) {
-    try {
-      window.speechSynthesis.cancel();
-    } catch (e) {
-      console.warn("speechSynthesis.cancel failed:", e);
-    }
-  }
+  window.speechSynthesis.cancel();
   isPlayingAudio = false;
 };
 
@@ -69,23 +36,32 @@ const playNextAudio = () => {
     return;
   }
 
-  let url = '';
-  if (item.type === 'event') {
-    url = item.src;
-  } else {
-    url = `/bingo_audio/${item.ball}.mp3`;
-  }
-
-  playCallerVoice(
-    url,
-    item.type === 'ball' ? item.ball : null,
-    () => {
+  currentAudioElement = item.audio;
+  currentAudioElement.onended = () => {
+    currentAudioElement = null;
+    playNextAudio();
+  };
+  currentAudioElement.onerror = () => {
+    currentAudioElement = null;
+    if (item.type === 'ball') {
+      fallbackToTTS(item.ball, () => {
+        playNextAudio();
+      });
+    } else {
       playNextAudio();
-    },
-    (ball, onEnd) => {
-      fallbackToTTS(ball, onEnd);
     }
-  );
+  };
+  currentAudioElement.play().catch(err => {
+    console.warn("Audio play failed", err);
+    currentAudioElement = null;
+    if (item.type === 'ball') {
+      fallbackToTTS(item.ball, () => {
+        playNextAudio();
+      });
+    } else {
+      playNextAudio();
+    }
+  });
 };
 
 const queueAudioItem = (item: { type: 'event', src: string } | { type: 'ball', ball: number }, enabled: boolean) => {
@@ -94,10 +70,22 @@ const queueAudioItem = (item: { type: 'event', src: string } | { type: 'ball', b
     return;
   }
 
-  // Ensure sound is active on any item queuing
-  unlockBingoAudio();
+  let audio: HTMLAudioElement | undefined;
+  try {
+    if (item.type === 'event') {
+      audio = new Audio(item.src);
+    } else {
+      const extension = (item.ball === 3 || item.ball === 4) ? 'm4a' : 'mp3';
+      audio = new Audio(`/bingo_audio/${item.ball}.${extension}`);
+    }
+    audio.preload = 'auto';
+  } catch(e) {
+    console.warn("Could not preload audio", e);
+  }
 
-  audioQueue.push(item);
+  if (!audio) return;
+  
+  audioQueue.push({ ...item, audio } as QueueItem);
   
   if (!isPlayingAudio) {
     playNextAudio();
@@ -129,45 +117,35 @@ const fallbackToTTS = (ball: number, onEnd: () => void) => {
   const numAmh = amharicNumbers[ball] || ball.toString();
   const textToSpeak = `${letterAmh} ${numAmh}`;
   
-  if (typeof window !== 'undefined' && window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined') {
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      const voices = window.speechSynthesis.getVoices();
-      
-      const amharicVoices = voices.filter(v => v.lang && v.lang.startsWith('am'));
-      let chosenVoice = amharicVoices.find(v => v.name && (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david') || v.name.toLowerCase().includes('google')));
-      if (!chosenVoice && amharicVoices.length > 0) {
-        chosenVoice = amharicVoices[0];
-      }
-      
-      if (chosenVoice) {
-        utterance.voice = chosenVoice;
-        utterance.lang = chosenVoice.lang;
-      } else {
-        utterance.lang = 'am-ET';
-      }
-
-      utterance.pitch = 0.75;
-      utterance.rate = 0.78;
-      utterance.volume = 1.0;
-      
-      utterance.onend = () => {
-        onEnd();
-      };
-      utterance.onerror = () => {
-        onEnd();
-      };
-      
-      window.speechSynthesis.speak(utterance);
-      return;
-    } catch (e) {
-      console.warn("Speech synthesis execution failed, bypassing", e);
-    }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(textToSpeak);
+  const voices = window.speechSynthesis.getVoices();
+  
+  const amharicVoices = voices.filter(v => v.lang.startsWith('am'));
+  let chosenVoice = amharicVoices.find(v => v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david') || v.name.toLowerCase().includes('google'));
+  if (!chosenVoice && amharicVoices.length > 0) {
+    chosenVoice = amharicVoices[0];
   }
   
-  // Safe instant fallback callback to keep the queue running when Speech Synthesis is missing
-  onEnd();
+  if (chosenVoice) {
+    utterance.voice = chosenVoice;
+    utterance.lang = chosenVoice.lang;
+  } else {
+    utterance.lang = 'am-ET';
+  }
+
+  utterance.pitch = 0.75;
+  utterance.rate = 0.78;
+  utterance.volume = 1.0;
+  
+  utterance.onend = () => {
+    onEnd();
+  };
+  utterance.onerror = () => {
+    onEnd();
+  };
+  
+  window.speechSynthesis.speak(utterance);
 };
 
 interface BingoGameProps {
@@ -196,75 +174,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   const [manuallyMarked, setManuallyMarked] = useState<Set<string>>(new Set());
   const [activeWinnerIdx, setActiveWinnerIdx] = useState<number>(0);
   const [showHelp, setShowHelp] = useState(false);
-
-  const [audioIsUnlocked, setAudioIsUnlocked] = useState(() => audioUnlocked);
-  const [audioStatusMsg, setAudioStatusMsg] = useState<'none' | 'success' | 'playing'>('none');
-
-  useEffect(() => {
-    const handleGesture = () => {
-      if (audioUnlocked) {
-        setAudioIsUnlocked(true);
-      }
-    };
-    document.addEventListener('click', handleGesture, { passive: true });
-    document.addEventListener('touchstart', handleGesture, { passive: true });
-    return () => {
-      document.removeEventListener('click', handleGesture);
-      document.removeEventListener('touchstart', handleGesture);
-    };
-  }, []);
-
-  const handleUnlockAndPlayTest = () => {
-    unlockBingoAudio();
-    setAudioIsUnlocked(true);
-    setAudioStatusMsg('playing');
-    
-    // Play the start game mp3 as a nice voice/audio test
-    playAudioUrl('/bingo_audio/the_game_has_started.mp3', () => {
-      setAudioStatusMsg('success');
-      setTimeout(() => {
-        setAudioStatusMsg('none');
-      }, 3500);
-    });
-  };
-
-  const renderAudioUnlockBanner = () => {
-    if (!soundEnabled) return null;
-    
-    if (!audioIsUnlocked || audioStatusMsg !== 'none') {
-      return (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="shrink-0 w-full z-50 shadow-md"
-        >
-          {(!audioIsUnlocked || audioStatusMsg === 'playing') ? (
-            <button
-              onClick={handleUnlockAndPlayTest}
-              className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white font-extrabold text-[11px] py-2.5 px-3.5 flex items-center justify-between gap-2 cursor-pointer hover:brightness-110 active:scale-[0.99] transition-all select-none border-b border-emerald-500/20"
-            >
-              <div className="flex items-center gap-2">
-                <Volume2 className="w-4.5 h-4.5 text-yellow-300 animate-bounce shrink-0" />
-                <span className="text-left leading-tight">
-                  {audioStatusMsg === 'playing' 
-                    ? "🔊 Playing test sound, turn up your volume! / ድምፅ እየተሞከረ ነው..."
-                    : "👉 Tap here to unlock Caller Voice / የደዋዩን ድምፅ ለመክፈት እዚህ ይጫኑ 🔊"}
-                </span>
-              </div>
-              <span className="bg-yellow-400 text-purple-950 px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider shrink-0 animate-pulse">
-                {audioStatusMsg === 'playing' ? "Testing" : "Unlock / ክፈት"}
-              </span>
-            </button>
-          ) : (
-            <div className="w-full bg-emerald-500 text-white font-black text-[11px] py-2 px-3.5 flex items-center gap-2 justify-center border-b border-emerald-400/20">
-              <span>✅ Speaker Activated! Ready for live caller voice. / ድምፅ በተሳካ ሁኔታ ተከፍቷል!</span>
-            </div>
-          )}
-        </motion.div>
-      );
-    }
-    return null;
-  };
 
   const allSelectedCards = useMemo(() => {
     const cards = new Set<number>();
@@ -328,7 +237,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   }, [roomState?.status]);
 
   const toggleManualMark = (cardId: number, num: number) => {
-    unlockBingoAudio();
     if (highlightMode !== 'manual') return;
     
     // When a number is clicked, mark/unmark it across ALL selected cards simultaneously
@@ -376,7 +284,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   }, [roomState?.players, userId, roomState?.status]);
 
   const toggleCard = (cardId: number) => {
-    unlockBingoAudio();
     if (roomState?.status !== 'lobby') {
       showNotification("Game already in progress. Wait for next round.", "info");
       return;
@@ -429,7 +336,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   };
 
   const handleClaimBingo = () => {
-    unlockBingoAudio();
     if (!selectedRoomId) return;
     socket?.emit('bingo_claim', { roomId: selectedRoomId, userId }, (res: any) => {
       if (res.success) {
@@ -443,7 +349,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (!selectedRoomId) {
     return (
       <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
-        {renderAudioUnlockBanner()}
         {/* Help Modal Overlay */}
         <AnimatePresence>
           {showHelp && (
@@ -621,7 +526,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (selectedRoomId && roomState?.status === 'lobby') {
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
-        {renderAudioUnlockBanner()}
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
           {/* Dense Grid - smaller buttons, full width, 8 columns */}
@@ -690,7 +594,6 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   if (roomState?.status === 'playing' || roomState?.status === 'result') {
       return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0b14] w-full text-white select-none relative">
-          {renderAudioUnlockBanner()}
           {/* Top Bar: Game Stats & Live Called Balls */}
           <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-1 shrink-0 h-12 w-full">
             {/* Left: Compact Game Stats - Distributed evenly */}
@@ -854,7 +757,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                             : '--'}
                          </span>
                       </div>
-                      <button onClick={() => { unlockBingoAudio(); setSoundEnabled(!soundEnabled); }} className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform">
+                      <button onClick={() => setSoundEnabled(!soundEnabled)} className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform">
                          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                       </button>
                    </div>

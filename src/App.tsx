@@ -5,7 +5,7 @@ import { Wheel } from './components/Wheel';
 import { JackpotArena } from './components/JackpotArena';
 import { WheelOfChance } from './components/WheelOfChance';
 import { Leaderboard } from './components/Leaderboard';
-import { BingoGame, unlockBingoAudio } from './components/BingoGame';
+import { BingoGame } from './components/BingoGame';
 import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Settings, X, HelpCircle, Search, Trophy, Gamepad2, TrendingUp, Wallet, User, Plus, ArrowUpRight, ArrowDownLeft, Copy, Check, ChevronRight, Dices, Binary, RefreshCw, Info, Award, Grid3X3, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playWin, playLoss, suspendAudio, resumeAudio } from './utils/sound';
@@ -181,7 +181,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const soundAlertsRef = useRef(true);
   
-  const [activeTab, setActiveTab] = useState<'even_odd' | 'jackpot' | 'chance' | 'bingo' | 'profile'>('even_odd');
+  const [activeTab, setActiveTab] = useState<'even_odd' | 'jackpot' | 'chance' | 'bingo' | 'profile'>('bingo');
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -822,7 +822,7 @@ export default function App() {
                   
                   {activeTab === 'bingo' && bingoRoomState && (bingoRoomState.status === 'playing' || bingoRoomState.status === 'result') && !(!selectedBingoRoomId) && (
                     <button
-                      onClick={() => { unlockBingoAudio(); setBingoSoundEnabled(!bingoSoundEnabled); }}
+                      onClick={() => setBingoSoundEnabled(!bingoSoundEnabled)}
                       className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer flex items-center justify-center w-8 h-8 shrink-0 select-none animate-in fade-in duration-300"
                       title={bingoSoundEnabled ? "Mute Caller Voice" : "Unmute Caller Voice"}
                     >
@@ -1323,7 +1323,7 @@ export default function App() {
         {!isJackpotTheaterMode && (
           <nav id="bottom-navigation-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex justify-around items-center py-1.5 px-1 z-40 transition-colors duration-300 shadow-lg shrink-0 w-full max-w-md mx-auto">
             <button
-              onClick={() => { unlockBingoAudio(); resumeAudio(); setActiveTab('even_odd'); }}
+              onClick={() => setActiveTab('even_odd')}
               className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
                 activeTab === 'even_odd' 
                   ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
@@ -1335,7 +1335,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => { unlockBingoAudio(); resumeAudio(); setActiveTab('jackpot'); }}
+              onClick={() => setActiveTab('jackpot')}
               className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
                 activeTab === 'jackpot' 
                   ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
@@ -1347,7 +1347,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => { unlockBingoAudio(); resumeAudio(); setActiveTab('chance'); }}
+              onClick={() => setActiveTab('chance')}
               className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
                 activeTab === 'chance' 
                   ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
@@ -1359,7 +1359,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => { unlockBingoAudio(); resumeAudio(); setActiveTab('bingo'); }}
+              onClick={() => setActiveTab('bingo')}
               className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
                 activeTab === 'bingo' 
                   ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
