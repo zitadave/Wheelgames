@@ -119,7 +119,6 @@ export class VoiceCallerEngine {
       const audioNode = new Audio(targetUrl);
 
       audioNode.preload = 'auto';
-      audioNode.playsInline = true;
 
       audioNode.play()
         .then(() => {
