@@ -826,7 +826,12 @@ export default function App() {
                   
                   {activeTab === 'bingo' && bingoRoomState && (bingoRoomState.status === 'playing' || bingoRoomState.status === 'result') && !(!selectedBingoRoomId) && (
                     <button
-                      onClick={() => setBingoSoundEnabled(!bingoSoundEnabled)}
+                      onClick={() => {
+                        if ((window as any).voiceEngine) {
+                          (window as any).voiceEngine.initPipeline();
+                        }
+                        setBingoSoundEnabled(!bingoSoundEnabled);
+                      }}
                       className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer flex items-center justify-center w-8 h-8 shrink-0 select-none animate-in fade-in duration-300"
                       title={bingoSoundEnabled ? "Mute Caller Voice" : "Unmute Caller Voice"}
                     >

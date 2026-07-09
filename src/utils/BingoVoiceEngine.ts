@@ -76,21 +76,36 @@ export class VoiceCallerEngine {
         const name = namesToTry[index];
         const targetUrl = this.getAudioUrl(name);
 
+        // Attempt 1: Try loading via Web Audio API (html5: false) for high-performance low-latency playback
         const sound = new Howl({
           src: [targetUrl],
           format: ['mp3'],
-          // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
           html5: false,
           preload: true,
           onload: () => {
-            // Cache the loaded sound under original requested fileName and working name
             this.sounds.set(fileName, sound);
             this.sounds.set(name, sound);
             resolve(sound);
           },
           onloaderror: (id, err) => {
-            console.log(`ℹ️ Failed to load [${name}], trying next fallback...`);
-            tryNext(index + 1);
+            console.log(`ℹ️ Failed to load [${name}] via Web Audio, trying HTML5 Audio fallback...`);
+            
+            // Attempt 2: Fallback to HTML5 Audio element which is much less constrained by WebView AudioContext locks
+            const fallbackSound = new Howl({
+              src: [targetUrl],
+              format: ['mp3'],
+              html5: true,
+              preload: true,
+              onload: () => {
+                this.sounds.set(fileName, fallbackSound);
+                this.sounds.set(name, fallbackSound);
+                resolve(fallbackSound);
+              },
+              onloaderror: (id2, err2) => {
+                console.log(`ℹ️ Failed to load [${name}] via HTML5 Audio too, trying next file fallback...`);
+                tryNext(index + 1);
+              }
+            });
           }
         });
       };
@@ -180,6 +195,8 @@ export class VoiceCallerEngine {
       return;
     }
 
+    let playTimeout: NodeJS.Timeout | null = null;
+
     try {
       const sound = await this.loadSound(fileName);
       this.currentSound = sound;
@@ -189,24 +206,34 @@ export class VoiceCallerEngine {
         await Howler.ctx.resume().catch(() => {});
       }
 
+      // Deeply defensive: Set a safety timeout to ensure the playback queue never gets permanently locked 
+      // if the browser or platform silently blocks the audio without firing 'playerror' or 'end'.
+      playTimeout = setTimeout(() => {
+        console.warn(`⏳ Playback safety timeout reached for [${fileName}]. Releasing lock to keep caller active.`);
+        this.currentSound = null;
+        this.isPlaying = false;
+        this.processQueue();
+      }, 4000);
+
       sound.play();
+      
       sound.once('end', () => {
+        if (playTimeout) clearTimeout(playTimeout);
         this.currentSound = null;
         this.isPlaying = false;
         this.processQueue();
       });
+
       sound.once('playerror', (id, err) => {
+        if (playTimeout) clearTimeout(playTimeout);
         console.warn(`⚠️ Play error for asset [${fileName}]:`, err);
-        // Sometimes audio needs a manual unlock
-        sound.once('unlock', () => {
-          sound.play();
-        });
         
         this.currentSound = null;
         this.isPlaying = false;
         this.processQueue();
       });
     } catch (e) {
+      if (playTimeout) clearTimeout(playTimeout);
       this.currentSound = null;
       this.isPlaying = false;
       this.processQueue();
@@ -216,3 +243,17 @@ export class VoiceCallerEngine {
 
 export const globalVoiceEngine = new VoiceCallerEngine();
 (window as any).voiceEngine = globalVoiceEngine;
+
+// Proactive user-gesture listener to unlock audio contexts as soon as the user touches/clicks anywhere
+if (typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    globalVoiceEngine.init();
+    if (Howler.ctx && Howler.ctx.state === 'suspended') {
+      Howler.ctx.resume().catch(() => {});
+    }
+    window.removeEventListener('click', unlockAudio);
+    window.removeEventListener('touchstart', unlockAudio);
+  };
+  window.addEventListener('click', unlockAudio);
+  window.addEventListener('touchstart', unlockAudio);
+}
