@@ -11,9 +11,7 @@ export class VoiceCallerEngine {
   private currentSound: Howl | null = null;
 
   constructor() {
-    // We use relative paths now, but if there's any routing issue we could use absolute paths
-    const origin = window.location.origin.replace(/\/$/, "");
-    this.baseDir = `${origin}/audio/voices`;
+    this.baseDir = '/audio/voices';
   }
 
   public initPipeline(): void {
@@ -55,28 +53,53 @@ export class VoiceCallerEngine {
     }
 
     return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      // Deep safety load timeout: if loading takes more than 3 seconds, reject to keep the caller active
+      const loadTimeoutId = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          console.warn(`⏳ Audio load timeout reached for [${fileName}]. Rejecting promise to unblock caller queue.`);
+          reject(new Error(`Load timeout for ${fileName}`));
+        }
+      }, 3000);
+
+      const safeResolve = (sound: Howl) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(loadTimeoutId);
+          resolve(sound);
+        }
+      };
+
+      const safeReject = (err: Error) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(loadTimeoutId);
+          reject(err);
+        }
+      };
+
       // Define all possible filenames for this sound (including fallbacks)
       let namesToTry: string[] = [fileName];
-      if (fileName === 'the_game_has_started') {
+      if (fileName === 'the_game_has_started' || fileName === 'ጨዋታው ተጀምሯል' || fileName === 'ጨዋታው ተጀምሯል ') {
         namesToTry = ['ጨዋታው ተጀምሯል ', 'ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
-      } else if (fileName === 'ጨዋታው ተጀምሯል' || fileName === 'ጨዋታው ተጀምሯል ') {
-        namesToTry = ['ጨዋታው ተጀምሯል ', 'ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
-      } else if (fileName === 'bingo') {
-        namesToTry = ['ቢንጎ', 'bingo'];
-      } else if (fileName === 'ቢንጎ') {
+      } else if (fileName === 'bingo' || fileName === 'ቢንጎ') {
         namesToTry = ['ቢንጎ', 'bingo'];
       }
 
       const tryNext = (index: number) => {
         if (index >= namesToTry.length) {
           console.warn(`⚠️ Failed to load asset [${fileName}] and all fallbacks.`);
-          return reject(new Error(`Failed to load ${fileName}`));
+          return safeReject(new Error(`Failed to load ${fileName}`));
         }
 
         const name = namesToTry[index];
         const targetUrl = this.getAudioUrl(name);
 
-        // Attempt 1: Try loading via Web Audio API (html5: false) for high-performance low-latency playback
+        // Web Audio API (html5: false) is extremely high-performance and reliable for game sound segments
+        // because it downloads the full asset over XHR/fetch, triggering 'onload' reliably even
+        // when the browser's autoplay policies have suspended the AudioContext.
         const sound = new Howl({
           src: [targetUrl],
           format: ['mp3'],
@@ -85,12 +108,12 @@ export class VoiceCallerEngine {
           onload: () => {
             this.sounds.set(fileName, sound);
             this.sounds.set(name, sound);
-            resolve(sound);
+            safeResolve(sound);
           },
           onloaderror: (id, err) => {
             console.log(`ℹ️ Failed to load [${name}] via Web Audio, trying HTML5 Audio fallback...`);
             
-            // Attempt 2: Fallback to HTML5 Audio element which is much less constrained by WebView AudioContext locks
+            // Fallback to HTML5 Audio element
             const fallbackSound = new Howl({
               src: [targetUrl],
               format: ['mp3'],
@@ -99,7 +122,7 @@ export class VoiceCallerEngine {
               onload: () => {
                 this.sounds.set(fileName, fallbackSound);
                 this.sounds.set(name, fallbackSound);
-                resolve(fallbackSound);
+                safeResolve(fallbackSound);
               },
               onloaderror: (id2, err2) => {
                 console.log(`ℹ️ Failed to load [${name}] via HTML5 Audio too, trying next file fallback...`);
