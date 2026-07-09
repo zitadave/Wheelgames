@@ -46,7 +46,7 @@ export class VoiceCallerEngine {
    * Builds a guaranteed clean, fully qualified absolute URL.
    */
   private getAudioUrl(fileName: string): string {
-    return `${this.baseDir}/${fileName}.mp3`;
+    return encodeURI(`${this.baseDir}/${fileName}.mp3`);
   }
 
   private loadSound(fileName: string): Promise<Howl> {
@@ -58,11 +58,11 @@ export class VoiceCallerEngine {
       // Define all possible filenames for this sound (including fallbacks)
       let namesToTry: string[] = [fileName];
       if (fileName === 'the_game_has_started') {
-        namesToTry = ['the_game_has_started', 'ጨዋታው ተጀምሯል', 'game_start'];
-      } else if (fileName === 'ጨዋታው ተጀምሯል') {
-        namesToTry = ['ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
+        namesToTry = ['ጨዋታው ተጀምሯል ', 'ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
+      } else if (fileName === 'ጨዋታው ተጀምሯል' || fileName === 'ጨዋታው ተጀምሯል ') {
+        namesToTry = ['ጨዋታው ተጀምሯል ', 'ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
       } else if (fileName === 'bingo') {
-        namesToTry = ['bingo', 'ቢንጎ'];
+        namesToTry = ['ቢንጎ', 'bingo'];
       } else if (fileName === 'ቢንጎ') {
         namesToTry = ['ቢንጎ', 'bingo'];
       }
