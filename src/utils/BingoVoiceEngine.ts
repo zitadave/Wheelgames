@@ -8,7 +8,11 @@ export class VoiceCallerEngine {
   private queue: string[] = [];
   private isPlaying: boolean = false;
 
-  constructor() {}
+  constructor() {
+    // FORCE absolute domain paths to fully escape Telegram's internal sandbox route resolution
+    const origin = window.location.origin.replace(/\/$/, "");
+    this.baseDir = `${origin}/audio/voices`;
+  }
 
   public initPipeline(): void {
     this.init();
@@ -29,14 +33,6 @@ export class VoiceCallerEngine {
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
         Howler.ctx.resume().catch(() => {});
       }
-
-      // Create a dummy silent Howl and play it to unlock audio in iOS
-      const dummy = new Howl({
-        src: ['data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAgDhoIAAAAAB//OEAAAAAAAAB////wAAAAD/84QAAAAAAAAAAAAAAD//OEAAAAA=='],
-        format: ['mp3'],
-        volume: 0
-      });
-      dummy.play();
 
       this.isInitialized = true;
       console.log("🔊 VoiceCallerEngine context initialized successfully with Howler.");
@@ -62,7 +58,7 @@ export class VoiceCallerEngine {
       const sound = new Howl({
         src: [targetUrl],
         format: ['mp3'],
-        html5: false, // Use WebAudio for bingo calls (much better for lots of small sounds)
+        html5: true, // Use HTML5 Audio to bypass WebAudio decode limits/errors on mobile wrappers like Telegram
         preload: true,
         onload: () => {
           this.sounds.set(fileName, sound);
@@ -84,7 +80,7 @@ export class VoiceCallerEngine {
   public async preloadAllVoices(ballNumbers: number[]): Promise<void> {
     this.init();
     
-    // Chunk the preloading so we don't spam the network or WebAudio decoder
+    // Chunk the preloading so we don't spam the network
     const chunkSize = 5;
     for (let i = 0; i < ballNumbers.length; i += chunkSize) {
       const chunk = ballNumbers.slice(i, i + chunkSize);
