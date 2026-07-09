@@ -37,8 +37,8 @@ export class VoiceCallerEngine {
   /**
    * Builds a guaranteed clean, fully qualified absolute URL.
    */
-  private getAudioUrl(fileName: string, ext: 'mp3' | 'm4a'): string {
-    return `${this.baseDir}/${fileName}.${ext}`;
+  private getAudioUrl(fileName: string): string {
+    return `${this.baseDir}/${fileName}.mp3`;
   }
 
   /**
@@ -53,7 +53,7 @@ export class VoiceCallerEngine {
       if (this.audioBuffers.has(fileName)) return;
 
       try {
-        const url = this.getAudioUrl(fileName, 'mp3');
+        const url = this.getAudioUrl(fileName);
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
@@ -115,38 +115,20 @@ export class VoiceCallerEngine {
    */
   private playViaAudioElementFallback(fileName: string): Promise<void> {
     return new Promise((resolve) => {
-      const extensions: ('mp3' | 'm4a')[] = ['mp3', 'm4a'];
-      let currentExtensionIndex = 0;
+      const targetUrl = this.getAudioUrl(fileName);
+      const audioNode = new Audio(targetUrl);
 
-      const attemptPlayback = () => {
-        if (currentExtensionIndex >= extensions.length) {
-          // Diagnostic output: logs precise URLs to let you quickly verify hosting issues
-          console.error(`❌ Critical Audio failure: All resource source pathways exhausted for asset [${fileName}].`);
-          console.error(`   -> Checked absolute URL 1: ${this.getAudioUrl(fileName, 'mp3')}`);
-          console.error(`   -> Checked absolute URL 2: ${this.getAudioUrl(fileName, 'm4a')}`);
+      audioNode.preload = 'auto';
+      audioNode.playsInline = true;
+
+      audioNode.play()
+        .then(() => {
           resolve();
-          return;
-        }
-
-        const currentExt = extensions[currentExtensionIndex];
-        const targetUrl = this.getAudioUrl(fileName, currentExt);
-        const audioNode = new Audio(targetUrl);
-
-        audioNode.preload = 'auto';
-        audioNode.playsInline = true;
-
-        audioNode.play()
-          .then(() => {
-            resolve();
-          })
-          .catch(() => {
-            console.warn(`⚠️ Fallback source format [.${currentExt}] rejected for asset [${fileName}]. Path tried: ${targetUrl}`);
-            currentExtensionIndex++;
-            attemptPlayback();
-          });
-      };
-
-      attemptPlayback();
+        })
+        .catch(() => {
+          console.warn(`⚠️ Fallback source rejected for asset [${fileName}]. Path tried: ${targetUrl}`);
+          resolve();
+        });
     });
   }
 }

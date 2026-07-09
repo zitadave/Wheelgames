@@ -91,9 +91,7 @@ class BingoVoiceEngine {
       let audioBuffer = this.audioCache[number];
 
       if (!audioBuffer) {
-        const extension = (number === 3 || number === 4) ? 'm4a' : 'mp3';
-        // Note: Using /bingo_audio/ path as preloader uses it
-        const response = await fetch(`/bingo_audio/${number}.${extension}`);
+        const response = await fetch(`/audio/voices/${number}.mp3`);
         if (!response.ok) throw new Error(`Audio file for ball ${number} not found.`);
         
         const arrayBuffer = await response.arrayBuffer();
@@ -191,8 +189,7 @@ const queueAudioItem = (item: { type: 'event', src: string } | { type: 'ball', b
     } else {
       audio = ballAudioCache[item.ball];
       if (!audio) {
-        const extension = (item.ball === 3 || item.ball === 4) ? 'm4a' : 'mp3';
-        audio = new Audio(`/bingo_audio/${item.ball}.${extension}`);
+        audio = new Audio(`/audio/voices/${item.ball}.mp3`);
         audio.preload = 'auto';
         ballAudioCache[item.ball] = audio;
       }
@@ -266,10 +263,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   useEffect(() => {
     if (prevStatusRef.current === 'lobby' && roomState?.status === 'playing') {
-      queueAudioItem({ type: 'event', src: '/bingo_audio/the_game_has_started.mp3' }, soundEnabled);
+      queueAudioItem({ type: 'event', src: '/audio/voices/the_game_has_started.mp3' }, soundEnabled);
     } else if (prevStatusRef.current === 'playing' && roomState?.status === 'result') {
       clearAudioQueue();
-      queueAudioItem({ type: 'event', src: '/bingo_audio/bingo.mp3' }, soundEnabled);
+      queueAudioItem({ type: 'event', src: '/audio/voices/bingo.mp3' }, soundEnabled);
     }
     prevStatusRef.current = roomState?.status;
   }, [roomState?.status, soundEnabled]);
