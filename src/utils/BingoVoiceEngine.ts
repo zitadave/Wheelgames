@@ -44,7 +44,7 @@ export class VoiceCallerEngine {
    * Builds a guaranteed clean, fully qualified absolute URL.
    */
   private getAudioUrl(fileName: string): string {
-    return `${this.baseDir}/${fileName}.mp3`;
+    return `${this.baseDir}/${fileName}.mp3?v=2`;
   }
 
   private loadSound(fileName: string): Promise<Howl> {
