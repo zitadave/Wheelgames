@@ -13,15 +13,19 @@ export class VoiceCallerEngine {
   }
 
   public initPipeline(): void {
-    // No-op for backward compatibility
+    this.init();
   }
 
   /**
    * Initializes or resumes the AudioContext on human interaction safely.
    */
   public init(): void {
-    if (this.isInitialized) return;
-
+    if (this.isInitialized) {
+      if (this.audioCtx && this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(() => {});
+      }
+      return;
+    }
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
@@ -49,35 +53,70 @@ export class VoiceCallerEngine {
     if (!this.audioCtx) return;
 
     const fetchPromises = ballNumbers.map(async (num) => {
-      const fileName = num.toString();
-      if (this.audioBuffers.has(fileName)) return;
-
-      try {
-        const url = this.getAudioUrl(fileName);
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        // Prevent decoding if the server handed back an SPA HTML fallback file
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('text/html')) return;
-
-        const arrayBuffer = await response.arrayBuffer();
-        
-        if (this.audioCtx?.state === 'suspended') {
-          await this.audioCtx.resume();
-        }
-
-        this.audioCtx?.decodeAudioData(
-          arrayBuffer,
-          (buffer) => this.audioBuffers.set(fileName, buffer),
-          () => {} // Silent catch for preloader; fallback handles playback crashes
-        );
-      } catch (error) {
-        // Quiet fallback; handled on-demand during live wheel spins
-      }
+      await this.fetchAndDecode(num.toString());
     });
 
     await Promise.allSettled(fetchPromises);
+  }
+
+  private async fetchAndDecode(fileName: string): Promise<boolean> {
+    if (this.audioBuffers.has(fileName)) return true;
+    if (!this.audioCtx) return false;
+    try {
+      const url = this.getAudioUrl(fileName);
+      const response = await fetch(url);
+      if (!response.ok) return false;
+      
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) return false;
+
+      const arrayBuffer = await response.arrayBuffer();
+      
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume().catch(() => {});
+      }
+
+      return new Promise((resolve) => {
+        this.audioCtx!.decodeAudioData(
+          arrayBuffer,
+          (buffer) => {
+            this.audioBuffers.set(fileName, buffer);
+            resolve(true);
+          },
+          () => resolve(false)
+        );
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  public async playEvent(fileName: string): Promise<void> {
+    this.init();
+    
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume();
+      } catch (e) {}
+    }
+
+    if (this.audioCtx) {
+      const isReady = await this.fetchAndDecode(fileName);
+      if (isReady && this.audioBuffers.has(fileName)) {
+        try {
+          const source = this.audioCtx.createBufferSource();
+          source.buffer = this.audioBuffers.get(fileName) || null;
+          source.connect(this.audioCtx.destination);
+          source.start(0);
+          return;
+        } catch (webAudioError) {
+          console.warn(`⚠️ Buffer execution failed for event [${fileName}]`);
+        }
+      }
+    }
+
+    // Direct streaming execution fallback
+    await this.playViaAudioElementFallback(fileName);
   }
 
   /**
@@ -93,16 +132,18 @@ export class VoiceCallerEngine {
       } catch (e) {}
     }
 
-    // Attempt Web Audio Buffer scheduling
-    if (this.audioCtx && this.audioBuffers.has(fileName)) {
-      try {
-        const source = this.audioCtx.createBufferSource();
-        source.buffer = this.audioBuffers.get(fileName) || null;
-        source.connect(this.audioCtx.destination);
-        source.start(0);
-        return;
-      } catch (webAudioError) {
-        console.warn(`⚠️ Buffer execution failed for asset [${fileName}], shifting to absolute streaming fallback.`);
+    if (this.audioCtx) {
+      const isReady = await this.fetchAndDecode(fileName);
+      if (isReady && this.audioBuffers.has(fileName)) {
+        try {
+          const source = this.audioCtx.createBufferSource();
+          source.buffer = this.audioBuffers.get(fileName) || null;
+          source.connect(this.audioCtx.destination);
+          source.start(0);
+          return;
+        } catch (webAudioError) {
+          console.warn(`⚠️ Buffer execution failed for asset [${fileName}], shifting to absolute streaming fallback.`);
+        }
       }
     }
 

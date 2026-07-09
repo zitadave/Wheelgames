@@ -5,207 +5,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Users, Clock, History, AlertCircle, Coins, ChevronLeft, Volume2, VolumeX, RefreshCw, RotateCw, HelpCircle, X } from 'lucide-react';
 import { getDeterministicCard } from '../utils/bingo';
 
-type QueueItem = 
-  | { type: 'event', src: string, audio: HTMLAudioElement }
-  | { type: 'ball', ball: number, audio: HTMLAudioElement };
-
-const audioQueue: QueueItem[] = [];
-let isPlayingAudio = false;
-let currentAudioElement: HTMLAudioElement | null = null;
-
-// Audio caching and preloading
-const ballAudioCache: Record<number, HTMLAudioElement> = {};
-const eventAudioCache: Record<string, HTMLAudioElement> = {};
-
-class BingoVoiceEngine {
-  audioCtx: AudioContext | null = null;
-  audioCache: Record<number, AudioBuffer> = {};
-  isHeartbeatRunning: boolean = false;
-
-  constructor() {
-    this.audioCtx = null;
-    this.audioCache = {};
-    this.isHeartbeatRunning = false;
-  }
-
-  // 1. MUST run synchronously inside the user's direct click event callback
-  initPipeline() {
-    if (this.audioCtx) return;
-
-    try {
-      // Establish primary hardware stream connection
-      // @ts-ignore
-      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-
-      // Kick off the heartbeat immediately to lock the hardware gate open
-      this.startAudioHeartbeat();
-      console.log("🚀 Silent Heartbeat active. Mobile inactivity suspension bypassed.");
-    } catch (e) {
-      console.error("Web Audio context initialization failed:", e);
-    }
-  }
-
-  // Generates a continuous, sub-audible signal keeping the processor processing audio
-  startAudioHeartbeat() {
-    if (this.isHeartbeatRunning || !this.audioCtx) return;
-    
-    try {
-      this.isHeartbeatRunning = true;
-      
-      // Create a sub-audible oscillator (20Hz is threshold of hearing)
-      const oscillator = this.audioCtx.createOscillator();
-      const gainNode = this.audioCtx.createGain();
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(20, this.audioCtx.currentTime); 
-      
-      // Volume so low it's effectively silent but enough to keep the context "active"
-      gainNode.gain.setValueAtTime(0.00001, this.audioCtx.currentTime);
-
-      oscillator.connect(gainNode);
-      gainNode.connect(this.audioCtx.destination);
-      
-      oscillator.start();
-      console.log("🔊 Continuous hardware lock engaged.");
-    } catch (e) {
-      this.isHeartbeatRunning = false;
-      console.error("Heartbeat failed:", e);
-    }
-  }
-
-  async playBallNumber(number: number) {
-    if (!this.audioCtx) {
-      console.warn("Audio Context not initialized. User must click entry button first.");
-      return;
-    }
-
-    try {
-      if (this.audioCtx.state === 'suspended') {
-        await this.audioCtx.resume();
-      }
-
-      let audioBuffer = this.audioCache[number];
-
-      if (!audioBuffer) {
-        const response = await fetch(`/audio/voices/${number}.mp3`);
-        if (!response.ok) throw new Error(`Audio file for ball ${number} not found.`);
-        
-        const arrayBuffer = await response.arrayBuffer();
-        audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
-        this.audioCache[number] = audioBuffer;
-      }
-
-      const source = this.audioCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.audioCtx.destination);
-      source.start(0);
-
-    } catch (error) {
-      console.error(`Bingo Voice Caller failed for ball ${number}:`, error);
-    }
-  }
-}
-
 // Global engine initialized in src/utils/BingoVoiceEngine.ts
 
-
-const clearAudioQueue = () => {
-  audioQueue.length = 0;
-  if (currentAudioElement) {
-    currentAudioElement.pause();
-    currentAudioElement.currentTime = 0;
-    currentAudioElement = null;
-  }
-  isPlayingAudio = false;
-};
-
-const playNextAudio = () => {
-  if (audioQueue.length === 0) {
-    isPlayingAudio = false;
-    return;
-  }
-  
-  isPlayingAudio = true;
-  const item = audioQueue.shift();
-  if (!item) {
-    playNextAudio();
-    return;
-  }
-
-  currentAudioElement = item.audio;
-  currentAudioElement.currentTime = 0; // Reset to beginning for immediate play
-  
-  const onEnded = () => {
-    if (currentAudioElement === item.audio) {
-      currentAudioElement = null;
-    }
-    item.audio.removeEventListener('ended', onEnded);
-    item.audio.removeEventListener('error', onError);
-    playNextAudio();
-  };
-
-  const onError = () => {
-    if (currentAudioElement === item.audio) {
-      currentAudioElement = null;
-    }
-    item.audio.removeEventListener('ended', onEnded);
-    item.audio.removeEventListener('error', onError);
-    playNextAudio();
-  };
-
-  item.audio.addEventListener('ended', onEnded);
-  item.audio.addEventListener('error', onError);
-
-  item.audio.play().catch(err => {
-    console.warn("Audio play failed", err);
-    if (currentAudioElement === item.audio) {
-      currentAudioElement = null;
-    }
-    item.audio.removeEventListener('ended', onEnded);
-    item.audio.removeEventListener('error', onError);
-    playNextAudio();
-  });
-};
-
-const queueAudioItem = (item: { type: 'event', src: string } | { type: 'ball', ball: number }, enabled: boolean) => {
-  if (!enabled) {
-    clearAudioQueue();
-    return;
-  }
-
-  let audio: HTMLAudioElement | undefined;
-  try {
-    if (item.type === 'event') {
-      audio = eventAudioCache[item.src];
-      if (!audio) {
-        audio = new Audio(item.src);
-        audio.preload = 'auto';
-        eventAudioCache[item.src] = audio;
-      }
-    } else {
-      audio = ballAudioCache[item.ball];
-      if (!audio) {
-        audio = new Audio(`/audio/voices/${item.ball}.mp3`);
-        audio.preload = 'auto';
-        ballAudioCache[item.ball] = audio;
-      }
-    }
-  } catch(e) {
-    console.warn("Could not get audio", e);
-  }
-
-  if (!audio) return;
-  
-  audioQueue.push({ ...item, audio } as QueueItem);
-  
-  if (!isPlayingAudio) {
-    playNextAudio();
-  }
-};
 
 interface BingoGameProps {
   bingoRoomsMeta?: any;
@@ -254,19 +55,21 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   }, [selectedRoomId]);
 
   useEffect(() => {
-    if (!soundEnabled) {
-      clearAudioQueue();
-    }
+    // If sound is disabled, we could theoretically stop the current audio, but since we are using
+    // a dynamic VoiceCallerEngine, there's no continuous queue to clear.
   }, [soundEnabled]);
 
   const prevStatusRef = useRef<string | undefined>(roomState?.status);
 
   useEffect(() => {
     if (prevStatusRef.current === 'lobby' && roomState?.status === 'playing') {
-      queueAudioItem({ type: 'event', src: '/audio/voices/the_game_has_started.mp3' }, soundEnabled);
+      if (soundEnabled && (window as any).voiceEngine) {
+        (window as any).voiceEngine.playEvent('the_game_has_started');
+      }
     } else if (prevStatusRef.current === 'playing' && roomState?.status === 'result') {
-      clearAudioQueue();
-      queueAudioItem({ type: 'event', src: '/audio/voices/bingo.mp3' }, soundEnabled);
+      if (soundEnabled && (window as any).voiceEngine) {
+        (window as any).voiceEngine.playEvent('bingo');
+      }
     }
     prevStatusRef.current = roomState?.status;
   }, [roomState?.status, soundEnabled]);
@@ -834,7 +637,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                             : '--'}
                          </span>
                       </div>
-                      <button onClick={() => setSoundEnabled(!soundEnabled)} className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform">
+                      <button onClick={() => {
+                        if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
+                        setSoundEnabled(!soundEnabled);
+                      }} className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 text-green-400 active:scale-90 transition-transform">
                          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                       </button>
                    </div>
