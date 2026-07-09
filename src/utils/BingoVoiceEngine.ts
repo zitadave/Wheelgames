@@ -1,10 +1,12 @@
-// Absolute-path optimized audio manager built to withstand Telegram WebView container wrappers.
+import { Howl, Howler } from 'howler';
+
+// Robust audio manager using Howler.js built to withstand Telegram WebView container wrappers.
 export class VoiceCallerEngine {
-  private audioCtx: AudioContext | null = null;
-  private audioBuffers: Map<string, AudioBuffer> = new Map();
   private baseDir: string;
   private isInitialized: boolean = false;
-  private fallbackAudio: HTMLAudioElement | null = null;
+  private sounds: Map<string, Howl> = new Map();
+  private queue: string[] = [];
+  private isPlaying: boolean = false;
 
   constructor() {
     // FORCE absolute domain paths to fully escape Telegram's internal sandbox route resolution
@@ -17,41 +19,25 @@ export class VoiceCallerEngine {
   }
 
   /**
-   * Initializes or resumes the AudioContext on human interaction safely.
+   * Initializes or resumes Howler on human interaction safely.
    */
   public init(): void {
     if (this.isInitialized) {
-      if (this.audioCtx && this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume().catch(() => {});
-      }
-      if (this.fallbackAudio) {
-        this.fallbackAudio.play().catch(()=>{}).finally(()=> this.fallbackAudio?.pause());
+      if (Howler.ctx && Howler.ctx.state === 'suspended') {
+        Howler.ctx.resume().catch(() => {});
       }
       return;
     }
 
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContextClass) {
-        this.audioCtx = new AudioContextClass();
-        
-        // Play silent heartbeat to properly unlock iOS / Telegram WebAudio
-        const osc = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
-        gain.gain.value = 0.0001;
-        osc.connect(gain);
-        gain.connect(this.audioCtx.destination);
-        osc.start(0);
-        osc.stop(this.audioCtx.currentTime + 0.1);
+      if (Howler.ctx && Howler.ctx.state === 'suspended') {
+        Howler.ctx.resume().catch(() => {});
       }
-      
-      this.fallbackAudio = new Audio();
-      this.fallbackAudio.play().catch(()=>{}).finally(()=> this.fallbackAudio?.pause());
 
       this.isInitialized = true;
-      console.log("🔊 VoiceCallerEngine context initialized successfully using absolute routing base.");
+      console.log("🔊 VoiceCallerEngine context initialized successfully with Howler.");
     } catch (e) {
-      console.error("❌ Failed to initialize Web Audio API Context:", e);
+      console.error("❌ Failed to initialize Howler Context:", e);
     }
   }
 
@@ -62,132 +48,94 @@ export class VoiceCallerEngine {
     return `${this.baseDir}/${fileName}.mp3`;
   }
 
+  private loadSound(fileName: string): Promise<Howl> {
+    return new Promise((resolve, reject) => {
+      if (this.sounds.has(fileName)) {
+        return resolve(this.sounds.get(fileName)!);
+      }
+
+      const targetUrl = this.getAudioUrl(fileName);
+      const sound = new Howl({
+        src: [targetUrl],
+        format: ['mp3'],
+        html5: true, // Force HTML5 Audio to bypass WebAudio decode limits on mobile wrappers
+        preload: true,
+        onload: () => {
+          this.sounds.set(fileName, sound);
+          resolve(sound);
+        },
+        onloaderror: (id, err) => {
+          console.warn(`⚠️ Failed to load asset [${fileName}]:`, err);
+          reject(err);
+        }
+      });
+      // We also store it immediately so we don't fetch twice
+      this.sounds.set(fileName, sound);
+    });
+  }
+
   /**
    * Safe asset preloader
    */
   public async preloadAllVoices(ballNumbers: number[]): Promise<void> {
     this.init();
-    if (!this.audioCtx) return;
-
-    const fetchPromises = ballNumbers.map(async (num) => {
-      await this.fetchAndDecode(num.toString());
-    });
-
-    await Promise.allSettled(fetchPromises);
-  }
-
-  private async fetchAndDecode(fileName: string): Promise<boolean> {
-    if (this.audioBuffers.has(fileName)) return true;
-    if (!this.audioCtx) return false;
-
-    try {
-      const url = this.getAudioUrl(fileName);
-      const response = await fetch(url);
-      if (!response.ok) return false;
-      
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('text/html')) return false;
-
-      const arrayBuffer = await response.arrayBuffer();
-      
-      if (this.audioCtx.state === 'suspended') {
-        await this.audioCtx.resume().catch(() => {});
-      }
-
-      return new Promise((resolve) => {
-        this.audioCtx!.decodeAudioData(
-          arrayBuffer,
-          (buffer) => {
-            this.audioBuffers.set(fileName, buffer);
-            resolve(true);
-          },
-          () => resolve(false)
-        );
-      });
-    } catch (e) {
-      return false;
-    }
-  }
-
-  public async playEvent(fileName: string): Promise<void> {
-    this.init();
     
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      try {
-        await this.audioCtx.resume();
-      } catch (e) {}
-    }
-
-    if (this.audioCtx) {
-      const isReady = await this.fetchAndDecode(fileName);
-      if (isReady && this.audioBuffers.has(fileName)) {
-        try {
-          const source = this.audioCtx.createBufferSource();
-          source.buffer = this.audioBuffers.get(fileName) || null;
-          source.connect(this.audioCtx.destination);
-          source.start(0);
-          return;
-        } catch (webAudioError) {
-          console.warn(`⚠️ Buffer execution failed for event [${fileName}]`);
-        }
+    // We do not await loading of all sounds immediately, just trigger Howler
+    ballNumbers.forEach(num => {
+      const fileName = num.toString();
+      if (!this.sounds.has(fileName)) {
+        this.loadSound(fileName).catch(() => {});
       }
-    }
+    });
+  }
 
-    // Direct streaming execution fallback
-    await this.playViaAudioElementFallback(fileName);
+  public playEvent(fileName: string): void {
+    this.init();
+    this.queue.push(fileName);
+    this.processQueue();
   }
 
   /**
    * Main playback router
    */
-  public async playBallNumber(num: number): Promise<void> {
+  public playBallNumber(num: number): void {
     this.init();
     const fileName = num.toString();
-
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      try {
-        await this.audioCtx.resume();
-      } catch (e) {}
-    }
-
-    if (this.audioCtx) {
-      const isReady = await this.fetchAndDecode(fileName);
-      if (isReady && this.audioBuffers.has(fileName)) {
-        try {
-          const source = this.audioCtx.createBufferSource();
-          source.buffer = this.audioBuffers.get(fileName) || null;
-          source.connect(this.audioCtx.destination);
-          source.start(0);
-          return;
-        } catch (webAudioError) {
-          console.warn(`⚠️ Buffer execution failed for asset [${fileName}], shifting to absolute streaming fallback.`);
-        }
-      }
-    }
-
-    // Direct streaming execution fallback
-    await this.playViaAudioElementFallback(fileName);
+    this.queue.push(fileName);
+    this.processQueue();
   }
 
-  /**
-   * High-resilience HTML5 native playback loop using hard absolute domains.
-   */
-  private playViaAudioElementFallback(fileName: string): Promise<void> {
-    return new Promise((resolve) => {
-      const targetUrl = this.getAudioUrl(fileName);
-      if (!this.fallbackAudio) {
-        this.fallbackAudio = new Audio();
-      }
-      this.fallbackAudio.src = targetUrl;
-      this.fallbackAudio.play()
-        .then(() => {
-          resolve();
-        })
-        .catch((e) => {
-          console.warn(`⚠️ Fallback source rejected for asset [${fileName}]. Path tried: ${targetUrl}`, e);
-          resolve();
+  private async processQueue() {
+    if (this.isPlaying || this.queue.length === 0) return;
+    this.isPlaying = true;
+
+    const fileName = this.queue.shift();
+    if (!fileName) {
+      this.isPlaying = false;
+      return;
+    }
+
+    try {
+      const sound = await this.loadSound(fileName);
+      sound.play();
+      sound.once('end', () => {
+        this.isPlaying = false;
+        this.processQueue();
+      });
+      sound.once('playerror', (id, err) => {
+        console.warn(`⚠️ Play error for asset [${fileName}]:`, err);
+        // Sometimes HTML5 audio needs a manual unlock
+        sound.once('unlock', function() {
+          sound.play();
         });
-    });
+        
+        this.isPlaying = false;
+        this.processQueue();
+      });
+    } catch (e) {
+      this.isPlaying = false;
+      this.processQueue();
+    }
   }
 }
 
