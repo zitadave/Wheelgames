@@ -1,10 +1,10 @@
 // Absolute-path optimized audio manager built to withstand Telegram WebView container wrappers.
-
 export class VoiceCallerEngine {
   private audioCtx: AudioContext | null = null;
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private baseDir: string;
   private isInitialized: boolean = false;
+  private fallbackAudio: HTMLAudioElement | null = null;
 
   constructor() {
     // FORCE absolute domain paths to fully escape Telegram's internal sandbox route resolution
@@ -24,13 +24,30 @@ export class VoiceCallerEngine {
       if (this.audioCtx && this.audioCtx.state === 'suspended') {
         this.audioCtx.resume().catch(() => {});
       }
+      if (this.fallbackAudio) {
+        this.fallbackAudio.play().catch(()=>{}).finally(()=> this.fallbackAudio?.pause());
+      }
       return;
     }
+
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
         this.audioCtx = new AudioContextClass();
+        
+        // Play silent heartbeat to properly unlock iOS / Telegram WebAudio
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+        osc.start(0);
+        osc.stop(this.audioCtx.currentTime + 0.1);
       }
+      
+      this.fallbackAudio = new Audio();
+      this.fallbackAudio.play().catch(()=>{}).finally(()=> this.fallbackAudio?.pause());
+
       this.isInitialized = true;
       console.log("🔊 VoiceCallerEngine context initialized successfully using absolute routing base.");
     } catch (e) {
@@ -62,6 +79,7 @@ export class VoiceCallerEngine {
   private async fetchAndDecode(fileName: string): Promise<boolean> {
     if (this.audioBuffers.has(fileName)) return true;
     if (!this.audioCtx) return false;
+
     try {
       const url = this.getAudioUrl(fileName);
       const response = await fetch(url);
@@ -157,16 +175,16 @@ export class VoiceCallerEngine {
   private playViaAudioElementFallback(fileName: string): Promise<void> {
     return new Promise((resolve) => {
       const targetUrl = this.getAudioUrl(fileName);
-      const audioNode = new Audio(targetUrl);
-
-      audioNode.preload = 'auto';
-
-      audioNode.play()
+      if (!this.fallbackAudio) {
+        this.fallbackAudio = new Audio();
+      }
+      this.fallbackAudio.src = targetUrl;
+      this.fallbackAudio.play()
         .then(() => {
           resolve();
         })
-        .catch(() => {
-          console.warn(`⚠️ Fallback source rejected for asset [${fileName}]. Path tried: ${targetUrl}`);
+        .catch((e) => {
+          console.warn(`⚠️ Fallback source rejected for asset [${fileName}]. Path tried: ${targetUrl}`, e);
           resolve();
         });
     });
