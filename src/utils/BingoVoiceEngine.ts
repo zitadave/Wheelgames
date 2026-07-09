@@ -53,24 +53,50 @@ export class VoiceCallerEngine {
         return resolve(this.sounds.get(fileName)!);
       }
 
-      const targetUrl = this.getAudioUrl(fileName);
-      const sound = new Howl({
-        src: [targetUrl],
-        format: ['mp3'],
-        // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
-        html5: false,
-        preload: true,
-        onload: () => {
-          this.sounds.set(fileName, sound);
-          resolve(sound);
-        },
-        onloaderror: (id, err) => {
-          console.warn(`⚠️ Failed to load asset [${fileName}]:`, err);
-          reject(err);
-        }
-      });
-      // We also store it immediately so we don't fetch twice
-      this.sounds.set(fileName, sound);
+      const tryLoad = (name: string, fallbackNames: string[] = []) => {
+        const targetUrl = this.getAudioUrl(name);
+        const sound = new Howl({
+          src: [targetUrl],
+          format: ['mp3'],
+          // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
+          html5: false,
+          preload: true,
+          onload: () => {
+            this.sounds.set(fileName, sound);
+            this.sounds.set(name, sound);
+            resolve(sound);
+          },
+          onloaderror: (id, err) => {
+            // Clean up failed sound from the map
+            this.sounds.delete(name);
+            
+            if (fallbackNames.length > 0) {
+              const nextName = fallbackNames[0];
+              const remaining = fallbackNames.slice(1);
+              console.log(`ℹ️ Failed to load [${name}], trying fallback [${nextName}]...`);
+              tryLoad(nextName, remaining);
+            } else {
+              console.warn(`⚠️ Failed to load asset [${fileName}] and all fallbacks:`, err);
+              reject(err);
+            }
+          }
+        });
+        this.sounds.set(name, sound);
+      };
+
+      // Define fallbacks for specific known names to support both English and Amharic uploads
+      let fallbacks: string[] = [];
+      if (fileName === 'the_game_has_started') {
+        fallbacks = ['ጨዋታው ተጀምሯል', 'game_start'];
+      } else if (fileName === 'ጨዋታው ተጀምሯል') {
+        fallbacks = ['the_game_has_started', 'game_start'];
+      } else if (fileName === 'bingo') {
+        fallbacks = ['ቢንጎ'];
+      } else if (fileName === 'ቢንጎ') {
+        fallbacks = ['bingo'];
+      }
+
+      tryLoad(fileName, fallbacks);
     });
   }
 
@@ -98,6 +124,18 @@ export class VoiceCallerEngine {
 
   public playEvent(fileName: string): void {
     this.init();
+    this.queue.push(fileName);
+    this.processQueue();
+  }
+
+  /**
+   * Play an event urgently (e.g. game start or bingo declared).
+   * It clears the current call queue so that the announcement plays next,
+   * but if a voice clip is already speaking, we allow it to finish first to prevent awkward cut-offs (no overleaping).
+   */
+  public playEventUrgent(fileName: string): void {
+    this.init();
+    this.queue = []; // Clear pending numbers
     this.queue.push(fileName);
     this.processQueue();
   }

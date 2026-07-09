@@ -64,11 +64,11 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
   useEffect(() => {
     if (prevStatusRef.current === 'lobby' && roomState?.status === 'playing') {
       if (soundEnabled && (window as any).voiceEngine) {
-        (window as any).voiceEngine.playEvent('the_game_has_started');
+        (window as any).voiceEngine.playEventUrgent('the_game_has_started');
       }
     } else if (prevStatusRef.current === 'playing' && roomState?.status === 'result') {
       if (soundEnabled && (window as any).voiceEngine) {
-        (window as any).voiceEngine.playEvent('bingo');
+        (window as any).voiceEngine.playEventUrgent('bingo');
       }
     }
     prevStatusRef.current = roomState?.status;
