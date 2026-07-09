@@ -332,6 +332,9 @@ export default function App() {
       });
     }
 
+    // Sort players by username
+    list.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: 'base' }));
+
     return list;
   }, [roomState?.roundId, roomState?.players, totalActivePlayersCount, userId, username, photoUrl]);
   
