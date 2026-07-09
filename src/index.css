@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
+@theme {
+  --dark-mode: selector;
+}
+
 @layer base {
+  :root {
+    color-scheme: light;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
+
   html, body {
     @apply overflow-hidden w-full h-full;
     position: fixed;

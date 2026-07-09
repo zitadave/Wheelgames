@@ -728,19 +728,19 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           username: username || null,
           first_name: firstName || null,
           last_name: lastName || null,
-          balance: 100000
+          balance: 0
         })
         .select('balance')
         .single();
 
       if (insertError) {
         logBot(`Error inserting user ID=${userId}: ${insertError.message}`);
-        return { balance: 100000 };
+        return { balance: 0 };
       }
-      return { balance: insertedData ? Number(insertedData.balance) : 100000 };
+      return { balance: insertedData ? Number(insertedData.balance) : 0 };
     } catch (e: any) {
       logBot(`Unexpected error in getOrCreateUser for ID=${userId}: ${e?.message || e}`);
-      return { balance: 100000 };
+      return { balance: 0 };
     }
   };
 
@@ -3946,7 +3946,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         last_name: lastName || null,
         phone: phoneNumber || null,
         photo_url: photoUrl || null,
-        balance: 100000 // Starting balance
+        balance: 0 // Starting balance
       };
 
       let { data: insertedUser, error: insertError } = await supabase

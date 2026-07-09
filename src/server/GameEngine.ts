@@ -23,6 +23,7 @@ export interface RoomState {
   capacity: { even: number; odd: number };
   winner?: number; // 1-6
   onlineCount?: number;
+  onlinePlayers?: Record<string, { userId: string; username: string; photoUrl?: string }>;
 }
 
 const MAX_CAPACITY = 200;
@@ -50,7 +51,7 @@ class Room {
       feed: [],
       history: [],
       capacity: { even: 0, odd: 0 },
-      onlineCount: 15,
+      onlineCount: 0,
     };
     this.initRoundCounterAndStart();
   }
@@ -94,8 +95,24 @@ class Room {
   }
 
   public updateOnlineCount() {
-    const clientsInRoom = this.io.sockets.adapter.rooms.get(this.state.id)?.size || 0;
-    this.state.onlineCount = clientsInRoom;
+    const clientsInRoom = this.io.sockets.adapter.rooms.get(this.state.id);
+    const count = clientsInRoom?.size || 0;
+    this.state.onlineCount = count;
+
+    const onlinePlayers: Record<string, { userId: string; username: string; photoUrl?: string }> = {};
+    if (clientsInRoom) {
+      for (const socketId of clientsInRoom) {
+        const clientSocket = this.io.sockets.sockets.get(socketId);
+        if (clientSocket && clientSocket.data && clientSocket.data.userId) {
+          onlinePlayers[clientSocket.data.userId] = {
+            userId: clientSocket.data.userId,
+            username: clientSocket.data.username || `User_${clientSocket.data.userId.slice(0, 4)}`,
+            photoUrl: clientSocket.data.photoUrl,
+          };
+        }
+      }
+    }
+    this.state.onlinePlayers = onlinePlayers;
   }
 
   private startLoop() {
@@ -154,10 +171,10 @@ class Room {
     // If one pool is 0, House Bot joins
     if (this.state.pools.even > 0 && this.state.pools.odd === 0) {
       this.state.pools.odd = this.state.pools.even;
-      this.state.feed.unshift(`🤖 House Bot matched ${this.state.pools.even} on ጎደል (ODD)!`);
+      // this.state.feed.unshift(`🤖 ሲስተም ጎደል ላይ ${this.state.pools.even.toLocaleString()} ETB አጫውቷል!`);
     } else if (this.state.pools.odd > 0 && this.state.pools.even === 0) {
       this.state.pools.even = this.state.pools.odd;
-      this.state.feed.unshift(`🤖 House Bot matched ${this.state.pools.odd} on ሞላ (EVEN)!`);
+      // this.state.feed.unshift(`🤖 ሲስተም ሞላ ላይ ${this.state.pools.odd.toLocaleString()} ETB አጫውቷል!`);
     } else {
       // P2P Match - balance the pools
       if (this.state.pools.even !== this.state.pools.odd) {
@@ -180,7 +197,7 @@ class Room {
               const refund = p.amount - remaining;
               p.amount = remaining;
               currentOverPool += remaining;
-              this.state.feed.unshift(`${p.username}'s bet downscaled to match pool.`);
+              this.state.feed.unshift(`የ${p.username} ባለው ${p.amount.toLocaleString()} ሄደሃል።`);
               // Need a way to notify client to refund their local balance,
               // for this prototype, we'll emit a specific event or they get balance updated at end.
               this.io.to(p.userId).emit('refund', refund);
@@ -196,7 +213,7 @@ class Room {
               // Reject the whole bet
               const refund = p.amount;
               p.amount = 0; // effectively removed
-              this.state.feed.unshift(`${p.username}'s bet skipped (pool limit).`);
+              this.state.feed.unshift(`የ${p.username} ባለው 0 ሄደሃል።`);
               this.io.to(p.userId).emit('refund', refund);
 
               // Log refund to DB for factual reporting
@@ -338,8 +355,8 @@ class Room {
       existingBet.side = side;
       existingBet.partial = partial;
       
-      const sideName = side === 'even' ? 'ሞላ (Even)' : 'ጎደል (Odd)';
-      this.state.feed.unshift(`${username} updated bet to ${amount.toLocaleString()} on ${sideName}!`);
+      const sideName = side === 'even' ? 'ሞላ' : 'ጎደል';
+      this.state.feed.unshift(`${username} ውርርዱን ወደ ${amount.toLocaleString()} ETB ${sideName} ላይ አሻሽሏል!`);
     } else {
       if (this.state.capacity[side] >= MAX_CAPACITY) {
         return { success: false, message: "Room capacity reached for this side." };
@@ -348,8 +365,8 @@ class Room {
       this.state.capacity[side] += 1;
       this.state.pools[side] += amount;
       
-      const sideName = side === 'even' ? 'ሞላ (Even)' : 'ጎደል (Odd)';
-      this.state.feed.unshift(`${username} placed ${amount.toLocaleString()} on ${sideName}!`);
+      const sideName = side === 'even' ? 'ሞላ' : 'ጎደል';
+      this.state.feed.unshift(`${username} ${amount.toLocaleString()} ETB ${sideName} ላይ ተጫውቷል!`);
     }
 
     if (this.state.feed.length > 30) this.state.feed.pop();
@@ -445,6 +462,16 @@ export function initGameEngine(io: Server) {
     
     // Auth & Balance syncing
     socket.on("syncUser", async (userId: string, username: string, photoUrl?: string, firstName?: string, lastName?: string) => {
+      socket.data.userId = userId;
+      socket.data.username = username;
+      socket.data.photoUrl = photoUrl;
+
+      if (currentRoomId && rooms[currentRoomId as keyof typeof rooms]) {
+        const r = rooms[currentRoomId as keyof typeof rooms];
+        r.updateOnlineCount();
+        r.broadcastState();
+      }
+
       // Join a personal room to receive private realtime updates
       socket.join(`user_${userId}`);
       
@@ -471,13 +498,13 @@ export function initGameEngine(io: Server) {
           .single();
 
         if (!user) {
-          // New player - insert with balance 10,000
+          // New player - insert with balance 0
           const { data: newUser, error: insertError } = await supabase
             .from("users")
             .insert({
               id: userId,
               username,
-              balance: 10000,
+              balance: 0,
               ...(photoUrl ? { photo_url: photoUrl } : {}),
               ...(firstName ? { first_name: firstName } : {}),
               ...(lastName ? { last_name: lastName } : {})
@@ -505,12 +532,12 @@ export function initGameEngine(io: Server) {
            socket.emit("syncBalance", user.balance);
         } else {
            // Fallback for preview/local dev if Supabase is not configured or working
-           socket.emit("syncBalance", 10000);
+           socket.emit("syncBalance", 0);
         }
       } catch (e) {
         console.error("Sync user error:", e);
         // Fallback for preview/local dev
-        socket.emit("syncBalance", 10000);
+        socket.emit("syncBalance", 0);
       }
     });
 

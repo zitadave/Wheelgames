@@ -172,7 +172,37 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     return roomState?.history || [];
   });
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    // 1. Check saved user preference first - this is the manual override
+    const saved = localStorage.getItem("theme_preference");
+    if (saved !== null) {
+      return saved === "dark";
+    }
+    // 2. Default to dark mode regardless of phone settings
+    return true;
+  });
+
+  useEffect(() => {
+    // Apply class directly to documentElement and body so it overrides any phone theme or user-agent default styles
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
+    }
+    // Save state to localStorage to prevent device theme override on page reload or transition
+    localStorage.setItem("theme_preference", isDarkMode ? "dark" : "light");
+
+    // Also, tell Telegram WebApp about the header color if Telegram is present
+    if (window.Telegram?.WebApp) {
+      try {
+        (window.Telegram.WebApp as any).setHeaderColor(isDarkMode ? '#111827' : '#ffffff');
+      } catch (e) {
+        console.warn("setHeaderColor not supported", e);
+      }
+    }
+  }, [isDarkMode]);
 
   const [pulseSide, setPulseSide] = useState<Side | null>(null);
   
@@ -298,24 +328,63 @@ export default function App() {
   const totalActivePlayersCount = activeTab === 'bingo' ? (bingoRoomState?.onlineCount || 0) : (roomState?.onlineCount || 0);
 
   const vipPlayersList = React.useMemo(() => {
-    const realPlayers = roomState?.players || {};
-    
+    const isBingo = activeTab === 'bingo';
     const list: any[] = [];
     
-    // Add real players first
-    Object.entries(realPlayers).forEach(([id, playerObj]) => {
-      const p = playerObj as any;
-      list.push({
-        id,
-        username: p.username || `@User_${id.slice(5, 9)}`,
-        amount: p.amount,
-        side: p.side,
-        photoUrl: p.photoUrl || null,
-        badge: p.amount >= 10000 ? "Crown VIP" : p.amount >= 5000 ? "Gold VIP" : "VIP Pro",
-        joinTime: "0.1s",
-        isReal: true,
+    if (isBingo) {
+      const realPlayers = bingoRoomState?.players || {};
+      Object.entries(realPlayers).forEach(([id, playerObj]) => {
+        const p = playerObj as any;
+        list.push({
+          id,
+          username: p.username || `@User_${id.slice(5, 9)}`,
+          amount: p.amount || 0,
+          side: p.side,
+          photoUrl: p.photoUrl || null,
+          badge: "VIP Pro",
+          joinTime: "0.1s",
+          isReal: true,
+        });
       });
-    });
+    } else {
+      const bettingPlayers = roomState?.players || {};
+      const onlinePlayers = roomState?.onlinePlayers || {};
+      const addedIds = new Set<string>();
+
+      // 1. Add active betting players first so we display their bet details
+      Object.entries(bettingPlayers).forEach(([id, playerObj]) => {
+        const p = playerObj as any;
+        addedIds.add(id);
+        list.push({
+          id,
+          username: p.username || `@User_${id.slice(5, 9)}`,
+          amount: p.amount || 0,
+          side: p.side,
+          photoUrl: p.photoUrl || null,
+          badge: p.amount >= 10000 ? "Crown VIP" : p.amount >= 5000 ? "Gold VIP" : "VIP Pro",
+          joinTime: "0.1s",
+          isReal: true,
+        });
+      });
+
+      // 2. Add online players who haven't placed a bet yet
+      Object.entries(onlinePlayers).forEach(([id, playerObj]) => {
+        if (!addedIds.has(id)) {
+          const p = playerObj as any;
+          addedIds.add(id);
+          list.push({
+            id,
+            username: p.username || `@User_${id.slice(5, 9)}`,
+            amount: 0,
+            side: undefined,
+            photoUrl: p.photoUrl || null,
+            badge: "Active Player",
+            joinTime: "Online",
+            isReal: true,
+          });
+        }
+      });
+    }
 
     // Ensure current user is always included in the online listing
     const currentInList = list.some(p => p.id === userId);
@@ -336,7 +405,7 @@ export default function App() {
     list.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: 'base' }));
 
     return list;
-  }, [roomState?.roundId, roomState?.players, totalActivePlayersCount, userId, username, photoUrl]);
+  }, [activeTab, roomState?.roundId, roomState?.players, roomState?.onlinePlayers, bingoRoomState?.status, bingoRoomState?.players, totalActivePlayersCount, userId, username, photoUrl]);
   
   useEffect(() => {
     soundAlertsRef.current = soundAlerts;
@@ -709,6 +778,21 @@ export default function App() {
     return Math.floor(pCount * bet * 0.8);
   };
 
+  const getRemainingPoolText = () => {
+    const molaPool = roomState?.pools?.even || 0;
+    const godelaPool = roomState?.pools?.odd || 0;
+    if (molaPool === godelaPool) {
+      return "ተቻችሎል";
+    }
+    if (molaPool > godelaPool) {
+      const diff = molaPool - godelaPool;
+      return `ቀሪ ጎደለ ላይ ${diff.toLocaleString()}`;
+    } else {
+      const diff = godelaPool - molaPool;
+      return `ቀሪ ሞላ ላይ ${diff.toLocaleString()}`;
+    }
+  };
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="h-screen max-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 flex flex-col w-full max-w-md mx-auto relative overflow-hidden font-sans transition-colors duration-300 overscroll-none select-none" style={{ touchAction: 'pan-y' }}>
@@ -919,7 +1003,7 @@ export default function App() {
                 <div className="px-4 space-y-4 mt-auto">
                   {/* Shortcut Amounts Grid */}
                   <div className="flex gap-2 justify-center">
-                    {[200, 1000, 2000, 5000, 10000, 20000].map(amt => (
+                    {[200, 1000, 2000, 5000, 10000].map(amt => (
                       <button
                         key={amt}
                         onClick={() => setBetAmount(amt)}
@@ -932,6 +1016,19 @@ export default function App() {
                         {amt >= 1000 ? `${amt/1000}k` : amt}
                       </button>
                     ))}
+                    <button
+                      onClick={() => setBetAmount(null)}
+                      className="px-3 py-2 rounded-xl text-xs font-black bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-200 dark:border-red-900/50 transition-all active:scale-95 flex-1"
+                    >
+                      CLEAR
+                    </button>
+                  </div>
+
+                  {/* Remaining Pool display */}
+                  <div className="flex justify-center items-center py-1.5 px-3 bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/10 dark:border-blue-500/20 rounded-xl">
+                    <span className="text-xs font-black text-blue-600 dark:text-blue-400 tracking-wide text-center">
+                      {getRemainingPoolText()}
+                    </span>
                   </div>
 
                   {/* Input and Partial Bet options row */}
@@ -957,7 +1054,7 @@ export default function App() {
 
                     {/* Partial Bet toggle Switch */}
                     <div className="flex justify-between items-center bg-white dark:bg-gray-900 rounded-xl px-3 py-1 border border-gray-200 dark:border-gray-800 transition-colors shrink-0 gap-2">
-                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Partial</span>
+                      <span className="text-[11px] text-gray-500 dark:text-gray-400 font-bold tracking-wide">ባለው አጫውተኝ</span>
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" checked={partialBet} onChange={e => setPartialBet(e.target.checked)} className="sr-only peer" />
                         <div className="w-8 h-4.5 bg-gray-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600"></div>
