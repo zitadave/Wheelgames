@@ -44,7 +44,7 @@ export class VoiceCallerEngine {
    * Builds a guaranteed clean, fully qualified absolute URL.
    */
   private getAudioUrl(fileName: string): string {
-    return `${this.baseDir}/${fileName}.wav?v=3`;
+    return `${this.baseDir}/${fileName}.mp3`;
   }
 
   private loadSound(fileName: string): Promise<Howl> {
@@ -56,7 +56,7 @@ export class VoiceCallerEngine {
       const targetUrl = this.getAudioUrl(fileName);
       const sound = new Howl({
         src: [targetUrl],
-        format: ['wav'],
+        format: ['mp3'],
         // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
         html5: false,
         preload: true,
