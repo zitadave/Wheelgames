@@ -198,9 +198,17 @@ class Room {
               p.amount = remaining;
               currentOverPool += remaining;
               this.state.feed.unshift(`የ${p.username} ባለው ${p.amount.toLocaleString()} ሄደሃል።`);
-              // Need a way to notify client to refund their local balance,
-              // for this prototype, we'll emit a specific event or they get balance updated at end.
               this.io.to(p.userId).emit('refund', refund);
+
+              // Update user balance in DB
+              supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
+                if (user) {
+                  const newBalance = Number(user.balance) + refund;
+                  supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
+                    this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
+                  });
+                }
+              });
 
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
@@ -213,8 +221,18 @@ class Room {
               // Reject the whole bet
               const refund = p.amount;
               p.amount = 0; // effectively removed
-              this.state.feed.unshift(`የ${p.username} ባለው 0 ሄደሃል።`);
+              this.state.feed.unshift(`የ${p.username} በዚህ ዙር አልሄድክም`);
               this.io.to(p.userId).emit('refund', refund);
+
+              // Update user balance in DB
+              supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
+                if (user) {
+                  const newBalance = Number(user.balance) + refund;
+                  supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
+                    this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
+                  });
+                }
+              });
 
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
@@ -279,9 +297,38 @@ class Room {
     this.broadcastState();
     this.timer = setInterval(() => this.tick(), 1000);
 
-    // Async save to Supabase
+    // Async save to Supabase and handle payouts
     try {
       if (supabase) {
+        // Handle Payouts for Main-Room
+        const winners: string[] = [];
+        const winningSide = (this.state.winner !== undefined && this.state.winner % 2 === 0) ? 'even' : 'odd';
+        
+        for (const p of Object.values(this.state.players)) {
+          if (p.amount > 0 && p.side === winningSide) {
+            const prize = p.amount * 2;
+            winners.push(p.userId);
+            
+            // Update balance in Supabase
+            supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
+              if (user) {
+                const newBalance = Number(user.balance) + prize;
+                supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
+                  this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
+                  
+                  // Log win transaction
+                  supabase.from("transactions").insert({
+                    user_id: p.userId,
+                    amount: prize,
+                    type: "win",
+                    description: `Even/Odd Win (Round #${this.state.roundId}, Side: ${winningSide})`
+                  }).then(({ error }) => { if (error) console.error("Win log failed:", error); });
+                });
+              }
+            });
+          }
+        }
+
         // Save round
         const { data: roundData, error: roundError } = await supabase
           .from("rounds")
@@ -1038,7 +1085,7 @@ export function initGameEngine(io: Server) {
     });
 
     socket.on("placeBet", async (data: { roomId: string, userId: string, username: string, amount: number, side: Side, partial: boolean }, callback) => {
-      // Balance and authentication check (unauthenticated or 0.00 ETB balance users cannot place bets)
+      // Balance and authentication check
       try {
         const { supabase } = await import("./supabase.js");
         if (!supabase || !data.userId) {
@@ -1046,22 +1093,53 @@ export function initGameEngine(io: Server) {
           return;
         }
 
-        const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-        if (!user || Number(user.balance) <= 0) {
-          if (callback) callback({ success: false, message: "Insufficient balance (0.00 ETB) or account not found." });
+        const room = rooms[data.roomId as keyof typeof rooms];
+        if (!room) {
+          if (callback) callback({ success: false, message: "Room not found." });
           return;
         }
-      } catch (err: any) {
-        if (callback) callback({ success: false, message: "Authentication validation failed." });
-        return;
-      }
 
-      const room = rooms[data.roomId as keyof typeof rooms];
-      if (room) {
+        const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
+        if (!user) {
+          if (callback) callback({ success: false, message: "Account not found." });
+          return;
+        }
+
+        const existingBet = room.state.players[data.userId];
+        const oldAmount = existingBet ? existingBet.amount : 0;
+        const diff = data.amount - oldAmount;
+
+        if (Number(user.balance) < diff) {
+          if (callback) callback({ success: false, message: `Insufficient balance. Need ${diff.toLocaleString()} ETB more.` });
+          return;
+        }
+
+        // Deduct balance from Supabase
+        const newBalance = Number(user.balance) - diff;
+        const { error: updateError } = await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
+        
+        if (updateError) {
+          if (callback) callback({ success: false, message: "Transaction failed. Try again." });
+          return;
+        }
+
+        // Log transaction
+        if (diff !== 0) {
+          await supabase.from("transactions").insert({
+            user_id: data.userId,
+            amount: -diff,
+            type: "bet",
+            description: `Even/Odd Bet (Round #${room.state.roundId}, Side: ${data.side})`
+          });
+        }
+
+        socket.emit("syncBalance", newBalance);
+
         const result = room.placeBet(data.userId, data.username, data.amount, data.side, data.partial);
         if (callback) callback(result);
-      } else {
-        if (callback) callback({ success: false, message: "Room not found." });
+      } catch (err: any) {
+        console.error("placeBet error:", err);
+        if (callback) callback({ success: false, message: "Server error placing bet." });
       }
     });
   });
