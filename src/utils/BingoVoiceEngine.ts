@@ -2,17 +2,13 @@ import { Howl, Howler } from 'howler';
 
 // Robust audio manager using Howler.js built to withstand Telegram WebView container wrappers.
 export class VoiceCallerEngine {
-  private baseDir: string;
+  private baseDir: string = '/audio/voices';
   private isInitialized: boolean = false;
   private sounds: Map<string, Howl> = new Map();
   private queue: string[] = [];
   private isPlaying: boolean = false;
 
-  constructor() {
-    // FORCE absolute domain paths to fully escape Telegram's internal sandbox route resolution
-    const origin = window.location.origin.replace(/\/$/, "");
-    this.baseDir = `${origin}/audio/voices`;
-  }
+  constructor() {}
 
   public initPipeline(): void {
     this.init();
@@ -33,6 +29,14 @@ export class VoiceCallerEngine {
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
         Howler.ctx.resume().catch(() => {});
       }
+
+      // Create a dummy silent Howl and play it to unlock audio in iOS
+      const dummy = new Howl({
+        src: ['data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAgDhoIAAAAAB//OEAAAAAAAAB////wAAAAD/84QAAAAAAAAAAAAAAD//OEAAAAA=='],
+        format: ['mp3'],
+        volume: 0
+      });
+      dummy.play();
 
       this.isInitialized = true;
       console.log("🔊 VoiceCallerEngine context initialized successfully with Howler.");
@@ -58,7 +62,7 @@ export class VoiceCallerEngine {
       const sound = new Howl({
         src: [targetUrl],
         format: ['mp3'],
-        html5: true, // Force HTML5 Audio to bypass WebAudio decode limits on mobile wrappers
+        html5: false, // Use WebAudio for bingo calls (much better for lots of small sounds)
         preload: true,
         onload: () => {
           this.sounds.set(fileName, sound);
@@ -80,13 +84,20 @@ export class VoiceCallerEngine {
   public async preloadAllVoices(ballNumbers: number[]): Promise<void> {
     this.init();
     
-    // We do not await loading of all sounds immediately, just trigger Howler
-    ballNumbers.forEach(num => {
-      const fileName = num.toString();
-      if (!this.sounds.has(fileName)) {
-        this.loadSound(fileName).catch(() => {});
-      }
-    });
+    // Chunk the preloading so we don't spam the network or WebAudio decoder
+    const chunkSize = 5;
+    for (let i = 0; i < ballNumbers.length; i += chunkSize) {
+      const chunk = ballNumbers.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(num => {
+          const fileName = num.toString();
+          if (!this.sounds.has(fileName)) {
+            return this.loadSound(fileName).catch(() => {});
+          }
+          return Promise.resolve();
+        })
+      );
+    }
   }
 
   public playEvent(fileName: string): void {
@@ -117,6 +128,12 @@ export class VoiceCallerEngine {
 
     try {
       const sound = await this.loadSound(fileName);
+      
+      // If we are suspended, try to resume
+      if (Howler.ctx && Howler.ctx.state === 'suspended') {
+        await Howler.ctx.resume().catch(() => {});
+      }
+
       sound.play();
       sound.once('end', () => {
         this.isPlaying = false;
@@ -124,7 +141,7 @@ export class VoiceCallerEngine {
       });
       sound.once('playerror', (id, err) => {
         console.warn(`⚠️ Play error for asset [${fileName}]:`, err);
-        // Sometimes HTML5 audio needs a manual unlock
+        // Sometimes audio needs a manual unlock
         sound.once('unlock', function() {
           sound.play();
         });
