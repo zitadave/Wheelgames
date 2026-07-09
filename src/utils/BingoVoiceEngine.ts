@@ -43,13 +43,10 @@ export class VoiceCallerEngine {
   }
 
   /**
-   * Builds a guaranteed clean URL.
+   * Builds a guaranteed clean, fully qualified absolute URL.
    */
-  private getAudioUrl(fileName: string, absolute: boolean = false): string {
-    const base = absolute 
-      ? `${window.location.origin.replace(/\/$/, "")}/audio/voices`
-      : '/audio/voices';
-    return `${base}/${encodeURIComponent(fileName)}.mp3`;
+  private getAudioUrl(fileName: string): string {
+    return encodeURI(`${this.baseDir}/${fileName}.mp3`);
   }
 
   private loadSound(fileName: string): Promise<Howl> {
@@ -70,56 +67,35 @@ export class VoiceCallerEngine {
         namesToTry = ['ቢንጎ', 'bingo'];
       }
 
-      const tryNextName = (nameIndex: number) => {
-        if (nameIndex >= namesToTry.length) {
-          console.warn(`⚠️ Failed to load asset [${fileName}] and all name fallbacks.`);
+      const tryNext = (index: number) => {
+        if (index >= namesToTry.length) {
+          console.warn(`⚠️ Failed to load asset [${fileName}] and all fallbacks.`);
           return reject(new Error(`Failed to load ${fileName}`));
         }
 
-        const name = namesToTry[nameIndex];
+        const name = namesToTry[index];
+        const targetUrl = this.getAudioUrl(name);
 
-        // 3 different robust strategies to try for this specific filename
-        const strategies = [
-          { absolute: false, html5: false, desc: "Relative WebAudio" },
-          { absolute: false, html5: true, desc: "Relative HTML5 Audio" },
-          { absolute: true, html5: true, desc: "Absolute HTML5 Audio" }
-        ];
-
-        const tryStrategy = (stratIndex: number) => {
-          if (stratIndex >= strategies.length) {
-            console.log(`ℹ️ All loading strategies failed for name [${name}]. Trying next name fallback...`);
-            tryNextName(nameIndex + 1);
-            return;
+        const sound = new Howl({
+          src: [targetUrl],
+          format: ['mp3'],
+          // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
+          html5: false,
+          preload: true,
+          onload: () => {
+            // Cache the loaded sound under original requested fileName and working name
+            this.sounds.set(fileName, sound);
+            this.sounds.set(name, sound);
+            resolve(sound);
+          },
+          onloaderror: (id, err) => {
+            console.log(`ℹ️ Failed to load [${name}], trying next fallback...`);
+            tryNext(index + 1);
           }
-
-          const strat = strategies[stratIndex];
-          const targetUrl = this.getAudioUrl(name, strat.absolute);
-
-          console.log(`🎵 Trying to load voice [${name}] via ${strat.desc}: ${targetUrl}`);
-
-          const sound = new Howl({
-            src: [targetUrl],
-            format: ['mp3'],
-            html5: strat.html5,
-            preload: true,
-            onload: () => {
-              console.log(`✅ Successfully loaded [${name}] using ${strat.desc}`);
-              // Cache the loaded sound under original requested fileName and working name
-              this.sounds.set(fileName, sound);
-              this.sounds.set(name, sound);
-              resolve(sound);
-            },
-            onloaderror: (id, err) => {
-              console.warn(`❌ Load failed with strategy ${strat.desc} for [${name}]:`, err);
-              tryStrategy(stratIndex + 1);
-            }
-          });
-        };
-
-        tryStrategy(0);
+        });
       };
 
-      tryNextName(0);
+      tryNext(0);
     });
   }
 
