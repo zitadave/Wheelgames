@@ -8,6 +8,8 @@ export class VoiceCallerEngine {
   private queue: string[] = [];
   private isPlaying: boolean = false;
 
+  private currentSound: Howl | null = null;
+
   constructor() {
     // We use relative paths now, but if there's any routing issue we could use absolute paths
     const origin = window.location.origin.replace(/\/$/, "");
@@ -48,13 +50,32 @@ export class VoiceCallerEngine {
   }
 
   private loadSound(fileName: string): Promise<Howl> {
+    if (this.sounds.has(fileName)) {
+      return Promise.resolve(this.sounds.get(fileName)!);
+    }
+
     return new Promise((resolve, reject) => {
-      if (this.sounds.has(fileName)) {
-        return resolve(this.sounds.get(fileName)!);
+      // Define all possible filenames for this sound (including fallbacks)
+      let namesToTry: string[] = [fileName];
+      if (fileName === 'the_game_has_started') {
+        namesToTry = ['the_game_has_started', 'ጨዋታው ተጀምሯል', 'game_start'];
+      } else if (fileName === 'ጨዋታው ተጀምሯል') {
+        namesToTry = ['ጨዋታው ተጀምሯል', 'the_game_has_started', 'game_start'];
+      } else if (fileName === 'bingo') {
+        namesToTry = ['bingo', 'ቢንጎ'];
+      } else if (fileName === 'ቢንጎ') {
+        namesToTry = ['ቢንጎ', 'bingo'];
       }
 
-      const tryLoad = (name: string, fallbackNames: string[] = []) => {
+      const tryNext = (index: number) => {
+        if (index >= namesToTry.length) {
+          console.warn(`⚠️ Failed to load asset [${fileName}] and all fallbacks.`);
+          return reject(new Error(`Failed to load ${fileName}`));
+        }
+
+        const name = namesToTry[index];
         const targetUrl = this.getAudioUrl(name);
+
         const sound = new Howl({
           src: [targetUrl],
           format: ['mp3'],
@@ -62,41 +83,19 @@ export class VoiceCallerEngine {
           html5: false,
           preload: true,
           onload: () => {
+            // Cache the loaded sound under original requested fileName and working name
             this.sounds.set(fileName, sound);
             this.sounds.set(name, sound);
             resolve(sound);
           },
           onloaderror: (id, err) => {
-            // Clean up failed sound from the map
-            this.sounds.delete(name);
-            
-            if (fallbackNames.length > 0) {
-              const nextName = fallbackNames[0];
-              const remaining = fallbackNames.slice(1);
-              console.log(`ℹ️ Failed to load [${name}], trying fallback [${nextName}]...`);
-              tryLoad(nextName, remaining);
-            } else {
-              console.warn(`⚠️ Failed to load asset [${fileName}] and all fallbacks:`, err);
-              reject(err);
-            }
+            console.log(`ℹ️ Failed to load [${name}], trying next fallback...`);
+            tryNext(index + 1);
           }
         });
-        this.sounds.set(name, sound);
       };
 
-      // Define fallbacks for specific known names to support both English and Amharic uploads
-      let fallbacks: string[] = [];
-      if (fileName === 'the_game_has_started') {
-        fallbacks = ['ጨዋታው ተጀምሯል', 'game_start'];
-      } else if (fileName === 'ጨዋታው ተጀምሯል') {
-        fallbacks = ['the_game_has_started', 'game_start'];
-      } else if (fileName === 'bingo') {
-        fallbacks = ['ቢንጎ'];
-      } else if (fileName === 'ቢንጎ') {
-        fallbacks = ['bingo'];
-      }
-
-      tryLoad(fileName, fallbacks);
+      tryNext(0);
     });
   }
 
@@ -129,13 +128,34 @@ export class VoiceCallerEngine {
   }
 
   /**
-   * Play an event urgently (e.g. game start or bingo declared).
-   * It clears the current call queue so that the announcement plays next,
-   * but if a voice clip is already speaking, we allow it to finish first to prevent awkward cut-offs (no overleaping).
+   * Play an event with high priority (prepended to the queue).
+   * This ensures it is played as soon as possible without losing/clearing
+   * called ball numbers, guaranteeing no overlapping of voice clips.
    */
   public playEventUrgent(fileName: string): void {
     this.init();
+    // Insert at the front of the queue so it is played next
+    this.queue.unshift(fileName);
+    this.processQueue();
+  }
+
+  /**
+   * Play the bingo winner announcement.
+   * Since the game is over, we clear the queue so no more numbers are called.
+   * If a number is currently playing, we stop it immediately so that BINGO is announced instantly with no overlap.
+   */
+  public playBingoEvent(fileName: string): void {
+    this.init();
     this.queue = []; // Clear pending numbers
+
+    if (this.currentSound) {
+      try {
+        this.currentSound.stop();
+      } catch (e) {}
+      this.currentSound = null;
+      this.isPlaying = false;
+    }
+
     this.queue.push(fileName);
     this.processQueue();
   }
@@ -162,6 +182,7 @@ export class VoiceCallerEngine {
 
     try {
       const sound = await this.loadSound(fileName);
+      this.currentSound = sound;
       
       // If we are suspended, try to resume
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
@@ -170,20 +191,23 @@ export class VoiceCallerEngine {
 
       sound.play();
       sound.once('end', () => {
+        this.currentSound = null;
         this.isPlaying = false;
         this.processQueue();
       });
       sound.once('playerror', (id, err) => {
         console.warn(`⚠️ Play error for asset [${fileName}]:`, err);
         // Sometimes audio needs a manual unlock
-        sound.once('unlock', function() {
+        sound.once('unlock', () => {
           sound.play();
         });
         
+        this.currentSound = null;
         this.isPlaying = false;
         this.processQueue();
       });
     } catch (e) {
+      this.currentSound = null;
       this.isPlaying = false;
       this.processQueue();
     }
