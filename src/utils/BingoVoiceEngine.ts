@@ -9,7 +9,7 @@ export class VoiceCallerEngine {
   private isPlaying: boolean = false;
 
   constructor() {
-    // FORCE absolute domain paths to fully escape Telegram's internal sandbox route resolution
+    // We use relative paths now, but if there's any routing issue we could use absolute paths
     const origin = window.location.origin.replace(/\/$/, "");
     this.baseDir = `${origin}/audio/voices`;
   }
@@ -33,7 +33,6 @@ export class VoiceCallerEngine {
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
         Howler.ctx.resume().catch(() => {});
       }
-
       this.isInitialized = true;
       console.log("🔊 VoiceCallerEngine context initialized successfully with Howler.");
     } catch (e) {
@@ -58,7 +57,8 @@ export class VoiceCallerEngine {
       const sound = new Howl({
         src: [targetUrl],
         format: ['mp3'],
-        html5: true, // Use HTML5 Audio to bypass WebAudio decode limits/errors on mobile wrappers like Telegram
+        // false = use WebAudio API (best for lots of short clips, now that files are 44.1kHz!)
+        html5: false,
         preload: true,
         onload: () => {
           this.sounds.set(fileName, sound);
