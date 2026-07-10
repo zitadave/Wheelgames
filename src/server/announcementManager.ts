@@ -45,29 +45,13 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 10) roomName = "1-10";
 
   try {
-    // Try to get the most up-to-date gridRooms from globalThis if available, 
-    // though the imported one should be the same in a single-process ESM environment.
-    const gRooms = (globalThis as any).gridRooms || gridRooms;
-    const room = gRooms ? gRooms[roomName] : null;
-
-    if (room) {
-      const remaining: number[] = [];
-      for (let i = 1; i <= max; i++) {
-        // Explicitly check for presence in claimedSlots
-        if (!room.claimedSlots || room.claimedSlots[i] === undefined || room.claimedSlots[i] === null) {
-          remaining.push(i);
-        }
-      }
-      logBot(`[Slots Tracker] roomName=${roomName}, max=${max}, claimedCount=${room.claimedSlots ? Object.keys(room.claimedSlots).length : 0}, remainingCount=${remaining.length}`);
-      return remaining;
-    } else {
-      logBot(`[Slots Tracker] Room ${roomName} not found. Available: ${Object.keys(gRooms || {}).join(", ")}`);
-    }
+    const remaining = getRemainingSlots(roomName, max);
+    logBot(`[Slots Tracker] Fetched remaining slots for ${roomName}: count=${remaining.length}`);
+    return remaining;
   } catch (err: any) {
     logBot(`Failed to generate slot numbers for ${roomName}: ${err.message}`);
+    return [];
   }
-
-  return [];
 }
 
 export function formatEmojiNumbers(nums: number[]): string {
@@ -76,7 +60,8 @@ export function formatEmojiNumbers(nums: number[]): string {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
   };
-  return nums.map(n => n.toString().split('').map(digit => emojiMap[digit]).join('')).join(', ');
+  // Using comma for readability as per user example
+  return nums.map(n => n.toString().split('').map(digit => emojiMap[digit] || digit).join('')).join(', ');
 }
 
 export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
