@@ -102,7 +102,9 @@ export default function App() {
   }, [socket]);
 
   const handleTriggerFlow = async (type: 'deposit' | 'withdraw') => {
+    if (isTriggeringFlow) return;
     const tgUsername = botUsername || 'YOUR_BOT_USERNAME';
+    setIsTriggeringFlow(true);
     if (tgUser?.id && window.Telegram?.WebApp) {
       try {
         showNotification(`Triggering ${type} flow...`, "info");
@@ -111,16 +113,24 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: tgUser.id, flowType: type })
         });
+        
         if (res.ok) {
-          window.Telegram.WebApp.close();
+          // Add a small delay before closing to ensure the message was sent and processed
+          setTimeout(() => {
+            window.Telegram.WebApp.close();
+            setIsTriggeringFlow(false);
+          }, 800);
         } else {
+          setIsTriggeringFlow(false);
           window.Telegram.WebApp.openTelegramLink(`https://t.me/${tgUsername}?start=${type}`);
         }
       } catch (err) {
+        setIsTriggeringFlow(false);
         console.error("Failed to trigger flow via API:", err);
         window.Telegram.WebApp.openTelegramLink(`https://t.me/${tgUsername}?start=${type}`);
       }
     } else {
+      setIsTriggeringFlow(false);
       if (window.Telegram?.WebApp) {
         window.Telegram.WebApp.openTelegramLink(`https://t.me/${tgUsername}?start=${type}`);
       } else {
@@ -182,15 +192,16 @@ export default function App() {
     return true;
   });
 
+  const [isTriggeringFlow, setIsTriggeringFlow] = useState<boolean>(false);
+
   useEffect(() => {
-    // Apply class directly to documentElement and body so it overrides any phone theme or user-agent default styles
+    // Apply class directly to documentElement so it overrides any phone theme or user-agent default styles
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
-      document.body.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
-      document.body.classList.remove('dark');
     }
+    
     // Save state to localStorage to prevent device theme override on page reload or transition
     localStorage.setItem("theme_preference", isDarkMode ? "dark" : "light");
 
@@ -1037,15 +1048,21 @@ export default function App() {
                     <div className="flex flex-1 bg-white/40 dark:bg-gray-900/40 rounded-xl p-0.5 border border-gray-200 dark:border-gray-800 transition-all duration-300 items-center relative overflow-hidden">
                       <div className={`absolute inset-0 bg-white/60 dark:bg-gray-900/60 transition-all duration-300 -z-10 ${!isInputFocused ? 'backdrop-blur-[2px]' : 'backdrop-blur-none'}`} />
                       <input
-                        type="number"
-                        min="200"
-                        step="10"
-                        value={betAmount || ''}
+                        type="text"
+                        inputMode="decimal"
+                        value={betAmount === null ? '' : betAmount.toLocaleString()}
                         onFocus={() => setIsInputFocused(true)}
                         onBlur={() => setIsInputFocused(false)}
                         onChange={(e) => {
-                          const val = e.target.value;
-                          setBetAmount(val === '' ? null : Math.max(0, parseInt(val) || 0));
+                          const raw = e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '');
+                          if (raw === '') {
+                            setBetAmount(null);
+                          } else {
+                            const parsed = parseFloat(raw);
+                            if (!isNaN(parsed)) {
+                              setBetAmount(Math.max(0, Math.floor(parsed)));
+                            }
+                          }
                         }}
                         className="bg-transparent text-gray-800 dark:text-gray-200 px-3 py-1.5 text-center font-bold text-sm outline-none w-full transition-colors placeholder:text-gray-400 dark:placeholder:text-gray-600 z-10"
                         placeholder="min bet 200"
@@ -1230,6 +1247,7 @@ export default function App() {
                   soundEnabled={bingoSoundEnabled}
                   setSoundEnabled={setBingoSoundEnabled}
                   isActive={activeTab === 'bingo'}
+                  isDarkMode={isDarkMode}
                 />
             </div>
 
@@ -1537,15 +1555,17 @@ export default function App() {
                     <div className="flex gap-2 justify-center">
                       <button
                         onClick={() => handleTriggerFlow('deposit')}
-                        className="flex-1 bg-green-600 hover:bg-green-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                        disabled={isTriggeringFlow}
+                        className={`flex-1 bg-green-600 hover:bg-green-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${isTriggeringFlow ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        <ArrowDownLeft className="w-4 h-4" /> Deposit via Bot
+                        {isTriggeringFlow ? 'Triggering...' : <><ArrowDownLeft className="w-4 h-4" /> Deposit via Bot</>}
                       </button>
                       <button
                         onClick={() => handleTriggerFlow('withdraw')}
-                        className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                        disabled={isTriggeringFlow}
+                        className={`flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${isTriggeringFlow ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        <ArrowUpRight className="w-4 h-4" /> Withdraw via Bot
+                        {isTriggeringFlow ? 'Triggering...' : <><ArrowUpRight className="w-4 h-4" /> Withdraw via Bot</>}
                       </button>
                     </div>
                   </div>

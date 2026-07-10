@@ -1,19 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --dark-mode: selector;
+  /* No special property needed here for class mode in v4, we use @custom-variant instead if default isn't working */
 }
+
+/* Tailwind v4 default dark variant is usually media. To support .dark class: */
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
     color-scheme: light;
   }
-  :root.dark {
+  
+  html.dark {
     color-scheme: dark;
   }
 
   html, body {
-    @apply overflow-hidden w-full h-full;
+    @apply overflow-hidden w-full h-full transition-colors duration-300 bg-white dark:bg-gray-950;
     position: fixed;
     top: 0;
     left: 0;
@@ -30,7 +34,7 @@
   }
 
   #root {
-    @apply h-full w-full overflow-hidden flex flex-col;
+    @apply h-full w-full overflow-hidden flex flex-col bg-inherit;
     position: relative;
     touch-action: pan-y;
   }

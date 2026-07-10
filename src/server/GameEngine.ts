@@ -197,7 +197,11 @@ class Room {
               const refund = p.amount - remaining;
               p.amount = remaining;
               currentOverPool += remaining;
+              if (p.amount > 0) {
               this.state.feed.unshift(`የ${p.username} ባለው ${p.amount.toLocaleString()} ሄደሃል።`);
+            } else {
+              this.state.feed.unshift(`የ${p.username} በዚህ ዙር አልሄድክም`);
+            }
               this.io.to(p.userId).emit('refund', refund);
 
               // Update user balance in DB
@@ -1133,8 +1137,7 @@ export function initGameEngine(io: Server) {
           });
         }
 
-        socket.emit("syncBalance", newBalance);
-
+        this.io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
         const result = room.placeBet(data.userId, data.username, data.amount, data.side, data.partial);
         if (callback) callback(result);
       } catch (err: any) {

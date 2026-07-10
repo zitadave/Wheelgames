@@ -749,7 +749,7 @@ export const JackpotArena = React.memo(function JackpotArena({
               </div>
               
               {tier === 'grand' && showTheater && (
-                <div className="flex flex-col items-center justify-center gap-2 bg-zinc-950/90 p-4 rounded-2xl border border-zinc-800 w-full mt-0">
+                <div className="flex flex-col items-center justify-center gap-2 bg-white dark:bg-zinc-950/90 p-4 rounded-2xl border border-gray-200 dark:border-zinc-800 w-full mt-0 shadow-xl transition-colors duration-300">
                   <h2 className="text-sm font-black text-amber-500 uppercase tracking-widest">Winners List</h2>
                   <div className="flex flex-col gap-1">
                     {winners.first && <div className="text-xs text-emerald-400 font-bold">1st Place: #{winners.first}</div>}
@@ -783,7 +783,7 @@ export const JackpotArena = React.memo(function JackpotArena({
       {/* 3D Trophy Podium Section (No label, placed under the selectors) */}
       {!showTheater && (
         <>
-        <div className="bg-slate-950/50 p-2.5 rounded-2xl border border-zinc-800/60 mb-3 shadow-inner">
+        <div className="bg-white/50 dark:bg-slate-950/50 p-2.5 rounded-2xl border border-gray-200 dark:border-zinc-800/60 mb-3 shadow-inner">
           <div className="flex items-end justify-center gap-2 pt-2 pb-1">
             
             {/* 2nd Place (Silver Trophy) */}
@@ -792,19 +792,19 @@ export const JackpotArena = React.memo(function JackpotArena({
                 {/* Silver Crown */}
                 <Crown className="w-4 h-4 text-zinc-400 fill-zinc-400/20 absolute -top-3.5 -right-0.5 rotate-12 drop-shadow-[0_0_3px_rgba(161,161,170,0.5)]" />
                 {/* Silver Border Circle */}
-                <div className="w-12 h-12 rounded-full border-2 border-zinc-400 bg-zinc-950/80 flex items-center justify-center shadow-[0_3px_8px_rgba(161,161,170,0.15)]">
-                  <Trophy className="w-6 h-6 text-zinc-300 drop-shadow-[0_1px_4px_rgba(161,161,170,0.3)]" />
+                <div className="w-12 h-12 rounded-full border-2 border-zinc-400 bg-white dark:bg-zinc-950/80 flex items-center justify-center shadow-[0_3px_8px_rgba(161,161,170,0.15)]">
+                  <Trophy className="w-6 h-6 text-zinc-400 dark:text-zinc-300 drop-shadow-[0_1px_4px_rgba(161,161,170,0.3)]" />
                 </div>
                 {/* Place Badge */}
                 <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-1.5 py-0.5 bg-zinc-500 text-[7px] font-black rounded-md text-white shadow-sm border border-zinc-400/30">
                   #2
                 </span>
               </div>
-              <div className="mt-2.5 w-full py-1 px-1 bg-zinc-800/80 border border-zinc-700/60 rounded-xl text-center shadow-md">
-                <span className="font-mono text-[9px] font-black text-zinc-300">
+              <div className="mt-2.5 w-full py-1 px-1 bg-gray-50 dark:bg-zinc-800/80 border border-gray-200 dark:border-zinc-700/60 rounded-xl text-center shadow-md">
+                <span className="font-mono text-[9px] font-black text-gray-900 dark:text-zinc-300">
                   {currentConfig.p2.toLocaleString()}
                 </span>
-                <span className="text-[7px] text-zinc-400 font-black ml-0.5">ETB</span>
+                <span className="text-[7px] text-gray-500 dark:text-zinc-400 font-black ml-0.5">ETB</span>
               </div>
             </div>
 
@@ -814,7 +814,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                 {/* Gold Crown */}
                 <Crown className="w-5 h-5 text-amber-400 fill-amber-400/30 absolute -top-4.5 left-1/2 -translate-x-1/2 -rotate-12 drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
                 {/* Gold Border Circle */}
-                <div className="w-14 h-14 rounded-full border-2 border-amber-400 bg-zinc-950/90 flex items-center justify-center shadow-[0_4px_12px_rgba(245,158,11,0.25)]">
+                <div className="w-14 h-14 rounded-full border-2 border-amber-400 bg-white dark:bg-zinc-950/90 flex items-center justify-center shadow-[0_4px_12px_rgba(245,158,11,0.25)]">
                   <Trophy className="w-7 h-7 text-amber-400 drop-shadow-[0_1px_5px_rgba(245,158,11,0.5)]" />
                 </div>
                 {/* Place Badge */}
@@ -836,7 +836,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                 {/* Bronze/Copper Crown */}
                 <Crown className="w-4 h-4 text-orange-500 fill-orange-500/10 absolute -top-3.5 -left-0.5 -rotate-12 drop-shadow-[0_0_3px_rgba(249,115,22,0.5)]" />
                 {/* Bronze Border Circle */}
-                <div className="w-12 h-12 rounded-full border-2 border-orange-500/70 bg-zinc-950/80 flex items-center justify-center shadow-[0_3px_8px_rgba(249,115,22,0.15)]">
+                <div className="w-12 h-12 rounded-full border-2 border-orange-500/70 bg-white dark:bg-zinc-950/80 flex items-center justify-center shadow-[0_3px_8px_rgba(249,115,22,0.15)]">
                   <Trophy className="w-6 h-6 text-orange-600/95 drop-shadow-[0_1px_4px_rgba(249,115,22,0.3)]" />
                 </div>
                 {/* Place Badge */}
@@ -844,8 +844,8 @@ export const JackpotArena = React.memo(function JackpotArena({
                   #3
                 </span>
               </div>
-              <div className="mt-2.5 w-full py-1 px-1 bg-orange-950/50 border border-orange-900/60 rounded-xl text-center shadow-md">
-                <span className="font-mono text-[9px] font-black text-orange-400">
+              <div className="mt-2.5 w-full py-1 px-1 bg-orange-100 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900/60 rounded-xl text-center shadow-md">
+                <span className="font-mono text-[9px] font-black text-orange-600 dark:text-orange-400">
                   {currentConfig.p3.toLocaleString()}
                 </span>
                 <span className="text-[7px] text-orange-500 font-black ml-0.5">ETB</span>
@@ -913,7 +913,7 @@ export const JackpotArena = React.memo(function JackpotArena({
               return (
                 <div 
                   key={num} 
-                  className="aspect-square bg-gray-950/60 rounded-lg border border-dashed border-gray-800/30 flex flex-col items-center justify-center text-gray-700/20 text-[10px] font-black select-none"
+                  className="aspect-square bg-gray-100 dark:bg-gray-950/60 rounded-lg border border-dashed border-gray-200 dark:border-gray-800/30 flex flex-col items-center justify-center text-gray-400 dark:text-gray-700/20 text-[10px] font-black select-none"
                 >
                   💨
                 </div>
@@ -933,7 +933,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                       ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                       : item.isSelf
                       ? 'bg-gradient-to-b from-blue-600 to-indigo-700 border-blue-400 text-white shadow-xs'
-                      : 'bg-gray-800 border-gray-700 text-gray-300'
+                      : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-300'
                   }`}
                   style={isBlitzActive ? { opacity: 1 } : undefined}
                 >

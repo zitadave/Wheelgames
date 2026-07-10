@@ -9,11 +9,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { handleSupportChat } from "./aiSupport.js";
 
-let botInfo: any = null;
-let botInstance: any = null;
+let botInfo: any = (global as any).telegramBotInfo || null;
+let botInstance: any = (global as any).telegramBotInstance && (global as any).telegramBotInstance !== "initializing" ? (global as any).telegramBotInstance : null;
 let globalAppUrl = "https://wheelgames1.onrender.com";
 
-const botLogs: string[] = [];
+const botLogs: string[] = (global as any).telegramBotLogs || [];
 export function logBot(msg: string) {
   const timestamp = new Date().toISOString();
   const formatted = `[${timestamp}] ${msg}`;
@@ -22,6 +22,7 @@ export function logBot(msg: string) {
   if (botLogs.length > 200) {
     botLogs.shift();
   }
+  (global as any).telegramBotLogs = botLogs;
 }
 
 export function getBotLogs() {
@@ -96,6 +97,7 @@ interface UserState {
 
 const userStates = new Map<string, UserState>();
 const userLanguages = new Map<number, string>();
+const registeredUsersCache = new Set<string>();
 
 let startDepositFlowRef: ((chatId: number, userId: string) => void) | null = null;
 let startWithdrawalFlowRef: ((chatId: number, userId: string) => Promise<void>) | null = null;
@@ -458,7 +460,12 @@ function isStartingAdmin(userId: number | undefined): boolean {
 }
 
 function getPrimaryOwnerId(): number {
-  return 336997351; // Restricted Starting Admin ID
+  const envId = process.env.ADMIN_ID || process.env.TELEGRAM_ADMIN_IDS?.split(',')[0];
+  if (envId) {
+    const parsed = parseInt(envId, 10);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 336997351; // Fallback
 }
 
 // Admin Chat IDs (Initialized with all owners/starting admins)
@@ -494,10 +501,12 @@ async function syncAdminsFromDB() {
     }
 
     if (adminUsers) {
+      logBot(`Syncing ${adminUsers.length} admins from database...`);
       adminUsers.forEach(u => {
         const id = parseInt(u.id, 10);
         if (!isNaN(id)) adminChatIds.add(id);
       });
+      logBot(`Current total unique admins in memory: ${adminChatIds.size}`);
     }
 
     // Ensure all in-memory admins are synced back to DB
@@ -521,6 +530,8 @@ function generateRef(length = 10): string {
   return result;
 }
 
+let isBotInitializing = false;
+
 export async function initTelegramBot(io: Server): Promise<string | null> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -528,12 +539,24 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     return null;
   }
 
-  if (botInstance) {
-    console.log("Telegram Bot already initialized. Returning existing instance.");
+  if (isBotInitializing || (global as any).telegramBotInstance === "initializing") {
+    console.log("Telegram Bot already initializing. Waiting...");
+    return botInfo?.username || (global as any).telegramBotInfo?.username || null;
+  }
+
+  // If there's an existing instance that is already a bot, just return its username
+  if ((global as any).telegramBotInstance && typeof (global as any).telegramBotInstance === "object" && (global as any).telegramBotInstance !== "initializing") {
+    console.log("Telegram Bot already initialized in this process. Reusing instance.");
+    botInstance = (global as any).telegramBotInstance;
+    botInfo = (global as any).telegramBotInfo;
     return botInfo?.username || null;
   }
 
-  globalAppUrl = "https://wheelgames1.onrender.com";
+  isBotInitializing = true;
+  (global as any).telegramBotInstance = "initializing"; // Temporary lock
+
+  const currentProcessId = process.pid;
+  logBot(`Bot initialization started. PID: ${currentProcessId}, Timestamp: ${Date.now()}`);
   // Make sure we strip any trailing slash
   globalAppUrl = globalAppUrl.replace(/\/$/, "");
   const appUrl = globalAppUrl;
@@ -554,6 +577,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
   });
   botInstance = bot;
+  (global as any).telegramBotInstance = bot;
+  (global as any).telegramBotInfo = botInfo;
+  isBotInitializing = false;
 
   bot.on("polling_error", (error: any) => {
     if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
@@ -580,6 +606,11 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   syncAdminsFromDB().catch(err => {
     logBot(`Error in syncAdminsFromDB background execution: ${err.message || err}`);
   });
+
+  // Periodically sync admins from DB every 10 minutes
+  setInterval(() => {
+    syncAdminsFromDB().catch(err => logBot(`Scheduled admin sync failed: ${err.message || err}`));
+  }, 10 * 60 * 1000);
 
   // --- TELEGRAM SEO & DISCOVERY OPTIMIZATIONS (Asynchronous/Non-blocking) ---
   Promise.resolve().then(async () => {
@@ -717,6 +748,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return null;
       }
       if (data && data.length > 0) {
+        registeredUsersCache.add(userId);
         return { balance: Number(data[0].balance) };
       }
 
@@ -737,6 +769,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         logBot(`Error inserting user ID=${userId}: ${insertError.message}`);
         return { balance: 0 };
       }
+      registeredUsersCache.add(userId);
       return { balance: insertedData ? Number(insertedData.balance) : 0 };
     } catch (e: any) {
       logBot(`Unexpected error in getOrCreateUser for ID=${userId}: ${e?.message || e}`);
@@ -806,8 +839,13 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     if (!userId) return;
 
     try {
+      if (registeredUsersCache.has(userId)) {
+        await onRegistered();
+        return;
+      }
       const { data, error } = await supabase.from('users').select('id').eq('id', userId);
       if (data && data.length > 0) {
+        registeredUsersCache.add(userId);
         await onRegistered();
       } else {
         const lang = userLanguages.get(parseInt(userId)) || 'en';
@@ -831,330 +869,20 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
   };
 
-  registerCommandHandlers(bot, logBot, checkRegisteredAndHandle, sendSupportCard, userStates);
+  // Logic for commands now handled in main message dispatcher
+  // registerCommandHandlers(bot, logBot, checkRegisteredAndHandle, sendSupportCard, userStates);
 
   // --- BOT COMMANDS HANDLERS ---
   
   // Start Command
-  bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id.toString();
-    const firstName = msg.from?.first_name || "Player";
-    const payload = match ? match[1] : '';
-
-    if (!userId) return;
-
-    let isRegistered = false;
-    try {
-      const { data, error } = await supabase.from('users').select('id').eq('id', userId);
-      if (data && data.length > 0) {
-        isRegistered = true;
-      }
-    } catch (e) {
-      logBot(`Error checking registration: ${e}`);
-    }
-
-    if (isRegistered) {
-      if (payload === 'deposit') {
-        return startDepositFlow(chatId, userId);
-      } else if (payload === 'withdraw') {
-        return startWithdrawalFlow(chatId, userId);
-      }
-
-      // Default main menu greeting
-      let userBalanceStr = "100,000 ETB (Demo)";
-      try {
-        const { data } = await supabase.from('users').select('balance').eq('id', userId);
-        if (data && data.length > 0) {
-          userBalanceStr = `${Number(data[0].balance).toLocaleString()} ETB`;
-        }
-      } catch (e) {
-        // Ignored
-      }
-
-      const welcomeMsgPattern = promptsConfig.welcome_msg || 
-        `👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\n` +
-        `Experience the thrill of real-time multiplayer gaming right here in Telegram!\n\n` +
-        `💰 *Your current balance:* \`{balance}\`\n\n` +
-        `🚀 *Available Games:*\n` +
-        `• 🟢 *Even/Odd* - High-octane multipliers and double-ups\n` +
-        `• 🏆 *Jackpot Arena* - Secure spots and sweep the pool prize\n` +
-        `• 🎡 *Wheel of Chance* - High stakes wheel of fortune\n\n` +
-        `👇 Click the button below to launch the Mini App and start playing immediately!`;
-        
-      const welcomeMsg = welcomeMsgPattern
-        .replace(/{name}/g, firstName)
-        .replace(/{balance}/g, userBalanceStr);
-
-      const welcomeButtonsRows = (promptsConfig.welcome_buttons || [
-        [
-          { text: "🎮 Play Game Hub 🚀", type: "webapp", value: "appUrl" }
-        ],
-        [
-          { text: "💸 Deposit / ማስገቢያ", type: "callback", value: "menu_deposit" },
-          { text: "🏦 Withdraw / ማውጫ", type: "callback", value: "menu_withdraw" }
-        ],
-        [
-          { text: "📞 Contact Support", type: "callback", value: "menu_support" }
-        ]
-      ]).map(row => 
-        row.map(btn => {
-          const btnVal = btn.value === 'appUrl' ? appUrl : btn.value;
-          if (btn.type === 'webapp') {
-            return { text: btn.text, web_app: { url: btnVal } };
-          } else if (btn.type === 'url') {
-            return { text: btn.text, url: btnVal };
-          } else {
-            return { text: btn.text, callback_data: btnVal };
-          }
-        })
-      );
-
-      const options = {
-        parse_mode: "Markdown" as const,
-        reply_markup: {
-          inline_keyboard: welcomeButtonsRows
-        }
-      };
-
-      if (promptsConfig.welcome_image) {
-        bot.sendPhoto(chatId, promptsConfig.welcome_image, {
-          caption: welcomeMsg,
-          parse_mode: "Markdown",
-          reply_markup: options.reply_markup
-        }).catch(() => bot.sendMessage(chatId, welcomeMsg, options));
-      } else {
-        bot.sendMessage(chatId, welcomeMsg, options);
-      }
-    } else {
-      pendingRegistrations.set(userId, { payload });
-
-      const desc = promptsConfig.welcome_guest_msg || `🎮 <b>Welcome to ETB Game Hub!</b> 🚀\n\n` +
-        `Experience the ultimate Telegram gaming destination! Test your prediction skills with 🟢 <b>Even/Odd</b>, enter the 🏆 <b>Jackpot Arena</b>, or spin the 🎡 <b>Wheel of Chance</b> to win incredible rewards.\n\n` +
-        `💎 <i>Play instantly, win with real-time multipliers, and withdraw directly to your favorite wallet!</i>`;
-
-      const options = {
-        parse_mode: "HTML" as const,
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "🎮 Start Play / ለመጫወት ጀምር 🚀", callback_data: "register_start" }
-            ]
-          ]
-        }
-      };
-
-      if (promptsConfig.welcome_guest_image) {
-        bot.sendPhoto(chatId, promptsConfig.welcome_guest_image, {
-          caption: desc,
-          parse_mode: "HTML",
-          reply_markup: options.reply_markup
-        }).catch(() => bot.sendMessage(chatId, desc, options));
-      } else {
-        bot.sendMessage(chatId, desc, options);
-      }
-    }
-  });
-
-  // Play Command
-  bot.onText(/\/play/, async (msg) => {
-    await checkRegisteredAndHandle(msg, () => {
-      const chatId = msg.chat.id;
-      bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!* Press the button below to launch the Mini App:", {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "🚀 Launch Game",
-                web_app: { url: appUrl }
-              }
-            ]
-          ]
-        }
-      });
-    });
-  });
+  // Removed bot.onText listeners for start and play as they are now in the unified dispatcher
 
   // Quick Command triggers for Deposits and Withdrawals
-  bot.onText(/\/deposit/, async (msg) => {
-    await checkRegisteredAndHandle(msg, () => {
-      if (msg.from?.id) startDepositFlow(msg.chat.id, msg.from.id.toString());
-    });
-  });
+  // (Removed individual onText handlers to prevent duplication - now handled in message dispatcher)
 
-  bot.onText(/\/withdraw/, async (msg) => {
-    await checkRegisteredAndHandle(msg, () => {
-      if (msg.from?.id) startWithdrawalFlow(msg.chat.id, msg.from.id.toString());
-    });
-  });
 
-  bot.onText(/\/referral/, async (msg) => {
-    await checkRegisteredAndHandle(msg, () => {
-      const chatId = msg.chat.id;
-      const userId = msg.from?.id.toString();
-      if (!userId) return;
+  // Built-in command listeners (centralized in dispatcher)
 
-      const botUsername = botInfo?.username || "ETBGameHubBot";
-      const referralShareText = encodeURIComponent(promptsConfig.referral_share_text || "Join me on ETB Game Hub and win big!");
-      
-      const referralMsg = (promptsConfig.referral_msg || "🤝 <b>Invite your friends and families!</b>")
-        .replace(/{user_id}/g, userId)
-        .replace(/{bot_username}/g, botUsername)
-        .replace(/{referral_share_text}/g, promptsConfig.referral_share_text);
-
-      const buttons = (promptsConfig.referral_buttons || []).map(row =>
-        row.map(btn => {
-          const btnVal = btn.value
-            .replace(/{user_id}/g, userId)
-            .replace(/{bot_username}/g, botUsername)
-            .replace(/{referral_share_text}/g, referralShareText);
-          return { text: btn.text, url: btnVal };
-        })
-      );
-
-      const options = {
-        parse_mode: "HTML" as const,
-        reply_markup: {
-          inline_keyboard: buttons
-        }
-      };
-
-      if (promptsConfig.referral_image) {
-        bot.sendPhoto(chatId, promptsConfig.referral_image, {
-          caption: referralMsg,
-          ...options
-        }).catch(() => bot.sendMessage(chatId, referralMsg, options));
-      } else {
-        bot.sendMessage(chatId, referralMsg, options);
-      }
-    });
-  });
-
-  bot.onText(/\/affiliate/, async (msg) => {
-    await checkRegisteredAndHandle(msg, async () => {
-      const chatId = msg.chat.id;
-      const userId = msg.from?.id.toString();
-      if (!userId) return;
-      
-      try {
-        // Count total referrals
-        const { data: refTx } = await supabase.from('transactions')
-          .select('id')
-          .eq('type', 'referral_link')
-          .ilike('description', `Referred by ${userId}%`);
-        const totalReferrals = refTx ? refTx.length : 0;
-
-        // Calculate total earnings & available balance
-        const { data: earnTx } = await supabase.from('transactions')
-          .select('amount, type')
-          .eq('user_id', userId)
-          .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward']); // Support old reward logic
-        
-        let totalEarned = 0;
-        let availableBalance = 0;
-        if (earnTx) {
-            earnTx.forEach(tx => {
-                const amt = Number(tx.amount || 0);
-                if (tx.type === 'affiliate_withdrawal') {
-                    availableBalance -= Math.abs(amt);
-                } else {
-                    totalEarned += amt;
-                    availableBalance += amt;
-                }
-            });
-        }
-
-        const msgText = `💰 <b>Your Affiliate Dashboard</b>\n\n👥 <b>Total Referrals:</b> ${totalReferrals}\n💵 <b>Total Commission Earned:</b> ${totalEarned.toLocaleString()} ETB\n💰 <b>Available to Withdraw:</b> ${availableBalance.toLocaleString()} ETB\n\n<i>To request a payout or view detailed logs, open the Mini App!\n\nShare your referral link using /referral to earn 1% on all your friends' bets!</i>`;
-        
-        bot.sendMessage(chatId, msgText, { parse_mode: "HTML" });
-      } catch (e: any) {
-        logBot(`Error in affiliate stats: ${e.message}`);
-        bot.sendMessage(chatId, `❌ <b>Error loading affiliate stats:</b> ${e.message}\n\n<i>Please make sure your database is fully set up and connected!</i>`, { parse_mode: "HTML" });
-      }
-    });
-  });
-
-  bot.onText(/\/balance/, async (msg) => {
-    await checkRegisteredAndHandle(msg, async () => {
-      const chatId = msg.chat.id;
-      const userId = msg.from?.id?.toString();
-      if (!userId) return;
-
-      try {
-        const { data, error } = await supabase.from('users').select('balance').eq('id', userId).single();
-        if (error) {
-          bot.sendMessage(chatId, "⚠️ *Error retrieving balance.*", { parse_mode: "Markdown" });
-          return;
-        }
-
-        const balanceVal = data ? Number(data.balance) : 0;
-        const msgText = `💵 *Your Current Balance / የሂሳብዎ መጠን:*\n\n` +
-          `💰 *${balanceVal.toLocaleString()} ETB*\n\n` +
-          `🎮 _Play inside the web app and keep winning!_`;
-
-        bot.sendMessage(chatId, msgText, { parse_mode: "Markdown" });
-      } catch (err: any) {
-        logBot(`Error in /balance handler: ${err.message}`);
-        bot.sendMessage(chatId, "⚠️ *Error retrieving balance.*", { parse_mode: "Markdown" });
-      }
-    });
-  });
-
-  bot.onText(/\/promoter_leaderboard/, async (msg) => {
-    await checkRegisteredAndHandle(msg, async () => {
-      const chatId = msg.chat.id;
-      try {
-        const stats = await fetchLeaderboardData();
-        const dateStr = new Date(stats.startOfWeek).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        
-        let text = `🏆 <b>Weekly Promoter Leaderboard</b>\n\n`;
-        text += `📅 <b>Week of:</b> <code>${dateStr}</code> (Sunday UTC)\n`;
-        text += `💰 <b>Weekly Promoter Jackpot:</b> <b>${stats.promoterJackpot.toLocaleString()} ETB</b>\n`;
-        text += `<i>Funded by 10% of the platform's retained fees from Jackpot and Chance 1-20 rooms this week!</i>\n\n`;
-        
-        text += `👥 <b>Top 10 Active Promoters:</b>\n`;
-        if (stats.leaderboard && stats.leaderboard.length > 0) {
-            stats.leaderboard.forEach((entry, idx) => {
-                const name = entry.first_name || entry.username || `User ${entry.referrer_id.slice(0, 6)}`;
-                const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "•";
-                
-                // Estimate split for top 3
-                let estText = "";
-                if (idx === 0) estText = ` (Est: <b>${Math.floor(stats.promoterJackpot * 0.50).toLocaleString()} ETB</b>)`;
-                if (idx === 1) estText = ` (Est: <b>${Math.floor(stats.promoterJackpot * 0.30).toLocaleString()} ETB</b>)`;
-                if (idx === 2) estText = ` (Est: <b>${Math.floor(stats.promoterJackpot * 0.20).toLocaleString()} ETB</b>)`;
-                
-                text += `${medal} <b>${name}</b> | Vol: <code>${entry.volume.toLocaleString()} ETB</code>${estText}\n`;
-            });
-        } else {
-            text += `<i>No referred playing volume yet for this week. Be the first to claim a spot!</i>\n`;
-        }
-        
-        text += `\n📢 <i>Share your referral link using /referral to invite friends. The more they bet in ዕድል (Jackpot) and ፈጣን (1-20) rooms, the higher your volume and share of the weekly jackpot!</i>`;
-        
-        bot.sendMessage(chatId, text, { parse_mode: "HTML" });
-      } catch (e: any) {
-        logBot(`Error displaying promoter leaderboard: ${e.message}`);
-        bot.sendMessage(chatId, `❌ Error loading leaderboard: ${e.message}`);
-      }
-    });
-  });
-
-  // Cancel flow command
-  bot.onText(/\/cancel/, (msg) => {
-    const userId = msg.from?.id;
-    if (userId) {
-      if (isStartingAdmin(userId)) {
-        setAdminStates.delete(userId);
-      }
-      if (isStartingAdmin(userId)) {
-        broadcastStates.delete(userId);
-      }
-      userStates.set(userId.toString(), { step: 'idle' });
-      bot.sendMessage(msg.chat.id, "✅ <b>All active flows and setups have been canceled.</b>", { parse_mode: "HTML" });
-    }
-  });
 
   // Owner Admin Management control panel
   async function renderSetAdminMenu(bot: any, chatId: number) {
@@ -1176,96 +904,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   }
 
   
-  bot.onText(/\/list_of_recent_announcement/, (msg) => { bot.sendMessage(msg.chat.id, "Please use /announcement instead."); });
-  bot.onText(/\/list_of_recent_announcement/, (msg) => {
-    const chatId = msg.chat.id;
-    if (!isStartingAdmin(msg.from?.id)) {
-      return bot.sendMessage(chatId, "❌ Access Denied.");
-    }
-    const anns = loadAnnouncements();
-    if (anns.length === 0) {
-      return bot.sendMessage(chatId, "📋 Recent Announcements:\n\nNo announcements found.");
-    }
-    let text = "📢 <b>Recent Announcements:</b>\n\n";
-    anns.forEach(a => {
-      text += "<b>ID:</b> <code>" + a.id + "</code>\n<b>Type:</b> " + a.type + "\n<b>Interval (hrs):</b> " + a.intervalHours + "\n<b>Enabled:</b> " + a.enabled + "\n\n";
-    });
-    bot.sendMessage(chatId, text, { parse_mode: "HTML" });
-  });
 
-  bot.onText(/\/announcement/, (msg) => {
-    const chatId = msg.chat.id;
-    if (!isStartingAdmin(msg.from?.id)) {
-      return bot.sendMessage(chatId, "❌ Access Denied.");
-    }
-    const anns = loadAnnouncements();
-    if (anns.length === 0) {
-      return bot.sendMessage(chatId, "📋 Recent Announcements:\n\nNo announcements found.");
-    }
-    let text = "📢 <b>Announcements:</b>\n\n";
-    anns.forEach(a => {
-      text += `<b>ID:</b> <code>${a.id}</code>\n<b>Type:</b> ${a.type}\n<b>Interval (hrs):</b> ${a.intervalHours}\n<b>Enabled:</b> ${a.enabled}\n\n`;
-    });
-    bot.sendMessage(chatId, text, { parse_mode: "HTML" });
-  });
 
-  bot.onText(/\/announcement_delete(?: (.+))?/, (msg, match) => {
-    const chatId = msg.chat.id;
-    if (!isStartingAdmin(msg.from?.id)) {
-      return bot.sendMessage(chatId, "❌ Access Denied.");
-    }
-    const id = match && match[1];
-    if (!id) return bot.sendMessage(chatId, "Please specify an ID. Usage: /announcement_delete <id>");
-    
-    let anns = loadAnnouncements();
-    const initialLen = anns.length;
-    anns = anns.filter(a => a.id !== id);
-    if (anns.length < initialLen) {
-      saveAnnouncements(anns);
-      bot.sendMessage(chatId, `✅ Announcement ${id} deleted.`);
-    } else {
-      bot.sendMessage(chatId, `❌ Announcement ${id} not found.`);
-    }
-  });
-
-  bot.onText(/\/setadmin/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-
-    if (!isStartingAdmin(userId)) {
-      bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the Starting Admin/Owner of this bot.`, { parse_mode: "HTML" });
-      logBot(`Failed admin control panel access attempt by userId=${userId}`);
-      return;
-    }
-
-    renderSetAdminMenu(bot, chatId);
-  });
-
-  bot.onText(/\/control/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-
-    if (!isStartingAdmin(userId)) {
-      // Prompt user that command doesn't exist
-      bot.sendMessage(chatId, `❌ <b>Unknown command.</b>\n\nPlease use /help or /start to see available commands.`, { parse_mode: "HTML" });
-      
-      // Notify starting admin
-      const username = msg.from?.username || msg.from?.first_name || "Unknown User";
-      const now = new Date();
-      const day = String(now.getDate()).padStart(2, '0');
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const year = now.getFullYear();
-      const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      
-      const startingAdminId = getPrimaryOwnerId();
-      const alertMsg = `🚨 <b>Security Alert!</b>\n\nAdmin <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command at <b>${time} ${day}/${month}/${year}/</b>\n\nThis attempt has been blocked.`;
-      
-      bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
-      return;
-    }
-
-    renderMainControlPanel(chatId);
-  });
 
   function renderMainControlPanel(chatId: number, messageId?: number) {
     const text = "🛠️ <b>Main Control Panel</b>";
@@ -1692,14 +1332,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
   }
 
-  bot.onText(/\/manage_affiliate/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-    if (!isStartingAdmin(userId)) {
-      return;
-    }
-    await renderManageAffiliate(chatId);
-  });
 
   async function renderManageAffiliate(chatId: number, messageId?: number) {
     try {
@@ -1795,16 +1427,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
   }
 
-  bot.onText(/\/edit/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-
-    if (!isStartingAdmin(userId)) {
-      return;
-    }
-
-    sendEditPanelMenu(chatId);
-  });
 
   function sendEditPanelMenu(chatId: number, messageId?: number) {
     const text = "📝 <b>Edit Panel</b>\n\nSelect the flow or section you want to customize below:";
@@ -2316,61 +1938,20 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }).catch(() => {});
   }
 
-  // Interactive Broadcast Wizard for Admins
-  bot.onText(/\/broadcast/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-
-    if (!isStartingAdmin(userId)) {
-      bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to administrators only.`, { parse_mode: "HTML" });
-      logBot(`Failed broadcast command attempt by userId=${userId}`);
-      return;
-    }
-
-    // Initialize campaign builder session with premium default values
-    const composer: BroadcastComposer = {
-      step: 'choose_target',
-      target: 'all',
-      template: 'none'
-    };
-    broadcastStates.set(userId, composer);
-
-    await renderBroadcastDashboard(bot, chatId, userId, composer);
-  });
-
-  bot.onText(/\/analysis/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
-    
-    if (!isStartingAdmin(userId)) {
-      bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
-      return;
-    }
-    
-    bot.sendMessage(chatId, "📊 <b>Select Timeframe:</b>", {
-      parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "📅 Day", callback_data: "analysis_day" },
-            { text: "🗓️ Week", callback_data: "analysis_week" }
-          ],
-          [
-            { text: "📆 Month", callback_data: "analysis_month" },
-            { text: "📅 Year", callback_data: "analysis_year" }
-          ]
-        ]
-      }
-    });
-  });
 
   // --- MESSAGE STEP-BY-STEP HANDLERS ---
   bot.on("message", async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from?.id.toString();
+    const userIdNum = parseInt(userId, 10);
     if (!userId) return;
 
-    const text = msg.text?.trim() || "";
+    // Prevent concurrent processing for the same user
+    if (processingUsers.has(userId)) return;
+    processingUsers.add(userId);
+
+    try {
+      const text = msg.text?.trim() || "";
     const supportState = userStates.get(userId);
 
     // AI Support Logic
@@ -2402,8 +1983,296 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       if (cmdName.includes("@")) {
         cmdName = cmdName.split("@")[0];
       }
-
       const customCmd = promptsConfig.custom_commands?.[cmdName];
+
+      // Built-in system commands
+      if (cmdName === "start") {
+        const payload = commandParts[1] || "";
+        const firstName = msg.from?.first_name || "Player";
+        let isRegistered = false;
+        try {
+          const { data } = await supabase.from('users').select('id').eq('id', userId);
+          if (data && data.length > 0) isRegistered = true;
+        } catch (e) {}
+
+        if (isRegistered) {
+          if (payload === 'deposit') {
+            const now = Date.now();
+            const lastTime = lastFlowTrigger.get(`${userId}_deposit`) || 0;
+            if (now - lastTime > 2000) {
+              lastFlowTrigger.set(`${userId}_deposit`, now);
+              return startDepositFlow(chatId, userId);
+            }
+            return;
+          } else if (payload === 'withdraw') {
+            const now = Date.now();
+            const lastTime = lastFlowTrigger.get(`${userId}_withdraw`) || 0;
+            if (now - lastTime > 2000) {
+              lastFlowTrigger.set(`${userId}_withdraw`, now);
+              return startWithdrawalFlow(chatId, userId);
+            }
+            return;
+          }
+
+          let userBalanceStr = "0 ETB";
+          try {
+            const { data } = await supabase.from('users').select('balance').eq('id', userId);
+            if (data && data.length > 0) userBalanceStr = `${Number(data[0].balance).toLocaleString()} ETB`;
+          } catch (e) {}
+
+          const welcomeMsgPattern = promptsConfig.welcome_msg || `👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\n💰 *Your current balance:* \`{balance}\`\n\n👇 Click below to play!`;
+          const welcomeMsg = welcomeMsgPattern.replace(/{name}/g, firstName).replace(/{balance}/g, userBalanceStr);
+          const welcomeButtonsRows = (promptsConfig.welcome_buttons || [[{ text: "🎮 Play Game Hub 🚀", type: "webapp", value: "appUrl" }]]).map(row => 
+            row.map(btn => {
+              const btnVal = btn.value === 'appUrl' ? appUrl : btn.value;
+              if (btn.type === 'webapp') return { text: btn.text, web_app: { url: btnVal } };
+              if (btn.type === 'url') return { text: btn.text, url: btnVal };
+              return { text: btn.text, callback_data: btnVal };
+            })
+          );
+
+          if (promptsConfig.welcome_image) {
+            await bot.sendPhoto(chatId, promptsConfig.welcome_image, { caption: welcomeMsg, parse_mode: "Markdown", reply_markup: { inline_keyboard: welcomeButtonsRows } })
+              .catch(() => bot.sendMessage(chatId, welcomeMsg, { parse_mode: "Markdown", reply_markup: { inline_keyboard: welcomeButtonsRows } }));
+          } else {
+            await bot.sendMessage(chatId, welcomeMsg, { parse_mode: "Markdown", reply_markup: { inline_keyboard: welcomeButtonsRows } });
+          }
+        } else {
+          pendingRegistrations.set(userId, { payload });
+          const desc = promptsConfig.welcome_guest_msg || `🎮 <b>Welcome to ETB Game Hub!</b> 🚀`;
+          const markup = { inline_keyboard: [[{ text: "🎮 Start Play / ለመጫወት ጀምር 🚀", callback_data: "register_start" }]] };
+          if (promptsConfig.welcome_guest_image) {
+            await bot.sendPhoto(chatId, promptsConfig.welcome_guest_image, { caption: desc, parse_mode: "HTML", reply_markup: markup })
+              .catch(() => bot.sendMessage(chatId, desc, { parse_mode: "HTML", reply_markup: markup }));
+          } else {
+            await bot.sendMessage(chatId, desc, { parse_mode: "HTML", reply_markup: markup });
+          }
+        }
+        return;
+      }
+      if (cmdName === "play") {
+        await checkRegisteredAndHandle(msg, () => bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: appUrl } }]] } }));
+        return;
+      }
+      if (cmdName === "deposit") {
+        const now = Date.now();
+        const lastTime = lastFlowTrigger.get(`${userId}_deposit`) || 0;
+        if (now - lastTime < 2000) return;
+        lastFlowTrigger.set(`${userId}_deposit`, now);
+        await checkRegisteredAndHandle(msg, () => startDepositFlow(chatId, userId));
+        return;
+      }
+      if (cmdName === "withdraw") {
+        const now = Date.now();
+        const lastTime = lastFlowTrigger.get(`${userId}_withdraw`) || 0;
+        if (now - lastTime < 2000) return;
+        lastFlowTrigger.set(`${userId}_withdraw`, now);
+        await checkRegisteredAndHandle(msg, () => startWithdrawalFlow(chatId, userId));
+        return;
+      }
+      if (cmdName === "referral") {
+        await checkRegisteredAndHandle(msg, async () => {
+          const botUsername = botInfo?.username || "ETBGameHubBot";
+          const referralShareText = encodeURIComponent(promptsConfig.referral_share_text || "Join me on ETB Game Hub and win big!");
+          const referralMsg = (promptsConfig.referral_msg || "🤝 <b>Invite your friends and families!</b>")
+            .replace(/{user_id}/g, userId)
+            .replace(/{bot_username}/g, botUsername)
+            .replace(/{referral_share_text}/g, promptsConfig.referral_share_text);
+          const buttons = (promptsConfig.referral_buttons || []).map(row =>
+            row.map(btn => {
+              const btnVal = btn.value
+                .replace(/{user_id}/g, userId)
+                .replace(/{bot_username}/g, botUsername)
+                .replace(/{referral_share_text}/g, referralShareText);
+              return { text: btn.text, url: btnVal };
+            })
+          );
+          await bot.sendMessage(chatId, referralMsg, {
+            parse_mode: "HTML",
+            reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined
+          });
+        });
+        return;
+      }
+      if (cmdName === "support") {
+        userStates.set(userId, { step: 'support_ai', isSupportAI: true, aiHistory: undefined });
+        await bot.sendMessage(chatId, "👋 <b>Welcome to AI Support!</b>\n\nI am your AI assistant. How can I help you today? You can ask about your balance, games, or any issues you're facing.\n\n<i>Type your message below to start chatting. To exit support, type /cancel.</i>", { parse_mode: "HTML" });
+        return;
+      }
+      if (cmdName === "language") {
+        await bot.sendMessage(chatId, "🌐 <b>Select your language / ቋንቋ ይምረጡ:</b>", {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🇬🇧 English", callback_data: "lang_en" }],
+              [{ text: "🇪🇹 Amharic", callback_data: "lang_am" }]
+            ]
+          }
+        });
+        return;
+      }
+      if (cmdName === "cancel") {
+        userStates.set(userId, { step: 'idle' });
+        if (isStartingAdmin(userIdNum)) {
+          setAdminStates.delete(userIdNum);
+          broadcastStates.delete(userIdNum);
+        }
+        await bot.sendMessage(chatId, "❌ <b>Operation cancelled.</b>", { parse_mode: "HTML" });
+        return;
+      }
+      if (cmdName === "announcement" || cmdName === "list_of_recent_announcement") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        const anns = loadAnnouncements();
+        if (anns.length === 0) return bot.sendMessage(chatId, "📋 Recent Announcements:\n\nNo announcements found.");
+        let text = "📢 <b>Announcements:</b>\n\n";
+        anns.forEach(a => { text += `<b>ID:</b> <code>${a.id}</code>\n<b>Type:</b> ${a.type}\n<b>Interval (hrs):</b> ${a.intervalHours}\n<b>Enabled:</b> ${a.enabled}\n\n`; });
+        await bot.sendMessage(chatId, text, { parse_mode: "HTML" });
+        return;
+      }
+      if (cmdName === "announcement_delete") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        const id = commandParts[1];
+        if (!id) return bot.sendMessage(chatId, "Please specify an ID. Usage: /announcement_delete <id>");
+        let anns = loadAnnouncements();
+        const initialLen = anns.length;
+        anns = anns.filter(a => a.id !== id);
+        if (anns.length < initialLen) {
+          saveAnnouncements(anns);
+          await bot.sendMessage(chatId, `✅ Announcement ${id} deleted.`);
+        } else {
+          await bot.sendMessage(chatId, `❌ Announcement ${id} not found.`);
+        }
+        return;
+      }
+      if (cmdName === "broadcast") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+        const composer: BroadcastComposer = { step: 'choose_target', target: 'all', template: 'none' };
+        broadcastStates.set(userIdNum, composer);
+        await renderBroadcastDashboard(bot, chatId, userIdNum, composer);
+        return;
+      }
+      if (cmdName === "analysis") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+        await bot.sendMessage(chatId, "📊 <b>Select Timeframe:</b>", {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📅 Day", callback_data: "analysis_day" }, { text: "🗓️ Week", callback_data: "analysis_week" }],
+              [{ text: "📆 Month", callback_data: "analysis_month" }, { text: "📅 Year", callback_data: "analysis_year" }]
+            ]
+          }
+        });
+        return;
+      }
+      if (cmdName === "manage_affiliate") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        await renderManageAffiliate(chatId);
+        return;
+      }
+      if (cmdName === "edit") {
+        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        await sendEditPanelMenu(chatId);
+        return;
+      }
+      if (cmdName === "setadmin" || cmdName === "control") {
+        if (isStartingAdmin(userIdNum)) {
+          if (cmdName === "control") {
+             renderMainControlPanel(chatId);
+          } else {
+             await renderSetAdminMenu(bot, chatId);
+          }
+        } else if (cmdName === "control") {
+           await bot.sendMessage(chatId, `❌ <b>Unknown command.</b>\n\nPlease use /help or /start to see available commands.`, { parse_mode: "HTML" });
+           const username = msg.from?.username || msg.from?.first_name || "Unknown User";
+           const now = new Date();
+           const startingAdminId = getPrimaryOwnerId();
+           const alertMsg = `🚨 <b>Security Alert!</b>\n\nAdmin <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
+           await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
+        } else {
+           await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the Starting Admin/Owner of this bot.`, { parse_mode: "HTML" });
+        }
+        return;
+      }
+
+      if (cmdName === "affiliate") {
+        await checkRegisteredAndHandle(msg, async () => {
+          try {
+            const { data: refTx } = await supabase.from('transactions')
+              .select('id')
+              .eq('type', 'referral_link')
+              .ilike('description', `Referred by ${userId}%`);
+            const totalReferrals = refTx ? refTx.length : 0;
+
+            const { data: earnTx } = await supabase.from('transactions')
+              .select('amount, type')
+              .eq('user_id', userId)
+              .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward']);
+            
+            let totalEarned = 0;
+            let availableBalance = 0;
+            if (earnTx) {
+                earnTx.forEach(tx => {
+                    const amt = Number(tx.amount || 0);
+                    if (tx.type === 'affiliate_withdrawal') {
+                        availableBalance -= Math.abs(amt);
+                    } else {
+                        totalEarned += amt;
+                        availableBalance += amt;
+                    }
+                });
+            }
+
+            const msgText = `💰 <b>Your Affiliate Dashboard</b>\n\n👥 <b>Total Referrals:</b> ${totalReferrals}\n💵 <b>Total Commission Earned:</b> ${totalEarned.toLocaleString()} ETB\n💰 <b>Available to Withdraw:</b> ${availableBalance.toLocaleString()} ETB\n\n<i>To request a payout or view detailed logs, open the Mini App!\n\nShare your referral link using /referral to earn 1% on all your friends' bets!</i>`;
+            await bot.sendMessage(chatId, msgText, { parse_mode: "HTML" });
+          } catch (e: any) {
+            logBot(`Error in affiliate stats: ${e.message}`);
+            await bot.sendMessage(chatId, `❌ <b>Error loading affiliate stats:</b> ${e.message}`, { parse_mode: "HTML" });
+          }
+        });
+        return;
+      }
+      if (cmdName === "balance") {
+        await checkRegisteredAndHandle(msg, async () => {
+          try {
+            const { data, error } = await supabase.from('users').select('balance').eq('id', userId).single();
+            if (error) {
+              await bot.sendMessage(chatId, "⚠️ *Error retrieving balance.*", { parse_mode: "Markdown" });
+              return;
+            }
+            const balanceVal = data ? Number(data.balance) : 0;
+            const msgText = `💵 *Your Current Balance / የሂሳብዎ መጠን:*\n\n💰 *${balanceVal.toLocaleString()} ETB*\n\n🎮 _Play inside the web app and keep winning!_`;
+            await bot.sendMessage(chatId, msgText, { parse_mode: "Markdown" });
+          } catch (err: any) {
+            logBot(`Error in /balance handler: ${err.message}`);
+            await bot.sendMessage(chatId, "⚠️ *Error retrieving balance.*", { parse_mode: "Markdown" });
+          }
+        });
+        return;
+      }
+      if (cmdName === "promoter_leaderboard") {
+        await checkRegisteredAndHandle(msg, async () => {
+          try {
+            const stats = await fetchLeaderboardData();
+            const dateStr = new Date(stats.startOfWeek).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            let text = `🏆 <b>Weekly Promoter Leaderboard</b>\n\n📅 <b>Week of:</b> <code>${dateStr}</code> (Sunday UTC)\n💰 <b>Weekly Promoter Jackpot:</b> <b>${stats.promoterJackpot.toLocaleString()} ETB</b>\n\n👥 <b>Top 10 Active Promoters:</b>\n`;
+            if (stats.leaderboard && stats.leaderboard.length > 0) {
+                stats.leaderboard.forEach((entry, idx) => {
+                    const name = entry.first_name || entry.username || `User ${entry.referrer_id.slice(0, 6)}`;
+                    const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "•";
+                    text += `${medal} <b>${name}</b> | Vol: <code>${entry.volume.toLocaleString()} ETB</code>\n`;
+                });
+            } else {
+                text += `<i>No referred playing volume yet for this week.</i>\n`;
+            }
+            text += `\n📢 <i>Share your referral link using /referral to invite friends!</i>`;
+            await bot.sendMessage(chatId, text, { parse_mode: "HTML" });
+          } catch (e: any) {
+            logBot(`Error displaying promoter leaderboard: ${e.message}`);
+            await bot.sendMessage(chatId, `❌ Error loading leaderboard: ${e.message}`);
+          }
+        });
+        return;
+      }
       if (customCmd) {
         try {
           const buttons = (customCmd.buttons || []).map(row => 
@@ -3319,7 +3188,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 1. DEPOSIT: AMOUNT ENTRY
     if (state.step === 'deposit_amount') {
-      const amount = parseInt(text, 10);
+      const cleanText = text.replace(/,/g, '');
+      const amount = Math.floor(Math.abs(parseFloat(cleanText)));
       if (isNaN(amount) || amount < 10) {
         return bot.sendMessage(chatId, "❌ *ማስገባት የሚፈልጉትን መጠን ከ10 ብር ጀምሮ ያስገቡ።*\n\n_እባክዎን ከ 10 በላይ ቁጥር ብቻ ያስገቡ:_ ", { parse_mode: "Markdown" });
       }
@@ -3390,6 +3260,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         `\`\`\`\n${text}\n\`\`\`\n\n` +
         `*Request ID:* \`${requestId}\``;
 
+      const primaryOwnerId = getPrimaryOwnerId();
+      adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
+
+      logBot(`Notifying ${adminChatIds.size} admins of new deposit request ${requestId}`);
       adminChatIds.forEach(adminId => {
         bot.sendMessage(adminId, adminMsg, {
           parse_mode: "Markdown",
@@ -3401,14 +3275,18 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               ]
             ]
           }
-        }).catch(e => console.error(`Failed to notify admin ${adminId} of deposit:`, e));
+        }).catch(e => {
+          logBot(`Failed to notify admin ${adminId} of deposit: ${e.message}`);
+          console.error(`Failed to notify admin ${adminId} of deposit:`, e);
+        });
       });
       return;
     }
 
     // 3. WITHDRAWAL: AMOUNT ENTRY
     if (state.step === 'withdraw_amount') {
-      const amount = parseInt(text, 10);
+      const cleanText = text.replace(/,/g, '');
+      const amount = Math.floor(Math.abs(parseFloat(cleanText)));
       if (isNaN(amount) || amount <= 0) {
         return bot.sendMessage(chatId, "❌ *እባክዎን ትክክለኛ የብር መጠን በቁጥር ብቻ ያስገቡ:*");
       }
@@ -3522,6 +3400,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           `💳 *Account/Phone:* \`${text}\`\n\n` +
           `*Request ID:* \`${requestId}\``;
 
+        const primaryOwnerId = getPrimaryOwnerId();
+        adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
+
+        logBot(`Notifying ${adminChatIds.size} admins of new withdrawal request ${requestId}`);
         adminChatIds.forEach(adminId => {
           bot.sendMessage(adminId, adminMsg, {
             parse_mode: "Markdown",
@@ -3533,7 +3415,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
                 ]
               ]
             }
-          }).catch(e => console.error(`Failed to notify admin ${adminId} of withdrawal:`, e));
+          }).catch(e => {
+            logBot(`Failed to notify admin ${adminId} of withdrawal: ${e.message}`);
+            console.error(`Failed to notify admin ${adminId} of withdrawal:`, e);
+          });
         });
 
       } catch (err) {
@@ -3902,6 +3787,13 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       });
       return;
     }
+
+    } catch (err: any) {
+      logBot(`Unexpected error in message dispatcher for ${userId}: ${err.message}`);
+      bot.sendMessage(chatId, "❌ An unexpected error occurred. Please try again.", { parse_mode: "HTML" });
+    } finally {
+      processingUsers.delete(userId);
+    }
   });
 
   // --- CONTACT REGISTER HANDLER ---
@@ -3912,7 +3804,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (!userId || !contact) return;
 
-    // Validate that the shared contact is actually their own
+    try {
+      // Validate that the shared contact is actually their own
     if (contact.user_id && contact.user_id.toString() !== userId) {
       return bot.sendMessage(chatId, "⚠️ <b>Validation Error:</b> Please share your own contact to register.", { parse_mode: "HTML" });
     }
@@ -3922,10 +3815,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const lastName = msg.from?.last_name || "";
     const phoneNumber = contact.phone_number;
 
-    // Fetch profile picture if available
     let photoUrl = "";
-    try {
-      const photosRes = await bot.getUserProfilePhotos(msg.from.id, { limit: 1 });
+    const photosRes = await bot.getUserProfilePhotos(msg.from.id, { limit: 1 });
       if (photosRes && photosRes.total_count > 0 && photosRes.photos.length > 0) {
         const fileId = photosRes.photos[0][0].file_id;
         const file = await bot.getFile(fileId);
@@ -3933,13 +3824,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         }
       }
-    } catch (photoErr: any) {
-      logBot(`Failed to fetch profile photo for user ${msg.from.id}: ${photoErr.message}`);
-    }
 
-    try {
-      // Create user record in Supabase
-      const upsertData: any = {
+    // Create user record in Supabase
+    const upsertData: any = {
         id: userId,
         username: username || null,
         first_name: firstName || null,
@@ -4059,18 +3946,18 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   // --- CALLBACK QUERY DISPATCHER ---
   bot.on("callback_query", async (query) => {
     const chatId = query.message?.chat.id || query.from.id;
-    const messageId = query.message?.message_id;
     const userId = query.from.id.toString();
     const data = query.data;
+    const messageId = query.message?.message_id;
 
-    if (!data) {
-      try {
-        await bot.answerCallbackQuery(query.id);
-      } catch (err) {
-        console.error("Empty callback answer failed:", err);
-      }
-      return;
+    // Answer immediately to stop button spinner for better UX
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      // Ignore if already answered or expired
     }
+
+    if (!data) return;
 
     try {
       logBot(`[Callback Query] data=${data} user=${userId} chat=${chatId}`);
@@ -6155,7 +6042,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (isAdminAction) {
       const clickerId = query.from.id;
-      if (!adminChatIds.has(clickerId)) {
+      if (!adminChatIds.has(clickerId) && !isStartingAdmin(clickerId)) {
         logBot(`Unauthorized transaction action attempt by clickerId=${clickerId} on ${data}`);
         try {
           await bot.answerCallbackQuery(query.id, { 
@@ -7159,7 +7046,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         `2. የከፈሉበትን አጭር የጹሁፍ መልዕክት(message) copy በማድረግ እዚ ላይ Past አድረገው ያስገቡና ይላኩት👇👇👇\n\n` +
         `_(Please copy and paste the SMS transaction receipt text as response)_`;
 
-      bot.answerCallbackQuery(query.id);
       return bot.sendMessage(chatId, paymentInstructions, { parse_mode: "Markdown" });
     }
 
@@ -7178,8 +7064,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         step: 'withdraw_account',
         bank
       });
-
-      bot.answerCallbackQuery(query.id);
 
       if (bank === "Telebirr") {
         return bot.sendMessage(chatId, promptsConfig.withdraw_telebirr_prompt, { parse_mode: "Markdown" });
@@ -7230,9 +7114,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
         // Delete from pending store
         pendingRequests.delete(requestId);
-
-        // Acknowledge Admin click
-        bot.answerCallbackQuery(query.id, { text: "✅ Deposit approved!" });
 
         // Update Admin inline message
         const adminUsername = query.from.username || query.from.first_name || "Admin";
@@ -7453,6 +7334,9 @@ export function getBotUsername() {
   return botInfo?.username || null;
 }
 
+const lastFlowTrigger = new Map<string, number>();
+const processingUsers = new Set<string>();
+
 export async function triggerBotFlow(userId: string, flowType: 'deposit' | 'withdraw'): Promise<boolean> {
   logBot(`triggerBotFlow called for userId=${userId}, flowType=${flowType}`);
   const chatId = parseInt(userId, 10);
@@ -7460,6 +7344,15 @@ export async function triggerBotFlow(userId: string, flowType: 'deposit' | 'with
     logBot(`Invalid userId for triggerBotFlow: ${userId}`);
     return false;
   }
+
+  // Anti-duplication: Prevent triggering the same flow twice within 10 seconds
+  const now = Date.now();
+  const lastTime = lastFlowTrigger.get(`${userId}_${flowType}`) || 0;
+  if (now - lastTime < 10000) {
+    logBot(`Skipping duplicate flow trigger for userId=${userId}, flowType=${flowType} (last triggered ${now - lastTime}ms ago)`);
+    return true; // Return true as if handled to avoid redundant redirects
+  }
+  lastFlowTrigger.set(`${userId}_${flowType}`, now);
 
   if (flowType === 'deposit') {
     if (startDepositFlowRef) {

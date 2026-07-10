@@ -866,7 +866,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="absolute inset-x-6 top-[20%] z-50 bg-zinc-950/95 border border-zinc-800/80 p-6 rounded-3xl text-center shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-md"
+            className="absolute inset-x-6 top-[20%] z-50 bg-white dark:bg-zinc-950/95 border border-gray-200 dark:border-zinc-800/80 p-6 rounded-3xl text-center shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-md transition-colors duration-300"
           >
             <div className="text-4xl mb-2">
               {currentDraw === 1 ? '🏆' : currentDraw === 2 ? '🥈' : '🥉'}
@@ -1003,7 +1003,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
         )}
 
         {/* Premium Payout Trophy Matrix Card - Always Visible */}
-        <div className="bg-gray-100 dark:bg-zinc-900/80 border border-gray-200 dark:border-zinc-800/80 rounded-2xl p-3.5 max-w-xs mx-auto text-left mb-4">
+        <div className="bg-white dark:bg-zinc-900/80 border border-gray-200 dark:border-zinc-800/80 rounded-2xl p-3.5 max-w-xs mx-auto text-left mb-4 transition-colors duration-300">
           <div className="flex justify-between items-center border-b border-gray-200 dark:border-zinc-800/50 pb-2 mb-2">
             <span className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-400 tracking-wider">Ticket Bet Amount:</span>
             <span className="text-xs font-black font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-md">
@@ -1051,17 +1051,17 @@ export const WheelOfChance = React.memo(function WheelOfChance({
 
       {/* Recent History List */}
       {currentHistory.length > 0 && phase === 'lobby' && (
-        <div className="mx-4 mt-4 bg-gray-100 dark:bg-zinc-900/60 border border-gray-200 dark:border-zinc-800/80 rounded-2xl p-4 shadow-xl mb-4">
+        <div className="mx-4 mt-4 bg-white dark:bg-zinc-900/60 border border-gray-200 dark:border-zinc-800/80 rounded-2xl p-4 shadow-xl mb-4 transition-colors duration-300">
           <h3 className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider flex items-center gap-1.5 mb-3">
             <RefreshCw className="w-3 h-3" /> Recent Winners
           </h3>
           <div className="space-y-2">
             {currentHistory.slice(0, 10).map((h, index) => (
-              <div key={`${h.roundId}-${index}`} className="flex justify-between items-center text-xs bg-gray-50 dark:bg-zinc-950/50 p-2.5 rounded-xl border border-gray-100 dark:border-zinc-800/40">
+              <div key={`${h.roundId}-${index}`} className="flex justify-between items-center text-xs bg-gray-50 dark:bg-zinc-950/50 p-2.5 rounded-xl border border-gray-100 dark:border-zinc-800/40 transition-colors duration-200">
                 <span className="font-black text-gray-500 dark:text-zinc-400">#{h.roundId}</span>
                 <div className="flex gap-1.5 font-mono font-bold">
                   {h.winners[1] && <span className="text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 px-2 py-0.5 rounded-lg text-[10px]">1st-#{h.winners[1]}</span>}
-                  {h.winners[2] && <span className="text-zinc-400 bg-zinc-400/10 border border-zinc-400/20 px-2 py-0.5 rounded-lg text-[10px]">2nd-#{h.winners[2]}</span>}
+                  {h.winners[2] && <span className="text-zinc-600 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-400/10 border border-zinc-200 dark:border-zinc-400/20 px-2 py-0.5 rounded-lg text-[10px]">2nd-#{h.winners[2]}</span>}
                   {h.winners[3] && <span className="text-amber-600 bg-amber-600/10 border border-amber-600/20 px-2 py-0.5 rounded-lg text-[10px]">3rd-#{h.winners[3]}</span>}
                 </div>
               </div>

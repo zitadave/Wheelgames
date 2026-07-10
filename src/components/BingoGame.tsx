@@ -23,9 +23,10 @@ interface BingoGameProps {
   soundEnabled: boolean;
   setSoundEnabled: (enabled: boolean) => void;
   isActive?: boolean;
+  isDarkMode: boolean;
 }
 
-export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, photoUrl, balance, showNotification, roomState, displayTime, soundEnabled, setSoundEnabled, isActive, selectedRoomId, onRoomSelect, bingoRoomsMeta }) => {
+export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, photoUrl, balance, showNotification, roomState, displayTime, soundEnabled, setSoundEnabled, isActive, selectedRoomId, onRoomSelect, bingoRoomsMeta, isDarkMode }) => {
   
   const [selectedCards, setSelectedCards] = useState<number[]>([]);
   const [isJoined, setIsJoined] = useState(false);
@@ -222,7 +223,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   if (!selectedRoomId) {
     return (
-      <div className="flex-1 flex flex-col h-full bg-[#121421] justify-center items-center p-6 text-white overflow-y-auto w-full relative">
+      <div className="flex-1 flex flex-col h-full bg-gray-50 dark:bg-[#121421] justify-center items-center p-6 text-gray-900 dark:text-white overflow-y-auto w-full relative transition-colors duration-300">
         {/* Help Modal Overlay */}
         <AnimatePresence>
           {showHelp && (
@@ -236,7 +237,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                 initial={{ scale: 0.9, opacity: 0, y: 20 }}
                 animate={{ scale: 1, opacity: 1, y: 0 }}
                 exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                className="bg-[#1a1c2e] border border-purple-500/30 rounded-[2rem] w-full max-w-sm overflow-hidden flex flex-col shadow-[0_0_50px_rgba(168,85,247,0.2)]"
+                className="bg-white dark:bg-[#1a1c2e] border border-purple-500/30 rounded-[2rem] w-full max-w-sm overflow-hidden flex flex-col shadow-[0_0_50px_rgba(168,85,247,0.2)]"
               >
                 {/* Modal Header */}
                 <div className="bg-gradient-to-r from-purple-600 to-blue-600 px-5 py-3 flex items-center justify-center">
@@ -330,8 +331,8 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
             <HelpCircle className="w-6 h-6" />
           </button>
           <div>
-            <span className="text-purple-400 font-black text-[10.5px] tracking-[0.25em] uppercase block mb-1">BINGO ROOM SELECT</span>
-            <h2 className="text-2xl font-black text-white tracking-tight">የቢንጎ መደብ ይምረጡ</h2>
+            <span className="text-purple-600 dark:text-purple-400 font-black text-[10.5px] tracking-[0.25em] uppercase block mb-1">BINGO ROOM SELECT</span>
+            <h2 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">የቢንጎ መደብ ይምረጡ</h2>
           </div>
 
           <div className="flex flex-col gap-3">
@@ -341,15 +342,15 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                 if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
                 onRoomSelect('bingo-10');
               }}
-              className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
+              className="flex items-center justify-between p-4 bg-white dark:bg-[#1a1c2e] hover:bg-gray-50 dark:hover:bg-[#23263f] border border-purple-500/10 dark:border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
-                <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 font-black text-sm border border-purple-500/20 group-hover:scale-105 transition-transform shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400 font-black text-sm border border-purple-500/20 group-hover:scale-105 transition-transform shrink-0">
                   10
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[18px] font-black text-white">ባለ 10 መደብ</span>
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Standard 10 ETB Bet</span>
+                  <span className="text-[18px] font-black text-gray-900 dark:text-white">ባለ 10 መደብ</span>
+                  <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Standard 10 ETB Bet</span>
                 </div>
               </div>
               <div className="flex flex-col items-end text-right shrink-0 gap-1">
@@ -370,15 +371,15 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                 if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
                 onRoomSelect('bingo-20');
               }}
-              className="flex items-center justify-between p-4 bg-[#1a1c2e] hover:bg-[#23263f] border border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
+              className="flex items-center justify-between p-4 bg-white dark:bg-[#1a1c2e] hover:bg-gray-50 dark:hover:bg-[#23263f] border border-purple-500/10 dark:border-purple-500/10 hover:border-purple-500/30 rounded-2xl transition-all duration-300 group cursor-pointer active:scale-98 shadow-lg w-full"
             >
               <div className="flex items-start gap-3.5 text-left">
-                <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400 font-black text-sm border border-orange-500/20 group-hover:scale-105 transition-transform shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-600 dark:text-orange-400 font-black text-sm border border-orange-500/20 group-hover:scale-105 transition-transform shrink-0">
                   20
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[18px] font-black text-white">ባለ 20 መደብ</span>
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Premium 20 ETB Bet</span>
+                  <span className="text-[18px] font-black text-gray-900 dark:text-white">ባለ 20 መደብ</span>
+                  <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Premium 20 ETB Bet</span>
                 </div>
               </div>
               <div className="flex flex-col items-end text-right shrink-0 gap-1">
@@ -405,7 +406,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   if (selectedRoomId && roomState?.status === 'lobby') {
     return (
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#121421] w-full relative">
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-50 dark:bg-[#121421] w-full relative transition-colors duration-300">
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
           {/* Dense Grid - smaller buttons, full width, 8 columns */}
@@ -428,7 +429,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                         ? 'bg-green-600 border-green-500 text-white shadow-green-500/30 scale-105 z-10 active:scale-90 cursor-pointer'
                         : isTaken
                         ? 'bg-red-600 border-red-500 text-white cursor-not-allowed'
-                        : 'bg-[#1a1c2e] border-gray-800/50 text-gray-400 hover:border-gray-600 hover:bg-[#252841] active:scale-90 cursor-pointer'
+                        : 'bg-white dark:bg-[#1a1c2e] border-gray-200 dark:border-gray-800/50 text-gray-400 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#252841] active:scale-90 cursor-pointer'
                     }`}
                   >
                     <span>{id}</span>
@@ -440,12 +441,12 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
           {selectedCards.length > 0 ? (
             /* Fixed Bottom Container - Side-by-side selected cards, maximized size */
-            <div className="absolute bottom-0 left-0 right-0 pt-2 pb-3 px-4 bg-gradient-to-t from-[#121421] via-[#121421] to-[#121421]/90 border-t border-white/5 z-50 backdrop-blur-md">
+            <div className="absolute bottom-0 left-0 right-0 pt-2 pb-3 px-4 bg-gradient-to-t from-gray-50 via-gray-50 dark:from-[#121421] dark:via-[#121421] to-gray-50/90 dark:to-[#121421]/90 border-t border-gray-200 dark:border-white/5 z-50 backdrop-blur-md">
               <div className="flex flex-col items-center gap-2 w-full max-w-lg mx-auto">
                 <div className="flex flex-row justify-center gap-3 w-full">
                   {selectedCards.map((cardId, idx) => (
                     <div key={cardId} className="flex-1 max-w-[175px] animate-in zoom-in-95 duration-300" style={{ animationDelay: `${idx * 100}ms` }}>
-                      <div className="bg-[#1a1c2e] rounded-lg overflow-hidden border border-purple-500/20 shadow-2xl">
+                      <div className="bg-white dark:bg-[#1a1c2e] rounded-lg overflow-hidden border border-purple-500/20 shadow-2xl">
                         <div className="bg-orange-500 px-1.5 py-0.5 border-b border-black/10">
                            <span className="text-[9.5px] font-black text-black uppercase tracking-wider block text-center truncate">NO: {cardId}</span>
                         </div>
@@ -460,8 +461,8 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
             </div>
           ) : (
             /* Simple thin bar with text only, doesn't block the grid layout */
-            <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 bg-[#121421]/95 border-t border-white/10 z-50 backdrop-blur-sm flex items-center justify-center">
-              <span className="text-purple-300 font-black text-[10px] uppercase tracking-[0.2em] text-center">
+            <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 bg-white/95 dark:bg-[#121421]/95 border-t border-gray-200 dark:border-white/10 z-50 backdrop-blur-sm flex items-center justify-center">
+              <span className="text-purple-600 dark:text-purple-300 font-black text-[10px] uppercase tracking-[0.2em] text-center">
                 ለመጫወት ካርድ ይምረጡ
               </span>
             </div>
@@ -473,19 +474,19 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 
   if (roomState?.status === 'playing' || roomState?.status === 'result') {
       return (
-        <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0b14] w-full text-white select-none relative">
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-50 dark:bg-[#0a0b14] w-full text-gray-900 dark:text-white select-none relative transition-colors duration-300">
           {/* Top Bar: Game Stats & Live Called Balls */}
-          <div className="flex items-center justify-between bg-[#121421] border-b border-white/10 px-3 py-1 shrink-0 h-12 w-full">
+          <div className="flex items-center justify-between bg-white dark:bg-[#121421] border-b border-gray-200 dark:border-white/10 px-3 py-1 shrink-0 h-12 w-full">
             {/* Left: Compact Game Stats - Distributed evenly */}
             <div className="flex items-center justify-between w-[135px] shrink-0">
               <div className="flex flex-col flex-1 text-left">
-                <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-tighter">GAME ID</span>
-                <span className="text-[11px] font-black text-purple-400 font-mono leading-none">{roomState.gameId}</span>
+                <span className="text-[7.5px] font-black text-gray-500 dark:text-gray-500 uppercase tracking-tighter">GAME ID</span>
+                <span className="text-[11px] font-black text-purple-600 dark:text-purple-400 font-mono leading-none">{roomState.gameId}</span>
               </div>
-              <div className="w-px h-5 bg-white/10 shrink-0 mx-1.5" />
+              <div className="w-px h-5 bg-gray-200 dark:bg-white/10 shrink-0 mx-1.5" />
               <div className="flex flex-col flex-1 text-left">
-                <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-tighter">BET</span>
-                <span className="text-[11px] font-black text-white font-mono leading-none">{roomState.betAmount}</span>
+                <span className="text-[7.5px] font-black text-gray-500 dark:text-gray-500 uppercase tracking-tighter">BET</span>
+                <span className="text-[11px] font-black text-gray-900 dark:text-white font-mono leading-none">{roomState.betAmount}</span>
               </div>
             </div>
 
@@ -540,10 +541,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
           {/* Main Game Area */}
           <div className="flex-1 flex overflow-hidden min-h-0">
             {/* Left Column: Number Board (1-75) */}
-            <div className="w-[47%] border-r border-white/5 flex flex-col bg-[#121421]/50">
+            <div className="w-[47%] border-r border-gray-200 dark:border-white/5 flex flex-col bg-gray-50 dark:bg-[#121421]/50">
               <div className="grid grid-cols-5 gap-0.5 p-1 flex-1 min-h-0">
                 {['B', 'I', 'N', 'G', 'O'].map((letter, i) => (
-                  <div key={letter} className={`text-center font-black text-[11px] py-[3px] leading-none rounded-[2px] shadow-sm ${
+                  <div key={letter} className={`text-center font-black text-[11px] py-[3px] leading-none rounded-[2px] shadow-sm text-white ${
                     ['bg-blue-600', 'bg-purple-600', 'bg-pink-600', 'bg-green-600', 'bg-orange-600'][i]
                   }`}>{letter}</div>
                 ))}
@@ -558,7 +559,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                           ? 'bg-yellow-500 border-2 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)] z-10 font-black' 
                           : isCalled 
                             ? 'bg-green-600 border-2 border-green-500 text-white font-bold' 
-                            : 'bg-[#131524] border border-[#2a2d42] text-gray-500 font-medium'
+                            : 'bg-white dark:bg-[#131524] border border-gray-100 dark:border-[#2a2d42] text-gray-400 dark:text-gray-500 font-medium'
                       }`}
                     >
                       {num}
@@ -567,14 +568,14 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                 })}
               </div>
               {/* Highlight Controls */}
-              <div className="p-2 border-t border-white/5 bg-[#0a0b14]/80 shrink-0">
+              <div className="p-2 border-t border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-[#0a0b14]/80 shrink-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[8px] font-black text-gray-500 uppercase">Highlight:</span>
-                  <div className="flex bg-white/5 rounded-md p-0.5 flex-1 h-7 items-center">
+                  <span className="text-[8px] font-black text-gray-500 dark:text-gray-500 uppercase">Highlight:</span>
+                  <div className="flex bg-gray-200 dark:bg-white/5 rounded-md p-0.5 flex-1 h-7 items-center">
                     <button 
                       onClick={() => setHighlightMode('auto')}
                       className={`flex-1 h-full text-[9px] font-black rounded transition-all cursor-pointer ${
-                        highlightMode === 'auto' ? 'bg-green-500/20 text-green-400 font-extrabold' : 'text-gray-500 hover:text-gray-400'
+                        highlightMode === 'auto' ? 'bg-green-500/20 text-green-600 dark:text-green-400 font-extrabold' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-400'
                       }`}
                     >
                       Auto
@@ -680,14 +681,14 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
                   ))
                 ) : (
                   <div className="w-full max-w-[340px] flex-1 h-full flex flex-col my-auto animate-in zoom-in-95 duration-300">
-                    <div className="bg-gradient-to-b from-[#1a1c3e] to-[#121424] rounded-2xl border border-purple-500/20 shadow-2xl flex flex-col items-center justify-center p-6 flex-1 h-full text-center relative overflow-hidden">
+                    <div className="bg-white dark:bg-gradient-to-b dark:from-[#1a1c3e] dark:to-[#121424] rounded-2xl border border-gray-200 dark:border-purple-500/20 shadow-2xl flex flex-col items-center justify-center p-6 flex-1 h-full text-center relative overflow-hidden transition-colors duration-300">
                       <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 via-purple-500 to-blue-500" />
                       
-                      <h3 className="text-2xl font-black text-white tracking-widest uppercase mb-6">
+                      <h3 className="text-2xl font-black text-gray-900 dark:text-white tracking-widest uppercase mb-6">
                         ተመልካች ብቻ (WATCHING ONLY)
                       </h3>
 
-                      <p className="text-sm font-black text-purple-200 leading-relaxed px-4">
+                      <p className="text-sm font-black text-gray-600 dark:text-purple-200 leading-relaxed px-4">
                         የዚህ ዙር ጨዋታ ተጀምሯል። አዲስ ዙር እስኪጀምር እዚሁ ይጠብቁ።
                       </p>
                     </div>
@@ -698,7 +699,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
           </div>
 
           {/* Action Footer - Very compact */}
-          <div className="p-1.5 bg-[#121421] border-t border-white/10 flex gap-1.5 shrink-0">
+          <div className="p-1.5 bg-white dark:bg-[#121421] border-t border-gray-200 dark:border-white/10 flex gap-1.5 shrink-0 transition-colors duration-300">
             <button onClick={() => { handleLeave(); onRoomSelect(null); }} className="flex-1 bg-gradient-to-br from-orange-500 to-orange-600 text-white font-black py-2 rounded-lg shadow-md active:scale-95 transition-transform text-[10px] uppercase">Leave</button>
             <button 
               onClick={() => {
@@ -715,10 +716,10 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
             <button 
               disabled={selectedCards.length === 0}
               onClick={handleClaimBingo} 
-              className={`flex-[1.5] bg-gradient-to-br text-black font-black py-2 rounded-lg shadow-md active:scale-95 transition-transform text-xs uppercase tracking-wider ${
+              className={`flex-[1.5] bg-gradient-to-br font-black py-2 rounded-lg shadow-md active:scale-95 transition-all text-xs uppercase tracking-wider ${
                 selectedCards.length === 0 
-                  ? 'from-gray-600 to-gray-700 text-gray-400 cursor-not-allowed opacity-50 shadow-none' 
-                  : 'from-yellow-400 via-yellow-500 to-yellow-600 shadow-yellow-500/20'
+                  ? 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50 shadow-none' 
+                  : 'from-yellow-400 via-yellow-500 to-yellow-600 text-black shadow-yellow-500/20'
               }`}
             >
               BINGO!
@@ -811,9 +812,9 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
     }
 
   return (
-    <div className="flex-1 flex flex-col h-full items-center justify-center bg-[#121421] text-white/20 p-10 text-center">
+    <div className="flex-1 flex flex-col h-full items-center justify-center bg-gray-50 dark:bg-[#121421] text-gray-400 dark:text-white/20 p-10 text-center transition-colors duration-300">
        <RotateCw className="w-10 h-10 mb-4 animate-spin opacity-20" />
-       <p className="text-xs font-black uppercase tracking-[0.2em]">Connecting to Game Server...</p>
+       <p className="text-xs font-black uppercase tracking-[0.2em] text-gray-500 dark:text-white/20">Connecting to Game Server...</p>
     </div>
   );
 };
@@ -821,7 +822,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
 const BingoCardPreview: React.FC<{ id: number }> = ({ id }) => {
   const card = getDeterministicCard(id);
   return (
-    <div className="bg-[#1a1c2e] border-2 border-purple-500/30 rounded-xl overflow-hidden shadow-2xl">
+    <div className="bg-white dark:bg-[#1a1c2e] border-2 border-purple-500/30 rounded-xl overflow-hidden shadow-2xl transition-colors duration-300">
       <div className="bg-orange-500 px-2 py-1 text-black font-black text-[10.5px] text-center truncate">
         CARTELA NO: {id}
       </div>
@@ -834,8 +835,8 @@ const BingoCardPreview: React.FC<{ id: number }> = ({ id }) => {
           ))}
           {Array.from({length: 5}).map((_, row) => (
             Array.from({length: 5}).map((_, col) => (
-              <div key={`${row}-${col}`} className={`h-5 w-5 flex items-center justify-center rounded-sm font-bold text-[8px] ${
-                card[col][row] === 0 ? 'bg-purple-600 text-white' : 'bg-white text-[#121421]'
+              <div key={`${row}-${col}`} className={`h-5 w-5 flex items-center justify-center rounded-sm font-bold text-[8px] transition-colors duration-300 ${
+                card[col][row] === 0 ? 'bg-purple-600 text-white' : 'bg-gray-100 dark:bg-white text-gray-900 dark:text-[#121421]'
               }`}>
                 {card[col][row] === 0 ? '★' : card[col][row]}
               </div>
@@ -969,14 +970,14 @@ const BingoCardView: React.FC<{
                     ? isWinnerPattern
                       ? 'bg-purple-600 text-white shadow-md'
                       : isCalled
-                        ? 'bg-amber-500 text-[#121421] shadow-inner'
-                        : 'bg-white text-[#121421] border border-gray-100'
+                        ? 'bg-amber-500 text-gray-900 dark:text-[#121421] shadow-inner'
+                        : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-100 dark:border-gray-700'
                     : isFree 
                       ? 'bg-purple-600 text-white shadow-inner' 
                       : isHighlighted 
                         ? 'bg-purple-600 text-white shadow-md ring-1 ring-purple-400 ring-offset-0 active:scale-95 cursor-pointer' 
-                        : 'bg-white text-[#121421] border border-gray-100 active:scale-95 hover:bg-gray-50 cursor-pointer'
-                }`}
+                        : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-100 dark:border-gray-700 active:scale-95 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer'
+                } transition-colors duration-200`}
               >
                 {isFree ? '★' : num}
               </button>
