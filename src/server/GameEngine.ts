@@ -408,6 +408,32 @@ class Room {
   }
 }
 
+export const gridRooms: Record<string, {
+  claimedSlots: { [key: number]: { isSelf: boolean, userId: string, username: string, photoUrl?: string } },
+  roundId: number,
+  winners?: any,
+  history: any[]
+}> = {
+  '1-10': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
+  '1-20': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
+  'mini': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
+  'grand': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] }
+};
+
+export function getRemainingSlots(roomName: string, maxSlots: number): number[] {
+  const room = gridRooms[roomName];
+  if (!room) {
+    return Array.from({ length: maxSlots }, (_, i) => i + 1);
+  }
+  const remaining: number[] = [];
+  for (let i = 1; i <= maxSlots; i++) {
+    if (!room.claimedSlots[i]) {
+      remaining.push(i);
+    }
+  }
+  return remaining;
+}
+
 export function initGameEngine(io: Server) {
   const rooms = {
     "Main-Room": new Room("Main-Room", io),
@@ -428,18 +454,6 @@ export function initGameEngine(io: Server) {
       second: picked[1],
       third: picked[2]
     };
-  };
-
-  const gridRooms: Record<string, {
-    claimedSlots: { [key: number]: { isSelf: boolean, userId: string, username: string, photoUrl?: string } },
-    roundId: number,
-    winners?: any,
-    history: any[]
-  }> = {
-    '1-10': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-    '1-20': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-    'mini': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-    'grand': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] }
   };
 
   // Pre-fetch history for grid rooms

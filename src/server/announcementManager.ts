@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { postToChannel, logBot } from "./telegramBot.js";
 import { supabase } from "./supabase.js";
+import { getRemainingSlots } from "./GameEngine.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
@@ -37,12 +38,27 @@ export function saveAnnouncements(announcements: Announcement[]) {
 }
 
 export function generateSlotNumbers(max: number): number[] {
-  // Mock remaining slots logic for VIP
+  let roomName = "mini";
+  if (max === 100) roomName = "grand";
+  else if (max === 20) roomName = "1-20";
+  else if (max === 10) roomName = "1-10";
+
+  try {
+    const slots = getRemainingSlots(roomName, max);
+    if (slots && slots.length > 0) {
+      // Limit to max 15 to keep message readable if there are too many
+      return slots.slice(0, 15);
+    }
+  } catch (err) {
+    logBot(`Failed to fetch real remaining slots for room ${roomName}: ${err}`);
+  }
+
+  // Fallback if not loaded
   const slots = [];
   for (let i = 1; i <= max; i++) {
     if (Math.random() > 0.5) slots.push(i);
   }
-  return slots.slice(0, 15); // Return a few random ones
+  return slots.slice(0, 15);
 }
 
 
@@ -53,7 +69,7 @@ export function formatEmojiNumbers(nums: number[]): string {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
   };
-  return nums.map(n => n.toString().split('').map(digit => emojiMap[digit]).join('')).join(' ');
+  return nums.map(n => n.toString().split('').map(digit => emojiMap[digit]).join('')).join(', ');
 }
 
 export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
