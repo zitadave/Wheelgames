@@ -7,6 +7,7 @@ export class VoiceCallerEngine {
   private sounds: Map<string, Howl> = new Map();
   private queue: string[] = [];
   private isPlaying: boolean = false;
+  private maxAvailableVoice: number = 75;
 
   private currentSound: Howl | null = null;
 
@@ -143,10 +144,13 @@ export class VoiceCallerEngine {
   public async preloadAllVoices(ballNumbers: number[]): Promise<void> {
     this.init();
     
+    // Filter to only those numbers that are actually available as voice files
+    const availableBalls = ballNumbers.filter(num => num >= 1 && num <= this.maxAvailableVoice);
+    
     // Chunk the preloading so we don't spam the network
     const chunkSize = 5;
-    for (let i = 0; i < ballNumbers.length; i += chunkSize) {
-      const chunk = ballNumbers.slice(i, i + chunkSize);
+    for (let i = 0; i < availableBalls.length; i += chunkSize) {
+      const chunk = availableBalls.slice(i, i + chunkSize);
       await Promise.all(
         chunk.map(num => {
           const fileName = num.toString();
@@ -203,6 +207,11 @@ export class VoiceCallerEngine {
    */
   public playBallNumber(num: number): void {
     this.init();
+    // Only play audio if it falls within the range we have voice files for
+    if (num < 1 || num > this.maxAvailableVoice) {
+      console.log(`🔇 Skipping voice caller for ball ${num} because only 1-${this.maxAvailableVoice} voice files are currently available.`);
+      return;
+    }
     const fileName = num.toString();
     this.queue.push(fileName);
     this.processQueue();
