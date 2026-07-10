@@ -1,7 +1,8 @@
 import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
-import { logBot } from "./telegramBot.js";
+import { logBot } from "./logger.js";
+import { gridRooms } from "./gridState.js";
 
 export type Side = "even" | "odd";
 
@@ -407,61 +408,6 @@ class Room {
 
     return { success: true };
   }
-}
-
-const defaultRooms = {
-  '1-10': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-  '1-20': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-  'mini': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
-  'grand': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] }
-};
-
-export const gridRooms: Record<string, {
-  claimedSlots: { [key: number]: { isSelf: boolean, userId: string, username: string, photoUrl?: string } },
-  roundId: number,
-  winners?: any,
-  history: any[]
-}> = (globalThis as any).gridRooms || defaultRooms;
-
-// Ensure all keys exist in globalThis if it was already initialized
-Object.keys(defaultRooms).forEach(key => {
-  if (!gridRooms[key]) {
-    (gridRooms as any)[key] = (defaultRooms as any)[key];
-  }
-});
-
-(globalThis as any).gridRooms = gridRooms;
-
-export function getRemainingSlots(roomName: string, maxSlots: number): number[] {
-  const gRooms = (globalThis as any).gridRooms || gridRooms;
-  const room = gRooms[roomName];
-  
-  if (!room) {
-    logBot(`[GameEngine] getRemainingSlots: Room "${roomName}" NOT found. Available keys: ${Object.keys(gRooms).join(", ")}`);
-    return [];
-  }
-
-  const remaining: number[] = [];
-  const claimed = room.claimedSlots || {};
-  const claimedKeys = Object.keys(claimed);
-  
-  // Create a set of claimed slot numbers for O(1) lookup, ensuring string comparison
-  const claimedSet = new Set(claimedKeys.map(k => k.toString()));
-
-  for (let i = 1; i <= maxSlots; i++) {
-    if (!claimedSet.has(i.toString())) {
-      remaining.push(i);
-    }
-  }
-
-  logBot(`[GameEngine] getRemainingSlots DIAGNOSTIC: 
-    Room: ${roomName}
-    Max Slots: ${maxSlots}
-    Claimed Count: ${claimedKeys.length}
-    Claimed Keys: ${claimedKeys.slice(0, 10).join(", ")}${claimedKeys.length > 10 ? "..." : ""}
-    Remaining Count: ${remaining.length}`);
-
-  return remaining;
 }
 
 export function initGameEngine(io: Server) {

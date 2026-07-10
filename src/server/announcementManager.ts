@@ -1,8 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
-import { postToChannel, logBot } from "./telegramBot.js";
+import { postToChannel } from "./telegramBot.js";
+import { logBot } from "./logger.js";
 import { supabase } from "./supabase.js";
-import { gridRooms, getRemainingSlots } from "./GameEngine.js";
+import { getRemainingSlots } from "./gridState.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
@@ -44,12 +45,14 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 20) roomName = "1-20";
   else if (max === 10) roomName = "1-10";
 
+  logBot(`[generateSlotNumbers] Mapping max=${max} to roomName="${roomName}"`);
+
   try {
     const remaining = getRemainingSlots(roomName, max);
-    logBot(`[Slots Tracker] Fetched remaining slots for ${roomName}: count=${remaining.length}`);
+    logBot(`[generateSlotNumbers] Room=${roomName}, Max=${max}, Found=${remaining.length} remaining slots.`);
     return remaining;
   } catch (err: any) {
-    logBot(`Failed to generate slot numbers for ${roomName}: ${err.message}`);
+    logBot(`[generateSlotNumbers] ERROR for ${roomName}: ${err.message}`);
     return [];
   }
 }
@@ -282,14 +285,18 @@ export async function processAnnouncements(bot: any) {
           `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${miniVipSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
           `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${fastSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
           `⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
+        
+        logBot(`[Scheduler] Prepared join_play message. Fast slots count: ${fastSlots.split(',').length}`);
       }
 
       try {
         const channelId = process.env.CHANNEL_ID;
-        if (!channelId) {
-          logBot(`[Scheduler] Skipping announcement ${ann.id}: CHANNEL_ID not set.`);
+        if (!channelId || channelId.trim() === "") {
+          logBot(`[Scheduler] ⚠️ Skipping announcement ${ann.id}: CHANNEL_ID is empty or not set in Environment Secrets.`);
           continue;
         }
+
+        logBot(`[Scheduler] Sending announcement ${ann.id} to channelId: "${channelId}" (Type: ${typeof channelId}, Length: ${channelId.length})`);
 
         if (photo) {
           await downloadAndSendPhoto(bot, channelId, photo, {

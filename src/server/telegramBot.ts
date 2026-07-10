@@ -4,6 +4,7 @@ import { supabase } from "./supabase.js";
 import { getAnalysisSummary } from "./analysis.js";
 import { Server } from "socket.io";
 import { fetchLeaderboardData, getStartOfWeekUTC } from "./leaderboardHelper.js";
+import { logBot, getBotLogs } from "./logger.js";
 import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto, processAnnouncementText } from "./announcementManager.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -13,21 +14,7 @@ let botInfo: any = (global as any).telegramBotInfo || null;
 let botInstance: any = (global as any).telegramBotInstance && (global as any).telegramBotInstance !== "initializing" ? (global as any).telegramBotInstance : null;
 let globalAppUrl = "https://wheelgames1.onrender.com";
 
-const botLogs: string[] = (global as any).telegramBotLogs || [];
-export function logBot(msg: string) {
-  const timestamp = new Date().toISOString();
-  const formatted = `[${timestamp}] ${msg}`;
-  console.log(formatted);
-  botLogs.push(formatted);
-  if (botLogs.length > 200) {
-    botLogs.shift();
-  }
-  (global as any).telegramBotLogs = botLogs;
-}
-
-export function getBotLogs() {
-  return botLogs;
-}
+// logBot and getBotLogs moved to logger.ts to break circular dependencies
 
 async function downloadTelegramPhotoLocally(fileId: string, annId: string): Promise<string> {
   if (!botInstance) {
@@ -5014,6 +5001,13 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const annId = data.substring("ann_send_single:".length);
       await bot.answerCallbackQuery(query.id, { text: "⏳ Sending announcement..." });
       
+      const channelId = process.env.CHANNEL_ID;
+      if (!channelId) {
+        logBot("[Bot] ann_send_single: CHANNEL_ID is not set.");
+        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
+        return;
+      }
+      
       const anns = loadAnnouncements();
       const ann = anns.find(a => a.id === annId);
       if (ann) {
@@ -5081,9 +5075,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           }
 
           if (photo) {
-            await downloadAndSendPhoto(bot, process.env.CHANNEL_ID!, photo, { caption: messageText, parse_mode: "HTML" });
+            await downloadAndSendPhoto(bot, channelId, photo, { caption: messageText, parse_mode: "HTML" });
           } else {
-            await bot.sendMessage(process.env.CHANNEL_ID, messageText, { parse_mode: "HTML" });
+            await bot.sendMessage(channelId, messageText, { parse_mode: "HTML" });
           }
 
           ann.lastRunTime = Date.now();
