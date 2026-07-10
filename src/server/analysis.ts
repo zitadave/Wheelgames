@@ -48,7 +48,22 @@ export async function getAnalysisSummary(timeframe: 'day' | 'week' | 'month' | '
 
   const gamesCount: Record<string, number> = {};
   logs?.forEach(log => {
-    const gType = log.game_type || "unknown";
+    const rawType = log.game_type || "unknown";
+    let gType = "Other";
+    const lower = rawType.toLowerCase();
+    if (lower.includes("even/odd") || lower.includes("even_odd") || lower.includes("even/odd")) {
+      gType = "Even/Odd Wheel";
+    } else if (lower.includes("chance") || lower.includes("sector") || lower.includes("1-10")) {
+      gType = "Wheel of Chance";
+    } else if (lower.includes("jackpot mini") || lower.includes("mini jackpot")) {
+      gType = "Jackpot Arena (Mini)";
+    } else if (lower.includes("jackpot grand") || lower.includes("grand jackpot")) {
+      gType = "Jackpot Arena (Grand)";
+    } else if (lower.includes("bingo")) {
+      gType = "Bingo";
+    } else {
+      gType = rawType.split("|")[0].trim() || "Other";
+    }
     gamesCount[gType] = (gamesCount[gType] || 0) + 1;
   });
 

@@ -1,8 +1,50 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from "./supabase.js";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 const chatHistories = new Map<string, any[]>();
+
+export function sanitizeHistory(history: any[]): any[] {
+  const clean: any[] = [];
+  if (!Array.isArray(history)) return [];
+  for (const msg of history) {
+    if (!msg || typeof msg !== "object") continue;
+    if (!msg.parts || !Array.isArray(msg.parts) || msg.parts.length === 0) {
+      continue;
+    }
+    const firstPart = msg.parts[0];
+    if (!firstPart || typeof firstPart !== "object") continue;
+    
+    // Extract text safely
+    const textVal = typeof firstPart.text === "string" ? firstPart.text : "";
+    if (!textVal) {
+      continue;
+    }
+    
+    const role = msg.role === "model" ? "model" : "user";
+    if (clean.length === 0) {
+      if (role === "user") {
+        clean.push({ role, parts: [{ text: textVal }] });
+      }
+    } else {
+      const last = clean[clean.length - 1];
+      if (last.role !== role) {
+        clean.push({ role, parts: [{ text: textVal }] });
+      } else {
+        // Merge consecutive messages with the same role
+        last.parts[0].text = (last.parts[0].text || "") + "\n" + textVal;
+      }
+    }
+  }
+  return clean;
+}
 
 export function clearAiSupportHistory(telegramId: string) {
   chatHistories.delete(telegramId);
@@ -115,18 +157,23 @@ CURRENT USER CONTEXT:
     if (!chatHistories.has(telegramId)) {
       chatHistories.set(telegramId, []);
     }
-    const history = chatHistories.get(telegramId)!;
-
-    // Keep history bounded to avoid hitting token limits (max 12 messages = 6 turns)
-    if (history.length > 12) {
-      history.splice(0, history.length - 12);
-    }
+    let history = chatHistories.get(telegramId)!;
 
     // Append user's new prompt
     history.push({
       role: "user",
       parts: [{ text: message }]
     });
+
+    // Sanitize to guarantee alternating user/model roles and clean format
+    history = sanitizeHistory(history);
+
+    // Keep history bounded to avoid hitting token limits (max 12 messages = 6 turns)
+    if (history.length > 12) {
+      history.splice(0, history.length - 12);
+    }
+
+    chatHistories.set(telegramId, history);
 
     let responseText = "";
     let functionCalls: any[] = [];
@@ -140,7 +187,7 @@ CURRENT USER CONTEXT:
     while (attempt < maxRetries && !success) {
       try {
         response = await ai.models.generateContent({
-          model: attempt === 0 ? "gemini-2.5-flash" : "gemini-1.5-flash", // Fallback to older model on retry if needed, but 2.5 is usually fine
+          model: "gemini-2.5-flash",
           contents: history,
           config: {
             systemInstruction: systemInstruction + "\n\nCRITICAL: Do NOT ask the user for their Telegram ID if they ask for their balance or history. You already have it. Just call the tools directly.",
@@ -179,48 +226,87 @@ CURRENT USER CONTEXT:
       for (const call of functionCalls) {
         if (call.name === "get_user_profile") {
           const { telegram_id } = call.args as any;
-          const targetIdentifier = String(telegram_id || telegramId).trim();
-          
-          let query = supabase.from("users").select("id, username, balance, created_at");
-          if (targetIdentifier.startsWith('@')) {
-            query = query.eq('username', targetIdentifier.replace('@', ''));
-          } else {
-            query = query.eq('id', targetIdentifier);
+          let targetIdentifier = telegramId;
+          if (telegram_id && typeof telegram_id === 'string') {
+            const trimmed = telegram_id.trim();
+            // Only use if it looks like a real ID or username
+            if (trimmed.startsWith('@') || /^\d+$/.test(trimmed)) {
+              targetIdentifier = trimmed;
+            }
           }
           
-          const { data, error } = await query.single();
+          let profileRes: any;
+          try {
+            let query = supabase.from("users").select("id, username, balance, created_at");
+            if (targetIdentifier.startsWith('@')) {
+              query = query.eq('username', targetIdentifier.replace('@', ''));
+            } else {
+              query = query.eq('id', targetIdentifier);
+            }
+            
+            const { data, error } = await query.single();
+            profileRes = error ? { error: "User not found or database error." } : { data };
+          } catch (dbErr: any) {
+            profileRes = { error: `Database query failed: ${dbErr.message || dbErr}` };
+          }
+
           toolResults.push({
             name: call.name,
-            content: error ? { error: "User not found or database error." } : { data }
+            content: profileRes
           });
 
         } else if (call.name === "get_transaction_summary") {
           const { telegram_id } = call.args as any;
-          const targetIdentifier = String(telegram_id || telegramId).trim();
-          
-          let targetId = targetIdentifier;
-          if (targetIdentifier.startsWith('@')) {
-            const { data: user } = await supabase.from('users').select('id').eq('username', targetIdentifier.replace('@', '')).single();
-            if (user) targetId = user.id;
+          let targetIdentifier = telegramId;
+          if (telegram_id && typeof telegram_id === 'string') {
+            const trimmed = telegram_id.trim();
+            if (trimmed.startsWith('@') || /^\d+$/.test(trimmed)) {
+              targetIdentifier = trimmed;
+            }
           }
           
-          const { data, error } = await supabase
-            .from("transactions")
-            .select("amount, type, description, created_at")
-            .eq("user_id", targetId)
-            .order("created_at", { ascending: false })
-            .limit(10);
+          let txRes: any;
+          try {
+            let targetId = targetIdentifier;
+            if (targetIdentifier.startsWith('@')) {
+              const { data: user } = await supabase.from('users').select('id').eq('username', targetIdentifier.replace('@', '')).single();
+              if (user) targetId = user.id;
+              else targetId = "";
+            }
+            
+            if (targetId && targetId.trim() !== "") {
+              const { data, error } = await supabase
+                  .from("transactions")
+                  .select("amount, type, description, created_at")
+                  .eq("user_id", targetId)
+                  .order("created_at", { ascending: false })
+                  .limit(10);
+              txRes = error ? { error: "Could not fetch transactions." } : { transactions: data };
+            } else {
+              txRes = { error: "User not found for transaction history." };
+            }
+          } catch (dbErr: any) {
+            txRes = { error: `Database query failed: ${dbErr.message || dbErr}` };
+          }
+
           toolResults.push({
             name: call.name,
-            content: error ? { error: "Could not fetch transactions." } : { transactions: data }
+            content: txRes
           });
 
         } else if (call.name === "block_user_from_bot" && isAdmin) {
           const { telegram_id, block_status } = call.args as any;
-          const { error } = await supabase.from("users").update({ is_blocked_bot: block_status }).eq("id", telegram_id);
+          let blockRes: any;
+          try {
+            const { error } = await supabase.from("users").update({ is_blocked_bot: block_status }).eq("id", telegram_id);
+            blockRes = error ? { error: error.message } : { success: true, message: `User ${telegram_id} block status set to ${block_status}` };
+          } catch (dbErr: any) {
+            blockRes = { error: `Database block action failed: ${dbErr.message || dbErr}` };
+          }
+
           toolResults.push({
             name: call.name,
-            content: error ? { error: error.message } : { success: true, message: `User ${telegram_id} block status set to ${block_status}` }
+            content: blockRes
           });
         } else if (call.name === "escalate_to_human") {
           escalate = true;
@@ -255,7 +341,7 @@ CURRENT USER CONTEXT:
         while (fuAttempt < maxRetries && !fuSuccess) {
            try {
              followUpResponse = await ai.models.generateContent({
-               model: fuAttempt === 0 ? "gemini-2.5-flash" : "gemini-1.5-flash",
+               model: "gemini-2.5-flash",
                contents: followUpContents,
                config: {
                  systemInstruction: systemInstruction
@@ -288,6 +374,15 @@ CURRENT USER CONTEXT:
 
   } catch (error: any) {
     console.error(`[AI Support Error] ${error.message}`);
+    
+    // Clean up the trailing user message from history if it wasn't responded to
+    const hist = chatHistories.get(telegramId);
+    if (hist && hist.length > 0) {
+      const last = hist[hist.length - 1];
+      if (last.role === "user") {
+        hist.pop();
+      }
+    }
     
     // Hospitality fallback message: professional, warm, welcoming, and reassuring (no technical jargon or crash errors)
     return {
