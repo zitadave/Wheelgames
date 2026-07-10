@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { BingoRoomState } from "../types";
 import { supabase } from "./supabase.js";
+import { txManager } from "./transactionManager.js";
 import { getDeterministicCard } from "../utils/bingo.js";
 
 const LOBBY_TIME = 50;
@@ -304,19 +305,12 @@ export function initBingoEngine(io: Server) {
                      }
                   }
 
-                  if (user) {
-                     const newBalance = user.balance - amountToCharge;
-                     await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
-                     await supabase.from("transactions").insert({
-                        user_id: data.userId,
-                        amount: -amountToCharge,
-                        type: cardDiff > 0 ? "bet" : "refund",
-                        description: cardDiff > 0 
-                           ? `Bingo Bet Update (${data.roomId}, +${cardDiff} cards)`
-                           : `Bingo Refund Update (${data.roomId}, ${Math.abs(cardDiff)} cards removed)`
-                     });
-                     io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
+                  const res = await txManager.modifyBalance(data.userId, -amountToCharge, cardDiff > 0 ? "bet" : "refund", cardDiff > 0 ? `Bingo Bet Update (${data.roomId}, +${cardDiff} cards)` : `Bingo Refund Update (${data.roomId}, ${Math.abs(cardDiff)} cards removed)`);
+                  if (!res.success) {
+                     if (callback) callback({ success: false, message: res.error || "Insufficient balance" });
+                     return;
                   }
+                  io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
                }
             } catch (e) {
                console.error("Bingo balance update error:", e);
@@ -339,19 +333,9 @@ export function initBingoEngine(io: Server) {
             
             // Refund the user since the game hasn't started
             try {
-               if (supabase) {
-                  const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-                  if (user) {
-                     const newBalance = user.balance + totalRefund;
-                     await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
-                     await supabase.from("transactions").insert({
-                        user_id: data.userId,
-                        amount: totalRefund,
-                        type: "refund",
-                        description: `Bingo Refund (${data.roomId}, ${player.cards.length} cards)`
-                     });
-                     io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
-                  }
+               const res = await txManager.modifyBalance(data.userId, totalRefund, "refund", `Bingo Refund (${data.roomId}, ${player.cards.length} cards)`);
+               if (res.success) {
+                  io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
                }
             } catch (e) {
                console.error("Bingo refund error:", e);
@@ -372,23 +356,15 @@ export function initBingoEngine(io: Server) {
             if (res.success && res.winAmount) {
                try {
                   if (supabase) {
-                     const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-                     if (user) {
-                        const newBalance = user.balance + res.winAmount;
-                        await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
-                        await supabase.from("transactions").insert({
-                           user_id: data.userId,
-                           amount: res.winAmount,
-                           type: "win",
-                           description: `Bingo Win (${room.state.id})`
-                        });
-                        await supabase.from("game_logs").insert({
-                           user_id: data.userId,
-                           game_type: `Bingo | ${room.state.gameId}`,
-                           result: "Win",
-                           win_amount: res.winAmount
-                        });
-                        io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
+                     const txRes = await txManager.modifyBalance(data.userId, res.winAmount, "win", `Bingo Win (${room.state.id})`);
+                     await supabase.from("game_logs").insert({
+                        user_id: data.userId,
+                        game_type: `Bingo | ${room.state.gameId}`,
+                        result: "Win",
+                        win_amount: res.winAmount
+                     });
+                     if (txRes.success) {
+                        io.to(`user_${data.userId}`).emit("syncBalance", txRes.newBalance);
                      }
                   }
                } catch (e) {
@@ -409,16 +385,6 @@ export function initBingoEngine(io: Server) {
          }
       });
 
-      socket.on("test_set_balance", async (data: { userId: string, amount: number }) => {
-         try {
-            if (supabase) {
-               await supabase.from("users").update({ balance: data.amount }).eq("id", data.userId);
-               io.to(`user_${data.userId}`).emit("syncBalance", data.amount);
-               console.log(`Balance set to ${data.amount} for user ${data.userId}`);
-            }
-         } catch (e) {
-            console.error("Test balance update error:", e);
-         }
-      });
+      
    });
 }

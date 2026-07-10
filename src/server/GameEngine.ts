@@ -1,5 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
+import { txManager } from "./transactionManager.js";
 
 export type Side = "even" | "odd";
 
@@ -205,14 +206,7 @@ class Room {
               this.io.to(p.userId).emit('refund', refund);
 
               // Update user balance in DB
-              supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
-                if (user) {
-                  const newBalance = Number(user.balance) + refund;
-                  supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
-                    this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
-                  });
-                }
-              });
+              txManager.modifyBalance(p.userId, refund, "refund", "Partial Refund / Balance Adjust").then((res) => { if (res.success) { this.io.to(`user_${p.userId}`).emit("syncBalance", res.newBalance); } });
 
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
@@ -229,14 +223,7 @@ class Room {
               this.io.to(p.userId).emit('refund', refund);
 
               // Update user balance in DB
-              supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
-                if (user) {
-                  const newBalance = Number(user.balance) + refund;
-                  supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
-                    this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
-                  });
-                }
-              });
+              txManager.modifyBalance(p.userId, refund, "refund", "Partial Refund / Balance Adjust").then((res) => { if (res.success) { this.io.to(`user_${p.userId}`).emit("syncBalance", res.newBalance); } });
 
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
@@ -314,20 +301,9 @@ class Room {
             winners.push(p.userId);
             
             // Update balance in Supabase
-            supabase.from("users").select("balance").eq("id", p.userId).single().then(({ data: user }) => {
-              if (user) {
-                const newBalance = Number(user.balance) + prize;
-                supabase.from("users").update({ balance: newBalance }).eq("id", p.userId).then(() => {
-                  this.io.to(`user_${p.userId}`).emit("syncBalance", newBalance);
-                  
-                  // Log win transaction
-                  supabase.from("transactions").insert({
-                    user_id: p.userId,
-                    amount: prize,
-                    type: "win",
-                    description: `Even/Odd Win (Round #${this.state.roundId}, Side: ${winningSide})`
-                  }).then(({ error }) => { if (error) console.error("Win log failed:", error); });
-                });
+            txManager.modifyBalance(p.userId, prize, "win", `Even/Odd Win (Round #${this.state.roundId}, Side: ${winningSide})`).then((res) => {
+              if (res.success) {
+                this.io.to(`user_${p.userId}`).emit("syncBalance", res.newBalance);
               }
             });
           }
@@ -592,18 +568,16 @@ export function initGameEngine(io: Server) {
       }
     });
 
-    socket.on("logTransaction", async (data: { userId: string, amount: number, type: string, description: string, newBalance: number }) => {
+    socket.on("logTransaction", async (data: { userId: string, amount: number, type: string, description: string }) => {
       try {
+        const { txManager } = await import("./transactionManager.js");
         const { supabase } = await import("./supabase.js");
         if (!supabase) return;
         
-        await supabase.from("users").update({ balance: data.newBalance }).eq("id", data.userId);
-        await supabase.from("transactions").insert({
-           user_id: data.userId,
-           amount: data.amount,
-           type: data.type,
-           description: data.description
-        });
+        const res = await txManager.modifyBalance(data.userId, data.amount, data.type, data.description);
+        if (res.success) {
+           socket.emit("syncBalance", res.newBalance);
+        }
 
         // --- REFERRAL REVENUE SHARE (Passive Income for Influencers) ---
         // Give the referrer 1% of the bet amount as passive commission
@@ -630,13 +604,13 @@ export function initGameEngine(io: Server) {
 
                    try {
                      await supabase.from("users").update({ referrer_id: pendingRefId }).eq("id", data.userId);
-                   } catch (err: any) {
+                   } catch (err) {
                      console.warn("⚠️ Failed to update users.referrer_id during claim-slot bind:", err.message);
                    }
                 }
                 await deletePendingReferral(data.userId);
              }
-           } catch (e: any) {
+           } catch (e) {
              console.error("⚠️ Failed processing pending referral deep-link:", e.message);
            }
 
@@ -645,23 +619,23 @@ export function initGameEngine(io: Server) {
              .eq("user_id", data.userId)
              .eq("type", "referral_link")
              .limit(1);
-             
+               
            if (refTx && refTx.length > 0 && refTx[0].description.startsWith("Referred by ")) {
              const referrerId = refTx[0].description.replace("Referred by ", "");
              const betAmount = Math.abs(data.amount);
              const commission = Math.floor(betAmount * 0.01); // 1% commission
-             
-             if (commission > 0 && referrerId && referrerId !== data.userId) {
                
+             if (commission > 0 && referrerId && referrerId !== data.userId) {
+                 
                // Anti-Syndicate IP Check
                const { data: pIps } = await supabase.from("transactions").select("description").eq("user_id", data.userId).eq("type", "ip_log");
                const { data: rIps } = await supabase.from("transactions").select("description").eq("user_id", referrerId).eq("type", "ip_log");
-               
+                 
                const playerIps = pIps?.map(t => t.description) || [];
                const referrerIps = rIps?.map(t => t.description) || [];
-               
+                 
                const hasOverlap = playerIps.some(ip => referrerIps.includes(ip));
-               
+                 
                if (hasOverlap) {
                  const { data: existingFlags } = await supabase.from("transactions").select("id").eq("user_id", referrerId).eq("type", "affiliate_flag");
                  if (!existingFlags || existingFlags.length === 0) {
@@ -673,9 +647,9 @@ export function initGameEngine(io: Server) {
                      });
                  }
                }
-               
+                 
                const { data: flags } = await supabase.from("transactions").select("id").eq("user_id", referrerId).eq("type", "affiliate_flag");
-               
+                 
                if (!flags || flags.length === 0) {
                  await supabase.from("transactions").insert({
                    user_id: referrerId,
@@ -683,7 +657,6 @@ export function initGameEngine(io: Server) {
                    type: "affiliate_commission", // Separate type for manual payout
                    description: `Referral Commission (1% of bet from ${data.userId})`
                  });
-                 // We no longer automatically add to normal balance
                }
              }
            }
@@ -705,12 +678,18 @@ export function initGameEngine(io: Server) {
       }
     });
 
-    socket.on("logGamePlay", async (data: { userId: string, gameType: string, result: string, winAmount: number, newBalance: number }) => {
+
+    socket.on("logGamePlay", async (data: { userId: string, gameType: string, result: string, winAmount: number }) => {
       try {
+        const { txManager } = await import("./transactionManager.js");
         const { supabase } = await import("./supabase.js");
         if (!supabase) return;
         
-        await supabase.from("users").update({ balance: data.newBalance }).eq("id", data.userId);
+        const res = await txManager.modifyBalance(data.userId, data.winAmount, "game_win", `Win in ${data.gameType}`);
+        if (res.success) {
+           socket.emit("syncBalance", res.newBalance);
+        }
+
         await supabase.from("game_logs").insert({
            user_id: data.userId,
            game_type: data.gameType,
@@ -967,18 +946,17 @@ export function initGameEngine(io: Server) {
                                 }
 
                                 if (prize > 0) {
-                                    const { data: user } = await supabase.from("users").select("balance").eq("id", winner.userId).single();
-                                    if (user) {
-                                        const newBalance = user.balance + prize;
-                                        await supabase.from("users").update({ balance: newBalance }).eq("id", winner.userId);
-                                        await supabase.from("transactions").insert({
-                                           user_id: winner.userId,
-                                           amount: prize,
-                                           type: "win",
-                                           description: `Win #${wNum} in ${data.room} (Place ${i+1})`
-                                        });
-                                        io.to(`user_${winner.userId}`).emit("syncBalance", newBalance);
+                                    const { txManager } = await import("./transactionManager.js");
+                                    const res = await txManager.modifyBalance(winner.userId, prize, "win", `Win #${wNum} in ${data.room} (Place ${i+1})`);
+                                    if (res.success) {
+                                        io.to(`user_${winner.userId}`).emit("syncBalance", res.newBalance);
                                     }
+                                    await supabase.from("game_logs").insert({
+                                       user_id: winner.userId,
+                                       game_type: `Jackpot ${data.room} | R#${data.roundId}`,
+                                       result: `${i === 0 ? '1st' : i === 1 ? '2nd' : '3rd'} Place Win`,
+                                       win_amount: prize
+                                    });
                                 }
                             }
                         }
@@ -1010,23 +988,14 @@ export function initGameEngine(io: Server) {
           return;
         }
 
-        const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-        if (!user || Number(user.balance) < entryFee) {
-          if (callback) callback({ success: false, message: `Insufficient balance (${entryFee} ETB required) or account not found.` });
-          return;
-        }
-
         if (room && !room.claimedSlots[data.num]) {
-           // Deduct balance
-           const newBalance = user.balance - entryFee;
-           await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
-           await supabase.from("transactions").insert({
-              user_id: data.userId,
-              amount: -entryFee,
-              type: "bet",
-              description: `Secured Slot #${data.num} in ${data.room}`
-           });
-           io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
+           const { txManager } = await import("./transactionManager.js");
+           const res = await txManager.modifyBalance(data.userId, -entryFee, "bet", `Secured Slot #${data.num} in ${data.room}`);
+           if (!res.success) {
+               if (callback) callback({ success: false, message: res.error || `Insufficient balance (${entryFee} ETB required) or account not found.` });
+               return;
+           }
+           io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
 
            room.claimedSlots[data.num] = { isSelf: false, userId: data.userId, username: data.username, photoUrl: data.photoUrl };
            
@@ -1054,17 +1023,10 @@ export function initGameEngine(io: Server) {
          try {
            const { supabase } = await import("./supabase.js");
            if (supabase) {
-             const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-             if (user) {
-                const newBalance = user.balance + entryFee;
-                await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
-                await supabase.from("transactions").insert({
-                   user_id: data.userId,
-                   amount: entryFee,
-                   type: "refund",
-                   description: `Refund Slot #${data.num} (${data.room})`
-                });
-                io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
+             const { txManager } = await import("./transactionManager.js");
+             const res = await txManager.modifyBalance(data.userId, entryFee, "refund", `Refund Slot #${data.num} (${data.room})`);
+             if (res.success) {
+                io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
              }
            }
          } catch (e) {
@@ -1103,41 +1065,19 @@ export function initGameEngine(io: Server) {
           return;
         }
 
-        const { data: user } = await supabase.from("users").select("balance").eq("id", data.userId).single();
-        if (!user) {
-          if (callback) callback({ success: false, message: "Account not found." });
-          return;
-        }
-
         const existingBet = room.state.players[data.userId];
         const oldAmount = existingBet ? existingBet.amount : 0;
         const diff = data.amount - oldAmount;
 
-        if (Number(user.balance) < diff) {
-          if (callback) callback({ success: false, message: `Insufficient balance. Need ${diff.toLocaleString()} ETB more.` });
-          return;
-        }
-
-        // Deduct balance from Supabase
-        const newBalance = Number(user.balance) - diff;
-        const { error: updateError } = await supabase.from("users").update({ balance: newBalance }).eq("id", data.userId);
+        const { txManager } = await import("./transactionManager.js");
+        const res = await txManager.modifyBalance(data.userId, -diff, "bet", `Even/Odd Bet (Round #${room.state.roundId}, Side: ${data.side})`);
         
-        if (updateError) {
-          if (callback) callback({ success: false, message: "Transaction failed. Try again." });
+        if (!res.success) {
+          if (callback) callback({ success: false, message: res.error || "Transaction failed. Try again." });
           return;
         }
+        io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
 
-        // Log transaction
-        if (diff !== 0) {
-          await supabase.from("transactions").insert({
-            user_id: data.userId,
-            amount: -diff,
-            type: "bet",
-            description: `Even/Odd Bet (Round #${room.state.roundId}, Side: ${data.side})`
-          });
-        }
-
-        this.io.to(`user_${data.userId}`).emit("syncBalance", newBalance);
         const result = room.placeBet(data.userId, data.username, data.amount, data.side, data.partial);
         if (callback) callback(result);
       } catch (err: any) {

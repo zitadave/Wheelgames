@@ -26,7 +26,7 @@ interface BingoGameProps {
   isDarkMode: boolean;
 }
 
-export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, photoUrl, balance, showNotification, roomState, displayTime, soundEnabled, setSoundEnabled, isActive, selectedRoomId, onRoomSelect, bingoRoomsMeta, isDarkMode }) => {
+export const BingoGame = React.memo(function BingoGame({ socket, userId, username, photoUrl, balance, showNotification, roomState, displayTime, soundEnabled, setSoundEnabled, isActive, selectedRoomId, onRoomSelect, bingoRoomsMeta, isDarkMode }) {
   
   const [selectedCards, setSelectedCards] = useState<number[]>([]);
   const [isJoined, setIsJoined] = useState(false);
@@ -817,7 +817,7 @@ export const BingoGame: React.FC<BingoGameProps> = ({ socket, userId, username, 
        <p className="text-xs font-black uppercase tracking-[0.2em] text-gray-500 dark:text-white/20">Connecting to Game Server...</p>
     </div>
   );
-};
+});
 
 const BingoCardPreview: React.FC<{ id: number }> = ({ id }) => {
   const card = getDeterministicCard(id);
@@ -988,6 +988,7 @@ const BingoCardView: React.FC<{
     </div>
   );
 };
+
 
 function getBallLabel(num: number): string {
   if (num >= 1 && num <= 15) return `B-${num}`;

@@ -16,7 +16,7 @@ interface LeaderboardProps {
   showNotification: (msg: string, type: 'success' | 'error') => void;
 }
 
-export function Leaderboard({ stats, isLoading, onRefresh, userId, botUsername, showNotification }: LeaderboardProps) {
+export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, onRefresh, userId, botUsername, showNotification }: LeaderboardProps) {
   const [copied, setCopied] = useState<boolean>(false);
   const referralLink = `https://t.me/${botUsername || 'ETBGameHubBot'}?start=ref_${userId}`;
 
@@ -243,4 +243,5 @@ export function Leaderboard({ stats, isLoading, onRefresh, userId, botUsername, 
 
     </div>
   );
-}
+});
+

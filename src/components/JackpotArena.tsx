@@ -527,8 +527,8 @@ export const JackpotArena = React.memo(function JackpotArena({
 
       setBalance(prev => {
         const newBalance = prev + prize;
-        socket?.emit('logGamePlay', { userId, gameType: gameTypeWithDetails, result: `${drawIndex === 1 ? '1st' : drawIndex === 2 ? '2nd' : '3rd'} Place Win`, winAmount: prize, newBalance });
-        socket?.emit('logTransaction', { userId, amount: prize, type: 'win', description: `🏆 Jackpot ${drawIndex}st Place Win!`, newBalance });
+        
+        
         return newBalance;
       });
       setTransactions(prev => [
