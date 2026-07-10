@@ -654,6 +654,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     syncBlockedUsersFromDB().catch(err => logBot(`Scheduled blocked users sync failed: ${err.message || err}`));
   }, 10 * 60 * 1000);
 
+  // Start Announcement Scheduler
+  startAnnouncementScheduler(botInstance);
+
   // --- TELEGRAM SEO & DISCOVERY OPTIMIZATIONS (Asynchronous/Non-blocking) ---
   Promise.resolve().then(async () => {
       try {
@@ -4858,16 +4861,14 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const ann = anns.find(a => a.id === annId);
       if (ann) {
         try {
-          let messageText = ann.text;
-          let photo = ann.photoUrl;
-          
           const slotsInfo = {
             grand: formatEmojiNumbers(generateSlotNumbers(100)),
             mini: formatEmojiNumbers(generateSlotNumbers(50)),
             fast: formatEmojiNumbers(generateSlotNumbers(20))
           };
 
-          messageText = processAnnouncementText(ann, slotsInfo);
+          const messageText = processAnnouncementText(ann, slotsInfo);
+          const photo = ann.photoUrl;
 
           if (photo) {
             await downloadAndSendPhoto(bot, channelId, photo, { caption: messageText, parse_mode: "HTML" });

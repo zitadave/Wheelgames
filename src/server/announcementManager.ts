@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { postToChannel, logBot } from "./telegramBot.js";
 import { supabase } from "./supabase.js";
-import { gridRooms } from "./GameEngine.js";
+import { gridRooms, getRemainingSlots } from "./GameEngine.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
@@ -38,7 +38,6 @@ export function saveAnnouncements(announcements: Announcement[]) {
 }
 
 export function generateSlotNumbers(max: number): number[] {
-  const gRooms = (globalThis as any).gridRooms || gridRooms;
   let roomName = "mini";
   if (max === 100) roomName = "grand";
   else if (max === 50) roomName = "mini";
@@ -46,35 +45,33 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 10) roomName = "1-10";
 
   try {
-    if (gRooms && gRooms[roomName]) {
-      const room = gRooms[roomName];
+    // Try to get the most up-to-date gridRooms from globalThis if available, 
+    // though the imported one should be the same in a single-process ESM environment.
+    const gRooms = (globalThis as any).gridRooms || gridRooms;
+    const room = gRooms ? gRooms[roomName] : null;
+
+    if (room) {
       const remaining: number[] = [];
       for (let i = 1; i <= max; i++) {
-        if (!room.claimedSlots || !room.claimedSlots[i]) {
+        // Explicitly check for presence in claimedSlots
+        if (!room.claimedSlots || room.claimedSlots[i] === undefined || room.claimedSlots[i] === null) {
           remaining.push(i);
         }
       }
-      logBot(`[Slots Tracker] roomName=${roomName}, max=${max}, claimedSlotsCount=${room.claimedSlots ? Object.keys(room.claimedSlots).length : 0}, remainingCount=${remaining.length}`);
+      logBot(`[Slots Tracker] roomName=${roomName}, max=${max}, claimedCount=${room.claimedSlots ? Object.keys(room.claimedSlots).length : 0}, remainingCount=${remaining.length}`);
       return remaining;
     } else {
-      logBot(`[Slots Tracker] roomName=${roomName} not found in gridRooms! Available rooms: ${Object.keys(gRooms || {}).join(", ")}`);
+      logBot(`[Slots Tracker] Room ${roomName} not found. Available: ${Object.keys(gRooms || {}).join(", ")}`);
     }
   } catch (err: any) {
-    logBot(`Failed to fetch real remaining slots for room ${roomName}: ${err.message}`);
+    logBot(`Failed to generate slot numbers for ${roomName}: ${err.message}`);
   }
 
-  // Fallback if not loaded
-  const slots = [];
-  for (let i = 1; i <= max; i++) {
-    slots.push(i);
-  }
-  return slots;
+  return [];
 }
 
-
-
-
 export function formatEmojiNumbers(nums: number[]): string {
+  if (!nums || nums.length === 0) return "<i>None available</i>";
   const emojiMap: { [key: string]: string } = {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
