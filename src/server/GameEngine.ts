@@ -413,12 +413,13 @@ export const gridRooms: Record<string, {
   roundId: number,
   winners?: any,
   history: any[]
-}> = {
+}> = (globalThis as any).gridRooms || {
   '1-10': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
   '1-20': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
   'mini': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] },
   'grand': { claimedSlots: {}, roundId: Math.floor(Math.random() * 9000) + 1000, history: [] }
 };
+(globalThis as any).gridRooms = gridRooms;
 
 export function getRemainingSlots(roomName: string, maxSlots: number): number[] {
   const room = gridRooms[roomName];

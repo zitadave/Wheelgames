@@ -4,7 +4,7 @@ import { supabase } from "./supabase.js";
 import { getAnalysisSummary } from "./analysis.js";
 import { Server } from "socket.io";
 import { fetchLeaderboardData, getStartOfWeekUTC } from "./leaderboardHelper.js";
-import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto } from "./announcementManager.js";
+import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto, processAnnouncementText } from "./announcementManager.js";
 import * as fs from "fs";
 import * as path from "path";
 import { handleSupportChat } from "./aiSupport.js";
@@ -1270,6 +1270,69 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
   }
 
+  async function renderAnnouncementCmdPanel(chatId: number, messageId?: number) {
+    try {
+      const anns = loadAnnouncements();
+      const grand = anns.find(a => a.id === "vip_100_slots");
+      const mini = anns.find(a => a.id === "vip_50_slots");
+      const fast = anns.find(a => a.id === "fast_20_slots");
+
+      let text = "📢 <b>Slot Announcements Control Panel</b>\n\n" +
+                 "You can toggle individual game announcements or send them instantly to the channel with a single click:\n\n";
+
+      if (grand) {
+        text += `🔥 <b>ዕድል 100-ሰው (VIP Grand)</b>\n` +
+                `• Status: ${grand.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
+                `• Interval: <code>${grand.intervalHours || 3}h</code>\n` +
+                `• Last Sent: <code>${grand.lastRunTime ? new Date(grand.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+      }
+      if (mini) {
+        text += `💥 <b>ዕድል 50-ሰው (VIP Mini)</b>\n` +
+                `• Status: ${mini.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
+                `• Interval: <code>${mini.intervalHours || 3}h</code>\n` +
+                `• Last Sent: <code>${mini.lastRunTime ? new Date(mini.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+      }
+      if (fast) {
+        text += `⚡ <b>ፈጣን 20-ሰው (Fast 20)</b>\n` +
+                `• Status: ${fast.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
+                `• Interval: <code>${fast.intervalHours || 3}h</code>\n` +
+                `• Last Sent: <code>${fast.lastRunTime ? new Date(fast.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+      }
+
+      const buttons = [];
+      if (grand) {
+        buttons.push([
+          { text: `${grand.enabled ? "🟢" : "🔴"} Toggle Grand 100`, callback_data: `cmd_ann_toggle:${grand.id}` },
+          { text: "🚀 Send Grand 100", callback_data: `cmd_ann_send:${grand.id}` }
+        ]);
+      }
+      if (mini) {
+        buttons.push([
+          { text: `${mini.enabled ? "🟢" : "🔴"} Toggle Mini 50`, callback_data: `cmd_ann_toggle:${mini.id}` },
+          { text: "🚀 Send Mini 50", callback_data: `cmd_ann_send:${mini.id}` }
+        ]);
+      }
+      if (fast) {
+        buttons.push([
+          { text: `${fast.enabled ? "🟢" : "🔴"} Toggle Fast 20`, callback_data: `cmd_ann_toggle:${fast.id}` },
+          { text: "🚀 Send Fast 20", callback_data: `cmd_ann_send:${fast.id}` }
+        ]);
+      }
+      buttons.push([{ text: "⚙️ Manage Full Announcements Dashboard", callback_data: "control_announcements" }]);
+
+      const keyboard = { inline_keyboard: buttons };
+
+      if (messageId) {
+        await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+          .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+      } else {
+        await bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+      }
+    } catch (err: any) {
+      logBot(`Error rendering announcement command panel: ${err.message}`);
+    }
+  }
+
   async function renderAnnouncementsDashboard(chatId: number, messageId?: number) {
     try {
       const anns = loadAnnouncements();
@@ -2217,11 +2280,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
       if (cmdName === "announcement" || cmdName === "list_of_recent_announcement") {
         if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
-        const anns = loadAnnouncements();
-        if (anns.length === 0) return bot.sendMessage(chatId, "📋 Recent Announcements:\n\nNo announcements found.");
-        let text = "📢 <b>Announcements:</b>\n\n";
-        anns.forEach(a => { text += `<b>ID:</b> <code>${a.id}</code>\n<b>Type:</b> ${a.type}\n<b>Interval (hrs):</b> ${a.intervalHours}\n<b>Enabled:</b> ${a.enabled}\n\n`; });
-        await bot.sendMessage(chatId, text, { parse_mode: "HTML" });
+        await renderAnnouncementCmdPanel(chatId);
         return;
       }
       if (cmdName === "announcement_delete") {
@@ -4762,6 +4821,75 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
 
+    if (data.startsWith("cmd_ann_toggle:")) {
+      if (!isStartingAdmin(parseInt(userId, 10))) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const annId = data.substring("cmd_ann_toggle:".length);
+      const anns = loadAnnouncements();
+      const ann = anns.find(a => a.id === annId);
+      if (ann) {
+        ann.enabled = !ann.enabled;
+        saveAnnouncements(anns);
+        await bot.answerCallbackQuery(query.id, { text: `Announcement is now ${ann.enabled ? 'Enabled 🟢' : 'Disabled 🔴'}` });
+        await renderAnnouncementCmdPanel(chatId, messageId);
+      } else {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Announcement not found." });
+      }
+      return;
+    }
+
+    if (data.startsWith("cmd_ann_send:")) {
+      if (!isStartingAdmin(parseInt(userId, 10))) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const annId = data.substring("cmd_ann_send:".length);
+      await bot.answerCallbackQuery(query.id, { text: "⏳ Sending announcement..." });
+      
+      const channelId = process.env.CHANNEL_ID;
+      if (!channelId) {
+        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
+        return;
+      }
+
+      const anns = loadAnnouncements();
+      const ann = anns.find(a => a.id === annId);
+      if (ann) {
+        try {
+          let messageText = ann.text;
+          let photo = ann.photoUrl;
+          
+          const slotsInfo = {
+            grand: formatEmojiNumbers(generateSlotNumbers(100)),
+            mini: formatEmojiNumbers(generateSlotNumbers(50)),
+            fast: formatEmojiNumbers(generateSlotNumbers(20))
+          };
+
+          messageText = processAnnouncementText(ann, slotsInfo);
+
+          if (photo) {
+            await downloadAndSendPhoto(bot, channelId, photo, { caption: messageText, parse_mode: "HTML" });
+          } else {
+            await bot.sendMessage(channelId, messageText, { parse_mode: "HTML" });
+          }
+
+          ann.lastRunTime = Date.now();
+          saveAnnouncements(anns);
+
+          await bot.sendMessage(chatId, `✅ Announcement <code>${annId}</code> successfully sent to the channel!`, { parse_mode: "HTML" });
+          await renderAnnouncementCmdPanel(chatId, messageId);
+        } catch (err: any) {
+          logBot(`Failed to manually send single announcement ${annId}: ${err.message}`);
+          await bot.sendMessage(chatId, `❌ Failed to send announcement: ${err.message}`);
+        }
+      } else {
+        await bot.sendMessage(chatId, `❌ Announcement <code>${annId}</code> not found in the current list.`);
+      }
+      return;
+    }
+
     if (data.startsWith("ann_toggle:")) {
       if (!isStartingAdmin(parseInt(userId, 10))) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
@@ -4892,17 +5020,15 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           let messageText = ann.text;
           let photo = ann.photoUrl;
           
-          if (ann.type === "vip_slots") {
-            const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
-            const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
-            const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
-            
-            messageText = `🎲 <b>የተቀሩ ያልተያዙ ቦታዎች (Remaining Slots)</b> 🎲\n\n` +
-              `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${vipGrandSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-              `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${miniVipSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-              `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${fastSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-              `<i>አሁኑኑ ይግቡ እና ቦታዎን ያስይዙ!</i>`;
-          } else if (ann.type === "high_withdrawal") {
+          const slotsInfo = {
+            grand: formatEmojiNumbers(generateSlotNumbers(100)),
+            mini: formatEmojiNumbers(generateSlotNumbers(50)),
+            fast: formatEmojiNumbers(generateSlotNumbers(20))
+          };
+
+          messageText = processAnnouncementText(ann, slotsInfo);
+
+          if (ann.type === "high_withdrawal") {
             const { data: recentWd } = await supabase
               .from('transactions')
               .select('amount, created_at, users(username, first_name)')
@@ -4941,9 +5067,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
             photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
           } else if (ann.type === "join_play") {
-            const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100).slice(0, 5));
-            const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50).slice(0, 5));
-            const fastSlots = formatEmojiNumbers(generateSlotNumbers(20).slice(0, 5));
+            const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
+            const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
+            const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
 
             messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
               `⏳ <b>Games available:</b>\n\n` +

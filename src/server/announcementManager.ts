@@ -2,13 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { postToChannel, logBot } from "./telegramBot.js";
 import { supabase } from "./supabase.js";
-import { getRemainingSlots } from "./GameEngine.js";
+import { gridRooms } from "./GameEngine.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
 export interface Announcement {
   id: string;
-  type: "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "weekly_promoter" | "high_withdrawal" | "high_deposit";
+  type: "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "weekly_promoter" | "high_withdrawal" | "high_deposit" | "vip_slots_100" | "vip_slots_50" | "vip_slots_20" | "scheduled_match";
   text: string;
   photoUrl?: string;
   intervalHours?: number;
@@ -38,27 +38,37 @@ export function saveAnnouncements(announcements: Announcement[]) {
 }
 
 export function generateSlotNumbers(max: number): number[] {
+  const gRooms = (globalThis as any).gridRooms || gridRooms;
   let roomName = "mini";
   if (max === 100) roomName = "grand";
+  else if (max === 50) roomName = "mini";
   else if (max === 20) roomName = "1-20";
   else if (max === 10) roomName = "1-10";
 
   try {
-    const slots = getRemainingSlots(roomName, max);
-    if (slots && slots.length > 0) {
-      // Limit to max 15 to keep message readable if there are too many
-      return slots.slice(0, 15);
+    if (gRooms && gRooms[roomName]) {
+      const room = gRooms[roomName];
+      const remaining: number[] = [];
+      for (let i = 1; i <= max; i++) {
+        if (!room.claimedSlots || !room.claimedSlots[i]) {
+          remaining.push(i);
+        }
+      }
+      logBot(`[Slots Tracker] roomName=${roomName}, max=${max}, claimedSlotsCount=${room.claimedSlots ? Object.keys(room.claimedSlots).length : 0}, remainingCount=${remaining.length}`);
+      return remaining;
+    } else {
+      logBot(`[Slots Tracker] roomName=${roomName} not found in gridRooms! Available rooms: ${Object.keys(gRooms || {}).join(", ")}`);
     }
-  } catch (err) {
-    logBot(`Failed to fetch real remaining slots for room ${roomName}: ${err}`);
+  } catch (err: any) {
+    logBot(`Failed to fetch real remaining slots for room ${roomName}: ${err.message}`);
   }
 
   // Fallback if not loaded
   const slots = [];
   for (let i = 1; i <= max; i++) {
-    if (Math.random() > 0.5) slots.push(i);
+    slots.push(i);
   }
-  return slots.slice(0, 15);
+  return slots;
 }
 
 
@@ -77,20 +87,50 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
     return;
   }
 
+  const captionText = options.caption || "";
+  const isCaptionTooLong = captionText.length > 1000;
+
+  // If caption is too long, we send photo without caption and send the text message separately.
+  const activeOptions = isCaptionTooLong ? { ...options, caption: "" } : options;
+
+  const sendTextMessageIfTooLong = async () => {
+    if (isCaptionTooLong) {
+      logBot(`Caption too long (${captionText.length} chars). Sending message text separately.`);
+      const textChunks = captionText.length > 4000 ? captionText.slice(0, 4000) + "..." : captionText;
+      await bot.sendMessage(chatId, textChunks, {
+        parse_mode: options.parse_mode || "HTML",
+        reply_markup: options.reply_markup
+      });
+    }
+  };
+
   if (!photoUrl.startsWith("http")) {
     const fullPath = path.isAbsolute(photoUrl) ? photoUrl : path.join(process.cwd(), photoUrl);
     if (fs.existsSync(fullPath)) {
       logBot(`Sending local photo file: ${fullPath} to ${chatId}`);
-      await bot.sendPhoto(chatId, photoUrl, options);
+      try {
+        await bot.sendPhoto(chatId, photoUrl, activeOptions);
+        await sendTextMessageIfTooLong();
+      } catch (err: any) {
+        if (err.message && err.message.includes("caption is too long") && !isCaptionTooLong) {
+          logBot(`Fallback: Caption too long error received. Retrying with separate text.`);
+          await bot.sendPhoto(chatId, photoUrl, { ...options, caption: "" });
+          await bot.sendMessage(chatId, captionText, {
+            parse_mode: options.parse_mode || "HTML",
+            reply_markup: options.reply_markup
+          });
+        } else {
+          throw err;
+        }
+      }
     } else {
       logBot(`Warning: Local photo file does not exist at: ${fullPath}. Falling back to sending message text only.`);
       const textOptions = {
         parse_mode: options.parse_mode || "HTML",
         reply_markup: options.reply_markup
       };
-      const text = options.caption || "";
-      if (text) {
-        await bot.sendMessage(chatId, text, textOptions);
+      if (captionText) {
+        await bot.sendMessage(chatId, captionText, textOptions);
       }
     }
     return;
@@ -111,15 +151,79 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
     const arrayBuffer = await res.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    await bot.sendPhoto(chatId, buffer, options, {
-      filename: "photo.jpg",
-      contentType: "image/jpeg"
-    });
-    logBot(`Successfully sent photo as buffer to ${chatId}`);
+    try {
+      await bot.sendPhoto(chatId, buffer, activeOptions, {
+        filename: "photo.jpg",
+        contentType: "image/jpeg"
+      });
+      logBot(`Successfully sent photo as buffer to ${chatId}`);
+      await sendTextMessageIfTooLong();
+    } catch (err: any) {
+      if (err.message && err.message.includes("caption is too long") && !isCaptionTooLong) {
+        logBot(`Fallback: Caption too long error received for buffer. Retrying with separate text.`);
+        await bot.sendPhoto(chatId, buffer, { ...options, caption: "" }, {
+          filename: "photo.jpg",
+          contentType: "image/jpeg"
+        });
+        await bot.sendMessage(chatId, captionText, {
+          parse_mode: options.parse_mode || "HTML",
+          reply_markup: options.reply_markup
+        });
+      } else {
+        throw err;
+      }
+    }
   } catch (err: any) {
     logBot(`Failed to download & send photo as buffer (URL: ${photoUrl}): ${err.message}. Retrying sending directly via URL...`);
-    await bot.sendPhoto(chatId, photoUrl, options);
+    try {
+      await bot.sendPhoto(chatId, photoUrl, activeOptions);
+      await sendTextMessageIfTooLong();
+    } catch (directErr: any) {
+      if (directErr.message && directErr.message.includes("caption is too long") && !isCaptionTooLong) {
+        logBot(`Fallback: Caption too long error received for direct URL. Retrying with separate text.`);
+        await bot.sendPhoto(chatId, photoUrl, { ...options, caption: "" });
+        await bot.sendMessage(chatId, captionText, {
+          parse_mode: options.parse_mode || "HTML",
+          reply_markup: options.reply_markup
+        });
+      } else {
+        throw directErr;
+      }
+    }
   }
+}
+
+export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: string, mini: string, fast: string }): string {
+  let text = ann.text;
+  
+  if (ann.type === "vip_slots" || ann.type === "scheduled_match") {
+    // If text is still default/placeholder or we want to force the specific format the user asked for
+    if (text === "Scheduled Match placeholder" || !text.includes("{slots}")) {
+      return `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
+        `⏳ <b>Games available:</b>\n\n` +
+        `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.grand} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.mini} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.fast} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
+    }
+    // Otherwise replace placeholders
+    text = text.replace("{slots_grand}", slotsInfo.grand)
+               .replace("{slots_mini}", slotsInfo.mini)
+               .replace("{slots_fast}", slotsInfo.fast);
+    return text;
+  }
+
+  if (ann.type === "vip_slots_100") {
+    return text.replace("{slots}", slotsInfo.grand);
+  }
+  if (ann.type === "vip_slots_50") {
+    return text.replace("{slots}", slotsInfo.mini);
+  }
+  if (ann.type === "vip_slots_20") {
+    return text.replace("{slots}", slotsInfo.fast);
+  }
+
+  return text;
 }
 
 export async function processAnnouncements(bot: any) {
@@ -139,18 +243,15 @@ export async function processAnnouncements(bot: any) {
       let messageText = ann.text;
       let photo = ann.photoUrl;
       
-      // Dynamic logic for specific types
-      if (ann.type === "vip_slots") {
-        const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
-        const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
-        const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
-        
-        messageText = `🎲 <b>የተቀሩ ያልተያዙ ቦታዎች (Remaining Slots)</b> 🎲\n\n` +
-          `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${vipGrandSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-          `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${miniVipSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-          `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${fastSlots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-          `<i>አሁኑኑ ይግቡ እና ቦታዎን ያስይዙ!</i>`;
-      } else if (ann.type === "high_withdrawal") {
+      const slotsInfo = {
+        grand: formatEmojiNumbers(generateSlotNumbers(100)),
+        mini: formatEmojiNumbers(generateSlotNumbers(50)),
+        fast: formatEmojiNumbers(generateSlotNumbers(20))
+      };
+
+      messageText = processAnnouncementText(ann, slotsInfo);
+
+      if (ann.type === "high_withdrawal") {
         // Find recent high withdrawals > 20000
         const { data } = await supabase
           .from('transactions')
@@ -189,9 +290,9 @@ export async function processAnnouncements(bot: any) {
           `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
         photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
       } else if (ann.type === "join_play") {
-        const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100).slice(0, 5));
-        const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50).slice(0, 5));
-        const fastSlots = formatEmojiNumbers(generateSlotNumbers(20).slice(0, 5));
+        const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
+        const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
+        const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
 
         messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
           `⏳ <b>Games available:</b>\n\n` +
@@ -202,13 +303,19 @@ export async function processAnnouncements(bot: any) {
       }
 
       try {
+        const channelId = process.env.CHANNEL_ID;
+        if (!channelId) {
+          logBot(`[Scheduler] Skipping announcement ${ann.id}: CHANNEL_ID not set.`);
+          continue;
+        }
+
         if (photo) {
-          await downloadAndSendPhoto(bot, process.env.CHANNEL_ID!, photo, {
+          await downloadAndSendPhoto(bot, channelId, photo, {
             caption: messageText,
             parse_mode: "HTML"
           });
         } else {
-          await bot.sendMessage(process.env.CHANNEL_ID, messageText, { parse_mode: "HTML" });
+          await bot.sendMessage(channelId, messageText, { parse_mode: "HTML" });
         }
         
         ann.lastRunTime = now;
