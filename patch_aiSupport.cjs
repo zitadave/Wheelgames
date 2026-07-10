@@ -1,4 +1,6 @@
-import { GoogleGenAI, Type } from "@google/genai";
+const fs = require('fs');
+
+const content = `import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from "./supabase.js";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -8,13 +10,14 @@ export function clearAiSupportHistory(telegramId: string) {
   chatHistories.delete(telegramId);
 }
 
-export async function handleSupportChat(telegramId: string, message: string, oldHistoryArg: any[], isAdmin: boolean = false): Promise<{ text: string, escalate?: boolean, reason?: string, interactionId?: string, error?: boolean }> {
+export async function handleAiSupportChat(
+  telegramId: string,
+  message: string,
+  isAdmin: boolean = false
+): Promise<{ text: string, escalate?: boolean, reason?: string, interactionId?: string, error?: boolean }> {
   try {
     // 1. Pre-fetch basic user details from Supabase to inject into the system prompt.
-    let userContext = `
-
-CURRENT USER CONTEXT:
-- Telegram ID: ${telegramId}`;
+    let userContext = \`\n\nCURRENT USER CONTEXT:\n- Telegram ID: \${telegramId}\`;
     let isBlocked = false;
     try {
       const { data: userData } = await supabase.from("users").select("username, balance, is_blocked_bot").eq("id", telegramId).single();
@@ -22,9 +25,7 @@ CURRENT USER CONTEXT:
         if (userData.is_blocked_bot) {
             isBlocked = true;
         }
-        userContext += `
-- Username: @${userData.username || "N/A"}
-- Current Balance: ${userData.balance || 0} ETB`;
+        userContext += \`\n- Username: @\${userData.username || "N/A"}\n- Current Balance: \${userData.balance || 0} ETB\`;
       }
     } catch (e) {
       // Ignore pre-fetch errors
@@ -83,19 +84,6 @@ CURRENT USER CONTEXT:
       }
     };
 
-    const blockUserFD = {
-      name: "block_user_from_bot",
-      description: "Blocks or unblocks a user from using the AI support bot. Only available to admins.",
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          telegram_id: { type: Type.STRING, description: "The Telegram ID of the user to block/unblock." },
-          block_status: { type: Type.BOOLEAN, description: "True to block, false to unblock." }
-        },
-        required: ["telegram_id", "block_status"]
-      }
-    };
-
     const escalateToHumanFD = {
       name: "escalate_to_human",
       description: "Triggers a connection to a human support agent.",
@@ -149,8 +137,7 @@ CURRENT USER CONTEXT:
                 functionDeclarations: [
                   getUserProfileFD,
                   getTransactionSummaryFD,
-                  escalateToHumanFD,
-                  ...(isAdmin ? [blockUserFD] : [])
+                  escalateToHumanFD
                 ]
               }
             ]
@@ -159,7 +146,7 @@ CURRENT USER CONTEXT:
         success = true;
       } catch (err: any) {
         attempt++;
-        console.warn(`AI Support attempt ${attempt} failed:`, err.message);
+        console.warn(\`AI Support attempt \${attempt} failed:\`, err.message);
         if (attempt >= maxRetries) {
            throw err; // throw to outer catch block
         }
@@ -215,13 +202,6 @@ CURRENT USER CONTEXT:
             content: error ? { error: "Could not fetch transactions." } : { transactions: data }
           });
 
-        } else if (call.name === "block_user_from_bot" && isAdmin) {
-          const { telegram_id, block_status } = call.args as any;
-          const { error } = await supabase.from("users").update({ is_blocked_bot: block_status }).eq("id", telegram_id);
-          toolResults.push({
-            name: call.name,
-            content: error ? { error: error.message } : { success: true, message: `User ${telegram_id} block status set to ${block_status}` }
-          });
         } else if (call.name === "escalate_to_human") {
           escalate = true;
           escalateReason = (call.args as any).reason || "User requested human support.";
@@ -241,11 +221,11 @@ CURRENT USER CONTEXT:
 
       if (toolResults.length > 0) {
         // Formulate a prompt with tool outputs and make a follow-up call
-        const toolDataStr = toolResults.map(tr => `${tr.name}: ${JSON.stringify(tr.content)}`).join("\n");
+        const toolDataStr = toolResults.map(tr => \`\${tr.name}: \${JSON.stringify(tr.content)}\`).join("\\n");
         const followUpContents = [
           ...history,
-          { role: "model" as const, parts: [{ text: `I will check the database using my tools.` }] },
-          { role: "user" as const, parts: [{ text: `[System Tool Output]\n${toolDataStr}\n\nPlease formulate the final response for the user based on the tool results above.` }] }
+          { role: "model" as const, parts: [{ text: \`I will check the database using my tools.\` }] },
+          { role: "user" as const, parts: [{ text: \`[System Tool Output]\\n\${toolDataStr}\\n\\nPlease formulate the final response for the user based on the tool results above.\` }] }
         ];
 
         let followUpResponse: any = null;
@@ -287,13 +267,17 @@ CURRENT USER CONTEXT:
     };
 
   } catch (error: any) {
-    console.error(`[AI Support Error] ${error.message}`);
+    console.error(\`[AI Support Error] \${error.message}\`);
     
     // Hospitality fallback message: professional, warm, welcoming, and reassuring (no technical jargon or crash errors)
     return {
-      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። ጥያቄዎን ወይም አስተያየትዎን እባክዎ በቀጥታ ለዋናው የድጋፍ ሰጪ አካውንት @scofiled1 ይላኩ። ፈጣን ምላሽ ያገኛሉ! እናመሰግናለን። 🙏\n\nHello! 💖 Our support desk is experiencing extremely high volume right now. Please send your inquiries directly to our head of support @scofiled1 for an immediate response. Thank you for your patience! 🙏",
+      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። ጥያቄዎን ወይም አስተያየትዎን እባክዎ በቀጥታ ለዋናው የድጋፍ ሰጪ አካውንት @scofiled1 ይላኩ። ፈጣን ምላሽ ያገኛሉ! እናመሰግናለን። 🙏\\n\\nHello! 💖 Our support desk is experiencing extremely high volume right now. Please send your inquiries directly to our head of support @scofiled1 for an immediate response. Thank you for your patience! 🙏",
       error: true,
       interactionId: "fallback_" + Date.now()
     };
   }
 }
+`;
+
+fs.writeFileSync('src/server/aiSupport.ts', content);
+console.log("Patched aiSupport.ts");

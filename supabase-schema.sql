@@ -167,3 +167,6 @@ BEGIN
     RETURN jsonb_build_object('success', true, 'newBalance', new_balance);
 END;
 $$ LANGUAGE plpgsql;
+
+-- Add is_blocked_bot flag
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked_bot BOOLEAN DEFAULT FALSE;

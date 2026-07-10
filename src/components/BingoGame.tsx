@@ -445,7 +445,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
               <div className="flex flex-col items-center gap-2 w-full max-w-lg mx-auto">
                 <div className="flex flex-row justify-center gap-3 w-full">
                   {selectedCards.map((cardId, idx) => (
-                    <div key={cardId} className="flex-1 max-w-[175px] animate-in zoom-in-95 duration-300" style={{ animationDelay: `${idx * 100}ms` }}>
+                    <div key={cardId} className="flex-1 max-w-[175px] ">
                       <div className="bg-white dark:bg-[#1a1c2e] rounded-lg overflow-hidden border border-purple-500/20 shadow-2xl">
                         <div className="bg-orange-500 px-1.5 py-0.5 border-b border-black/10">
                            <span className="text-[9.5px] font-black text-black uppercase tracking-wider block text-center truncate">NO: {cardId}</span>
@@ -680,7 +680,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                     </div>
                   ))
                 ) : (
-                  <div className="w-full max-w-[340px] flex-1 h-full flex flex-col my-auto animate-in zoom-in-95 duration-300">
+                  <div className="w-full max-w-[340px] flex-1 h-full flex flex-col my-auto ">
                     <div className="bg-white dark:bg-gradient-to-b dark:from-[#1a1c3e] dark:to-[#121424] rounded-2xl border border-gray-200 dark:border-purple-500/20 shadow-2xl flex flex-col items-center justify-center p-6 flex-1 h-full text-center relative overflow-hidden transition-colors duration-300">
                       <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 via-purple-500 to-blue-500" />
                       
@@ -735,7 +735,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                 exit={{ opacity: 0 }}
                 className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
               >
-                <div className="bg-[#181a2e] border border-purple-500/20 rounded-3xl p-5 text-center max-w-[350px] w-full shadow-2xl scale-95 animate-in zoom-in-95 duration-300 flex flex-col gap-4 max-h-[95vh] overflow-y-auto custom-scrollbar">
+                <div className="bg-[#181a2e] border border-purple-500/20 rounded-3xl p-5 text-center max-w-[350px] w-full shadow-2xl scale-95  flex flex-col gap-4 max-h-[95vh] overflow-y-auto custom-scrollbar">
                    {/* Top Crown visual */}
                    <div className="relative flex flex-col items-center pt-2">
                      <div className="w-12 h-12 rounded-full bg-gradient-to-b from-yellow-400 to-amber-600 flex items-center justify-center shadow-[0_0_20px_rgba(245,158,11,0.6)] border border-yellow-300 relative z-10">
