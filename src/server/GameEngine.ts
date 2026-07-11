@@ -2,7 +2,7 @@ import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { logBot } from "./logger.js";
-import { gridRooms } from "./gridState.js";
+import { gridRooms, saveGridState } from "./gridState.js";
 
 export type Side = "even" | "odd";
 
@@ -963,6 +963,7 @@ export function initGameEngine(io: Server) {
             room.roundId += 1;
             room.claimedSlots = {};
             delete room.winners;
+            saveGridState();
         }
     });
 
@@ -988,6 +989,7 @@ export function initGameEngine(io: Server) {
            io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
 
            room.claimedSlots[data.num] = { isSelf: false, userId: data.userId, username: data.username, photoUrl: data.photoUrl };
+           saveGridState();
            logBot(`[GameEngine] Slot #${data.num} claimed in ${data.room} by ${data.username} (${data.userId}). Total claimed: ${Object.keys(room.claimedSlots).length}`);
            
            const maxSlots = data.room === '1-10' ? 10 : data.room === '1-20' ? 20 : data.room === 'mini' ? 50 : 100;
@@ -1026,6 +1028,7 @@ export function initGameEngine(io: Server) {
 
          delete room.claimedSlots[data.num];
          delete room.winners;
+         saveGridState();
          io.to(data.room).emit("grid_state", room);
          if (callback) callback({ success: true });
       }
@@ -1037,6 +1040,7 @@ export function initGameEngine(io: Server) {
           room.claimedSlots = {};
           room.roundId += 1;
           delete room.winners;
+          saveGridState();
           io.to(roomName).emit("grid_state", room);
        }
     });

@@ -1,0 +1,26 @@
+{
+  "1-10": {
+    "claimedSlots": {},
+    "roundId": 1001,
+    "history": []
+  },
+  "1-20": {
+    "claimedSlots": {},
+    "roundId": 1002,
+    "history": []
+  },
+  "mini": {
+    "claimedSlots": {
+      "5": {
+        "userId": "test"
+      }
+    },
+    "roundId": 1003,
+    "history": []
+  },
+  "grand": {
+    "claimedSlots": {},
+    "roundId": 1004,
+    "history": []
+  }
+}

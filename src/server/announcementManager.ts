@@ -54,13 +54,33 @@ export async function generateSlotNumbers(max: number): Promise<number[]> {
   return remaining;
 }
 
-export function formatEmojiNumbers(nums: number[] | undefined | null): string {
-  if (!nums || !Array.isArray(nums) || nums.length === 0) return "<i>None available</i>";
+export function formatEmojiNumbers(nums: number[] | undefined | null, maxSlots: number): string {
+  if (!nums || !Array.isArray(nums) || nums.length === 0) return "<i>ሁሉም ተይዘዋል (None available)</i>";
+  if (nums.length === maxSlots) return `ሙሉ ${maxSlots} ቁጥሮች ክፍት ናቸው`;
   
-  const formatted = nums.join(', ');
+  const ranges: number[][] = [];
+  let currentRange: number[] = [nums[0]];
+  
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] === nums[i - 1] + 1) {
+      currentRange.push(nums[i]);
+    } else {
+      ranges.push(currentRange);
+      currentRange = [nums[i]];
+    }
+  }
+  if (currentRange.length > 0) {
+    ranges.push(currentRange);
+  }
+
+  const formatted = ranges.map(r => {
+    if (r.length === 1) return r[0].toString();
+    if (r.length === 2) return `${r[0]}, ${r[1]}`;
+    return `${r[0]}-${r[r.length - 1]}`;
+  }).join(', ');
 
   logBot(`[FormatEmoji] Formatted ${nums.length} numbers: ${formatted.substring(0, 50)}...`);
-  return formatted;
+  return `${formatted} (ቀሪ: ${nums.length})`;
 }
 
 export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
@@ -182,10 +202,10 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
     if (text === "Scheduled Match placeholder" || !text.includes("{slots}")) {
       return `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
         `⏳ <b>Games available:</b>\n\n` +
-        `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.grand} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-        `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.mini} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-        `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.fast} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
-        `⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
+        `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.grand}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
+        `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.mini}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
+        `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.fast}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
+        `🎯 <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
     }
     // Otherwise replace placeholders
     text = text.replace("{slots_grand}", slotsInfo.grand)
@@ -195,16 +215,13 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
   }
 
   if (ann.type === "vip_slots_100") {
-    const gridRooms = getGridRooms();
-    return text.replace("{slots}", slotsInfo.grand) + `\n\n(Debug: PID ${process.pid})`;
+    return text.replace("{slots}", slotsInfo.grand).replace("{slots_grand}", slotsInfo.grand);
   }
   if (ann.type === "vip_slots_50") {
-    const gridRooms = getGridRooms();
-    return text.replace("{slots}", slotsInfo.mini) + `\n\n(Debug: PID ${process.pid})`;
+    return text.replace("{slots}", slotsInfo.mini).replace("{slots_mini}", slotsInfo.mini);
   }
   if (ann.type === "vip_slots_20") {
-    const gridRooms = getGridRooms();
-    return text.replace("{slots}", slotsInfo.fast) + `\n\n(Debug: PID ${process.pid})`;
+    return text.replace("{slots}", slotsInfo.fast).replace("{slots_fast}", slotsInfo.fast);
   }
 
   return text;
@@ -229,9 +246,9 @@ export async function processAnnouncements(bot: any) {
       let photo = ann.photoUrl;
       
       const slotsInfo = {
-        grand: formatEmojiNumbers(await generateSlotNumbers(100)),
-        mini: formatEmojiNumbers(await generateSlotNumbers(50)),
-        fast: formatEmojiNumbers(await generateSlotNumbers(20))
+        grand: formatEmojiNumbers(await generateSlotNumbers(100), 100),
+        mini: formatEmojiNumbers(await generateSlotNumbers(50), 50),
+        fast: formatEmojiNumbers(await generateSlotNumbers(20), 20)
       };
       
       logBot(`[ProcessAnnouncements] Generated slotsInfo for ${ann.id}: Grand=${slotsInfo.grand.substring(0, 50)}..., Mini=${slotsInfo.mini.substring(0, 50)}..., Fast=${slotsInfo.fast.substring(0, 50)}...`);
@@ -277,9 +294,9 @@ export async function processAnnouncements(bot: any) {
           `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
         photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
       } else if (ann.type === "join_play") {
-        const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100));
-        const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50));
-        const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20));
+        const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);
+        const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50), 50);
+        const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20), 20);
 
         messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
           `⏳ <b>Games available:</b>\n\n` +
@@ -303,7 +320,7 @@ export async function processAnnouncements(bot: any) {
         const messageOptions: any = { parse_mode: "HTML" };
         messageOptions.reply_markup = {
           inline_keyboard: [
-            [{ text: "🎮 Play Game Hub 🚀", web_app: { url: "https://wheelgames1.onrender.com" } }]
+            [{ text: "🎮 Play Game Hub 🚀", url: "https://t.me/Wheelgames_bot/app" }]
           ]
         };
 

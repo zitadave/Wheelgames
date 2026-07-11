@@ -47,6 +47,14 @@ async function startServer() {
   });
 
   // API routes
+  app.get("/api/claim-test", async (req, res) => {
+    const { getGridRooms } = await import("./src/server/gridState.js");
+    const gridRooms = getGridRooms();
+    if (!gridRooms["mini"]) gridRooms["mini"] = { claimedSlots: {}, roundId: 1, history: [] };
+    gridRooms["mini"].claimedSlots[5] = { userId: "test" };
+    res.json({ success: true, claimed: Object.keys(gridRooms["mini"].claimedSlots) });
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
