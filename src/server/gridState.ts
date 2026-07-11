@@ -29,8 +29,8 @@ Object.keys(defaultRooms).forEach(key => {
 /**
  * Returns an array of available slot numbers (1 to maxSlots) that are not yet claimed.
  */
-export function getRemainingSlots(roomName: string, maxSlots: number): number[] {
-  const room = gridRooms[roomName];
+export function getRemainingSlots(roomName: string, maxSlots: number, rooms: any): number[] {
+  const room = rooms[roomName];
   if (!room) {
     logBot(`[GridState] getRemainingSlots: Room "${roomName}" not found!`);
     return [];

@@ -3,6 +3,7 @@ import * as path from "path";
 import { getChannelId, postToChannel } from "./telegramBot.js";
 import { logBot } from "./logger.js";
 import { supabase } from "./supabase.js";
+import { gridRooms } from "./gridState.js";
 import { getRemainingSlots } from "./gridState.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
@@ -45,7 +46,8 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 20) roomName = "1-20";
   else if (max === 10) roomName = "1-10";
 
-  const remaining = getRemainingSlots(roomName, max);
+  // Use a fresh reference to gridRooms from globalThis to ensure latest data
+  const remaining = getRemainingSlots(roomName, max, gridRooms);
   logBot(`[generateSlotNumbers] Max=${max} -> Room="${roomName}". Found ${remaining.length} slots.`);
   return remaining;
 }
