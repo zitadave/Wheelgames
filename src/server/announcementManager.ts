@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { postToChannel } from "./telegramBot.js";
+import { getChannelId, postToChannel } from "./telegramBot.js";
 import { logBot } from "./logger.js";
 import { supabase } from "./supabase.js";
 import { getRemainingSlots } from "./gridState.js";
@@ -45,26 +45,25 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 20) roomName = "1-20";
   else if (max === 10) roomName = "1-10";
 
-  logBot(`[generateSlotNumbers] Mapping max=${max} to roomName="${roomName}"`);
-
-  try {
-    const remaining = getRemainingSlots(roomName, max);
-    logBot(`[generateSlotNumbers] Room=${roomName}, Max=${max}, Found=${remaining.length} remaining slots.`);
-    return remaining;
-  } catch (err: any) {
-    logBot(`[generateSlotNumbers] ERROR for ${roomName}: ${err.message}`);
-    return [];
-  }
+  const remaining = getRemainingSlots(roomName, max);
+  logBot(`[generateSlotNumbers] Max=${max} -> Room="${roomName}". Found ${remaining.length} slots.`);
+  return remaining;
 }
 
 export function formatEmojiNumbers(nums: number[]): string {
   if (!nums || nums.length === 0) return "<i>None available</i>";
+  
   const emojiMap: { [key: string]: string } = {
     '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
     '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
   };
-  // Using comma for readability as per user example
-  return nums.map(n => n.toString().split('').map(digit => emojiMap[digit] || digit).join('')).join(', ');
+
+  const formatted = nums.map(n => {
+    return n.toString().split('').map(digit => emojiMap[digit] || digit).join('');
+  }).join(' ');
+
+  logBot(`[FormatEmoji] Formatted ${nums.length} numbers: ${formatted.substring(0, 50)}...`);
+  return formatted;
 }
 
 export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
@@ -199,13 +198,13 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
   }
 
   if (ann.type === "vip_slots_100") {
-    return text.replace("{slots}", slotsInfo.grand);
+    return text.replace("{slots}", slotsInfo.grand) + `\n\n(Debug: PID ${process.pid})`;
   }
   if (ann.type === "vip_slots_50") {
-    return text.replace("{slots}", slotsInfo.mini);
+    return text.replace("{slots}", slotsInfo.mini) + `\n\n(Debug: PID ${process.pid})`;
   }
   if (ann.type === "vip_slots_20") {
-    return text.replace("{slots}", slotsInfo.fast);
+    return text.replace("{slots}", slotsInfo.fast) + `\n\n(Debug: PID ${process.pid})`;
   }
 
   return text;
@@ -233,6 +232,8 @@ export async function processAnnouncements(bot: any) {
         mini: formatEmojiNumbers(generateSlotNumbers(50)),
         fast: formatEmojiNumbers(generateSlotNumbers(20))
       };
+      
+      logBot(`[ProcessAnnouncements] Generated slotsInfo for ${ann.id}: Grand=${slotsInfo.grand.substring(0, 50)}..., Mini=${slotsInfo.mini.substring(0, 50)}..., Fast=${slotsInfo.fast.substring(0, 50)}...`);
 
       messageText = processAnnouncementText(ann, slotsInfo);
 
@@ -290,13 +291,13 @@ export async function processAnnouncements(bot: any) {
       }
 
       try {
-        const channelId = process.env.CHANNEL_ID;
-        if (!channelId || channelId.trim() === "") {
-          logBot(`[Scheduler] ⚠️ Skipping announcement ${ann.id}: CHANNEL_ID is empty or not set in Environment Secrets.`);
+        const channelId = getChannelId();
+        if (!channelId) {
+          logBot(`[Scheduler] ⚠️ Skipping announcement ${ann.id}: CHANNEL_ID is not set in Environment Secrets.`);
           continue;
         }
 
-        logBot(`[Scheduler] Sending announcement ${ann.id} to channelId: "${channelId}" (Type: ${typeof channelId}, Length: ${channelId.length})`);
+        logBot(`[Scheduler] Sending announcement ${ann.id} to channelId: "${channelId}"`);
 
         if (photo) {
           await downloadAndSendPhoto(bot, channelId, photo, {

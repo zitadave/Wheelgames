@@ -988,6 +988,7 @@ export function initGameEngine(io: Server) {
            io.to(`user_${data.userId}`).emit("syncBalance", res.newBalance);
 
            room.claimedSlots[data.num] = { isSelf: false, userId: data.userId, username: data.username, photoUrl: data.photoUrl };
+           logBot(`[GameEngine] Slot #${data.num} claimed in ${data.room} by ${data.username} (${data.userId}). Total claimed: ${Object.keys(room.claimedSlots).length}`);
            
            const maxSlots = data.room === '1-10' ? 10 : data.room === '1-20' ? 20 : data.room === 'mini' ? 50 : 100;
            if (Object.keys(room.claimedSlots).length === maxSlots) {

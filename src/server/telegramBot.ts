@@ -10,9 +10,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { handleSupportChat } from "./aiSupport.js";
 
-let botInfo: any = (global as any).telegramBotInfo || null;
-let botInstance: any = (global as any).telegramBotInstance && (global as any).telegramBotInstance !== "initializing" ? (global as any).telegramBotInstance : null;
+let botInfo: any = (globalThis as any).telegramBotInfo || null;
+let botInstance: any = (globalThis as any).telegramBotInstance && (globalThis as any).telegramBotInstance !== "initializing" ? (globalThis as any).telegramBotInstance : null;
 let globalAppUrl = "https://wheelgames1.onrender.com";
+
+export function getChannelId() {
+  const id = process.env.CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
+  return id && id.trim() !== "" ? id.trim() : null;
+}
 
 // logBot and getBotLogs moved to logger.ts to break circular dependencies
 
@@ -40,7 +45,7 @@ async function downloadTelegramPhotoLocally(fileId: string, annId: string): Prom
 }
 
 export async function postToChannel(message: string, options?: any) {
-  const channelId = process.env.CHANNEL_ID;
+  const channelId = getChannelId();
   if (!channelId || !botInstance) {
     console.warn("CHANNEL_ID or Bot Instance not found. Cannot post to channel.");
     return;
@@ -2134,6 +2139,54 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const customCmd = promptsConfig.custom_commands?.[cmdName];
 
       // Built-in system commands
+      if (cmdName === "testclaim") {
+        if (!isStartingAdmin(userIdNum)) return;
+        const { gridRooms } = await import("./gridState.js");
+        const roomName = commandParts[1] || "mini";
+        const slotNum = parseInt(commandParts[2] || "1", 10);
+        const room = gridRooms[roomName];
+        if (room) {
+          room.claimedSlots[slotNum] = { isSelf: false, userId: "test", username: "Tester" };
+          await bot.sendMessage(chatId, `✅ Manually claimed slot #${slotNum} in ${roomName} for testing.`);
+        } else {
+          await bot.sendMessage(chatId, `❌ Room ${roomName} not found.`);
+        }
+        return;
+      }
+
+      if (cmdName === "gridstate") {
+        if (!isStartingAdmin(userIdNum)) return;
+        const { gridRooms } = await import("./gridState.js");
+        let status = "🎲 <b>Grid Rooms State:</b>\n\n";
+        for (const [name, room] of Object.entries(gridRooms)) {
+          const claimedCount = Object.keys(room.claimedSlots || {}).length;
+          status += `▫️ <b>${name}</b>: ${claimedCount} slots claimed (Round: ${room.roundId})\n`;
+        }
+        await bot.sendMessage(chatId, status, { parse_mode: "HTML" });
+        return;
+      }
+
+      if (cmdName === "envcheck") {
+        if (!isStartingAdmin(userIdNum)) return;
+        const channelId = getChannelId();
+        let status = "❌ <b>CHANNEL_ID Not Found</b>";
+        if (channelId) {
+          const masked = channelId.length > 6 
+            ? `${channelId.substring(0, 4)}...${channelId.substring(channelId.length - 2)}`
+            : "***";
+          status = `✅ <b>CHANNEL_ID Found:</b> <code>${masked}</code> (Length: ${channelId.length})`;
+        }
+        const allKeys = Object.keys(process.env).filter(k => k.includes("ID") || k.includes("BOT") || k.includes("CHAN")).join(", ");
+        await bot.sendMessage(chatId, 
+          `🛠️ <b>Environment Check:</b>\n\n` +
+          `${status}\n\n` +
+          `<b>Available related keys:</b>\n<code>${allKeys || "None"}</code>\n\n` +
+          `<i>If missing, ensure you added it to AI Studio -> Settings -> Secrets.</i>`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
       if (cmdName === "start") {
         const payload = commandParts[1] || "";
         const firstName = msg.from?.first_name || "Player";
@@ -5001,9 +5054,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const annId = data.substring("ann_send_single:".length);
       await bot.answerCallbackQuery(query.id, { text: "⏳ Sending announcement..." });
       
-      const channelId = process.env.CHANNEL_ID;
+      const channelId = getChannelId();
       if (!channelId) {
-        logBot("[Bot] ann_send_single: CHANNEL_ID is not set.");
+        logBot("[Bot] ann_send_single: CHANNEL_ID is not set in process.env.");
         await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
         return;
       }
@@ -7649,7 +7702,6 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   // Start automated campaign background scheduler
   startAutoCampaignScheduler(bot);
-  startAnnouncementScheduler(bot);
   
   // Start automated weekly promoter jackpot scheduler
   startAutomatedJackpotScheduler(bot);

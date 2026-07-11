@@ -5,7 +5,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1596838132731-3301c3fd4317?w=800",
     "intervalHours": 3,
-    "lastRunTime": 0,
+    "lastRunTime": 1,
     "enabled": true
   },
   {
@@ -14,7 +14,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=800",
     "intervalHours": 3,
-    "lastRunTime": 0,
+    "lastRunTime": 1,
     "enabled": true
   },
   {
@@ -23,7 +23,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800",
     "intervalHours": 3,
-    "lastRunTime": 0,
+    "lastRunTime": 1,
     "enabled": true
   },
   {
@@ -32,7 +32,7 @@
     "text": "🎉 <b>Special Promotion!</b> 🎉\n\nInvite your friends and earn 20% more commission this week! Share your referral link now.\n\n👇 Play Now!",
     "photoUrl": "https://images.unsplash.com/photo-1557200134-90327ee9fafa?w=800",
     "intervalHours": 48,
-    "lastRunTime": 0,
+    "lastRunTime": 1783751738335,
     "enabled": true
   },
   {
@@ -41,7 +41,7 @@
     "text": "📚 <b>How to Play & Win!</b> 📚\n\n1️⃣ Deposit ETB to your account easily.\n2️⃣ Choose a game: Even/Odd or Jackpot.\n3️⃣ Win and withdraw directly to Telebirr or your bank!\n\n💬 Need help? Contact @scofiled1.",
     "photoUrl": "https://images.unsplash.com/photo-1506880018603-83d5b814b5a6?w=800",
     "intervalHours": 72,
-    "lastRunTime": 0,
+    "lastRunTime": 1783751738335,
     "enabled": true
   }
 ]

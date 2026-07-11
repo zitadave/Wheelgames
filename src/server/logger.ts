@@ -1,4 +1,5 @@
-const botLogs: string[] = (globalThis as any).telegramBotLogs || [];
+const GLOBAL_LOGS_KEY = "__TELEGRAM_BOT_LOGS__";
+const botLogs: string[] = (globalThis as any)[GLOBAL_LOGS_KEY] || [];
 
 export function logBot(msg: string) {
   const timestamp = new Date().toISOString();
@@ -8,7 +9,7 @@ export function logBot(msg: string) {
   if (botLogs.length > 200) {
     botLogs.shift();
   }
-  (globalThis as any).telegramBotLogs = botLogs;
+  (globalThis as any)[GLOBAL_LOGS_KEY] = botLogs;
 }
 
 export function getBotLogs() {
