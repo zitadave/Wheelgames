@@ -59,6 +59,7 @@ export async function getRemainingSlots(roomName: string, maxSlots: number, room
         .eq('room_id', roomName)
         .eq('round_number', room.roundId)
         .maybeSingle();
+      
       if (roundError) {
         logBot(`[GridState] Error finding round: ${JSON.stringify(roundError)}`);
       }
@@ -90,26 +91,23 @@ export async function getRemainingSlots(roomName: string, maxSlots: number, room
       
       if (error) logBot(`[GridState] Supabase error: ${error.message}`);
     
-  if (bets && bets.length > 0) {
-      logBot(`[GridState] getRemainingSlots for ${roomName}: processing ${bets.length} bets.`);
-      logBot(`[GridState] getRemainingSlots for ${roomName}: All bets: ${JSON.stringify(bets)}`);
-      
-      const filteredBets = bets?.filter(b => {
-          const roomId = (b.rounds as any)?.room_id;
-          logBot(`[GridState] Bet: side=${b.side}, rounds_room_id=${roomId}, roomName=${roomName}`);
-          return roomId === roomName;
-      });
-      logBot(`[GridState] getRemainingSlots for ${roomName}: found ${filteredBets?.length || 0} bets after filtering by room_id ${roomName}.`);
-      
-      filteredBets?.forEach(b => {
-          const slotNum = parseInt(b.side, 10);
-          if (!isNaN(slotNum)) claimedIndices.add(slotNum);
-      });
-      
-      logBot(`[GridState] getRemainingSlots for ${roomName}: found ${claimedIndices.size} total claimed slots after Supabase.`);
-  } else {
-      logBot(`[GridState] getRemainingSlots for ${roomName}: No bets found in Supabase for round ${currentRoundUuid}.`);
-  }
+      if (bets && bets.length > 0) {
+          logBot(`[GridState] getRemainingSlots for ${roomName}: processing ${bets.length} bets.`);
+          
+          const filteredBets = bets?.filter(b => {
+              const roomId = (b.rounds as any)?.room_id;
+              return roomId === roomName || !roomId; // Fallback if rounds join fails
+          });
+          
+          filteredBets?.forEach(b => {
+              const slotNum = parseInt(b.side, 10);
+              if (!isNaN(slotNum)) claimedIndices.add(slotNum);
+          });
+          
+          logBot(`[GridState] getRemainingSlots for ${roomName}: found ${claimedIndices.size} total claimed slots after Supabase.`);
+      } else {
+          logBot(`[GridState] getRemainingSlots for ${roomName}: No bets found in Supabase for round ${currentRoundUuid}.`);
+      }
   }
 
   const remaining: number[] = [];

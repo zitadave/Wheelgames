@@ -335,9 +335,15 @@ export async function processAnnouncements(bot: any) {
 
 export function startAnnouncementScheduler(bot: any) {
   logBot("🤖 Announcement Scheduler started!");
-  logBot("[Scheduler] Initial processAnnouncements call");
+  
+  if (process.env.NODE_ENV === "production") {
+    logBot("[Scheduler] Initial processAnnouncements call");
+    processAnnouncements(bot);
+  } else {
+    logBot("[Scheduler] Skipping initial processAnnouncements call in development to prevent channel spam");
+  }
+
   // Check every 5 minutes
-  processAnnouncements(bot);
   setInterval(() => {
     processAnnouncements(bot);
   }, 5 * 60 * 1000);
