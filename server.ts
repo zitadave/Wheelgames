@@ -160,10 +160,6 @@ async function startServer() {
   // Serve uploaded announcement photos statically
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  app.get("/api/bot-logs", (req, res) => {
-    res.json(getBotLogs());
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

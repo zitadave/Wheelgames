@@ -360,7 +360,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
              }
           })
           .catch(err => {
-             console.warn("Failed to generate secure share token gracefully:", err);
+             // Suppressed warning
           });
         }
       } else {

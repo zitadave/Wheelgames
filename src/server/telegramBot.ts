@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { fetchLeaderboardData, getStartOfWeekUTC } from "./leaderboardHelper.js";
 import { logBot, getBotLogs } from "./logger.js";
 import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto, processAnnouncementText } from "./announcementManager.js";
+import { txManager } from "./transactionManager.js";
 import * as fs from "fs";
 import * as path from "path";
 import { handleSupportChat } from "./aiSupport.js";
@@ -90,6 +91,9 @@ interface UserState {
 const userStates = new Map<string, UserState>();
 const userLanguages = new Map<number, string>();
 const registeredUsersCache = new Set<string>();
+
+// Simple balance cache to speed up lookups (valid for 30 seconds)
+const userBalanceCache = new Map<string, { balance: number; timestamp: number }>();
 
 let startDepositFlowRef: ((chatId: number, userId: string) => void) | null = null;
 let startWithdrawalFlowRef: ((chatId: number, userId: string) => Promise<void>) | null = null;
@@ -390,33 +394,47 @@ let promptsConfig: PromptsConfig = { ...DEFAULT_PROMPTS_CONFIG };
 function loadPromptsConfig(): PromptsConfig {
   try {
     if (fs.existsSync(PROMPTS_CONFIG_FILE_PATH)) {
-      const data = JSON.parse(fs.readFileSync(PROMPTS_CONFIG_FILE_PATH, "utf8"));
-      return {
-        ...DEFAULT_PROMPTS_CONFIG,
-        ...data,
-        banks: {
-          ...DEFAULT_PROMPTS_CONFIG.banks,
-          ...(data.banks || {})
-        },
-        custom_commands: {
-          ...DEFAULT_PROMPTS_CONFIG.custom_commands,
-          ...(data.custom_commands || {})
+      const fileData = fs.readFileSync(PROMPTS_CONFIG_FILE_PATH, "utf8");
+      const data = JSON.parse(fileData);
+      
+      // Start with a clean deep clone of the hardcoded defaults
+      const config: PromptsConfig = JSON.parse(JSON.stringify(DEFAULT_PROMPTS_CONFIG));
+      
+      // Explicitly overwrite properties from file data
+      Object.keys(data).forEach(key => {
+        if (['banks', 'custom_commands', 'welcome_buttons', 'referral_buttons'].includes(key)) {
+          // Complex objects/arrays must be completely replaced to allow deletion to persist
+          (config as any)[key] = JSON.parse(JSON.stringify(data[key]));
+        } else {
+          // Primitive types
+          (config as any)[key] = data[key];
         }
-      };
+      });
+      
+      logBot(`[CONFIG] Loaded from disk. Active Payment Gateways: ${Object.keys(config.banks).join(", ")}`);
+      return config;
     }
   } catch (err: any) {
-    logBot(`Error reading prompts config file: ${err.message}`);
+    logBot(`[CONFIG] Warning: Failed to load config from disk (${err.message}). Using defaults.`);
   }
-  return { ...DEFAULT_PROMPTS_CONFIG };
+  return JSON.parse(JSON.stringify(DEFAULT_PROMPTS_CONFIG));
 }
 
 function savePromptsConfig(config: PromptsConfig) {
   try {
-    fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, JSON.stringify(config, null, 2), "utf8");
-    promptsConfig = config;
-    logBot("Prompts configuration saved successfully.");
+    // 1. Create a snapshot to ensure we're saving exactly what was requested
+    const dataToSave = JSON.parse(JSON.stringify(config));
+    const jsonStr = JSON.stringify(dataToSave, null, 2);
+    
+    // 2. Synchronous write to ensure completion
+    fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, jsonStr, "utf8");
+    
+    // 3. Update the global runtime variable with the snapshot
+    promptsConfig = dataToSave;
+    
+    logBot(`[CONFIG] Saved to disk. Current Gateways: ${Object.keys(config.banks).join(", ")}`);
   } catch (err: any) {
-    logBot(`Error writing prompts config file: ${err.message}`);
+    logBot(`[CONFIG] CRITICAL ERROR: Could not save configuration to disk! ${err.message}`);
   }
 }
 
@@ -442,6 +460,49 @@ const processedCallbacks = new Set<string>();
 
 const pendingRequests = new Map<string, PendingRequest>();
 
+async function savePendingRequestsToDB() {
+  try {
+    const list = Array.from(pendingRequests.values());
+    const jsonStr = JSON.stringify(list);
+    await supabase
+      .from('bot_config')
+      .upsert({
+        key: 'pending_transaction_requests',
+        value: jsonStr,
+        updated_at: new Date().toISOString()
+      });
+    logBot(`[DB Sync] Saved ${list.length} pending requests to database.`);
+  } catch (err: any) {
+    logBot(`Failed to save pending requests to DB: ${err.message}`);
+  }
+}
+
+async function loadPendingRequestsFromDB() {
+  try {
+    const { data, error } = await supabase
+      .from('bot_config')
+      .select('value')
+      .eq('key', 'pending_transaction_requests')
+      .maybeSingle();
+
+    if (error) {
+      logBot(`Error loading pending requests from DB: ${error.message}`);
+      return;
+    }
+
+    if (data?.value) {
+      const parsed = JSON.parse(data.value) as PendingRequest[];
+      pendingRequests.clear();
+      for (const req of parsed) {
+        pendingRequests.set(req.id, req);
+      }
+      logBot(`[DB Sync] Loaded ${pendingRequests.size} pending requests from database.`);
+    }
+  } catch (err: any) {
+    logBot(`Failed to load pending requests from DB: ${err.message}`);
+  }
+}
+
 // Dynamic Owner configurations to prevent Access Denied for testers
 const OWNER_IDS = new Set<number>([336997351]);
 
@@ -464,8 +525,16 @@ function getPrimaryOwnerId(): number {
   return 336997351; // Fallback
 }
 
+function isAnyAdmin(userId: number | string | undefined): boolean {
+  if (!userId) return false;
+  const uid = typeof userId === 'string' ? parseInt(userId, 10) : userId;
+  if (isNaN(uid)) return false;
+  return isStartingAdmin(uid) || isOwner(uid) || adminChatIds.has(uid);
+}
+
 // Admin Chat IDs (Initialized with all owners/starting admins)
 const adminChatIds = new Set<number>(OWNER_IDS);
+adminChatIds.add(getPrimaryOwnerId());
 
 // Initialize Admin IDs from environment variables if present
 const adminEnv = process.env.TELEGRAM_ADMIN_IDS;
@@ -594,10 +663,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   
   const bot = new (TelegramBotClass as any)(token, { 
     polling: {
-      interval: 300,
+      interval: 100, // Faster polling (100ms instead of 300ms) for snappy responses
       autoStart: true,
       params: {
-        timeout: 10
+        timeout: 50 // Longer timeout for long polling (standard practice)
       }
     }
   });
@@ -605,6 +674,43 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   (global as any).telegramBotInstance = bot;
   (global as any).telegramBotInfo = botInfo;
   isBotInitializing = false;
+
+  // Monkey-patch to ignore "message is not modified" errors globally
+  const originalEditMessageText = bot.editMessageText.bind(bot);
+  bot.editMessageText = async (text: any, options: any) => {
+    try {
+      return await originalEditMessageText(text, options);
+    } catch (e: any) {
+      if (e.message && e.message.includes("message is not modified")) {
+        return true;
+      }
+      throw e;
+    }
+  };
+
+  const originalEditMessageReplyMarkup = bot.editMessageReplyMarkup.bind(bot);
+  bot.editMessageReplyMarkup = async (replyMarkup: any, options: any) => {
+    try {
+      return await originalEditMessageReplyMarkup(replyMarkup, options);
+    } catch (e: any) {
+      if (e.message && e.message.includes("message is not modified")) {
+        return true;
+      }
+      throw e;
+    }
+  };
+
+  const originalAnswerCallbackQuery = bot.answerCallbackQuery.bind(bot);
+  bot.answerCallbackQuery = async (callbackQueryId: string, options: any) => {
+    try {
+      return await originalAnswerCallbackQuery(callbackQueryId, options);
+    } catch (e: any) {
+      if (e.message && (e.message.includes("query is too old") || e.message.includes("query_id_invalid"))) {
+        return true;
+      }
+      throw e;
+    }
+  };
 
   bot.on("polling_error", (error: any) => {
     if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
@@ -634,6 +740,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   syncBlockedUsersFromDB().catch(err => {
     logBot(`Error in syncBlockedUsersFromDB background execution: ${err.message || err}`);
+  });
+
+  loadPendingRequestsFromDB().catch(err => {
+    logBot(`Error in loadPendingRequestsFromDB background execution: ${err.message || err}`);
   });
 
   // Periodically sync admins from DB every 10 minutes
@@ -779,6 +889,12 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   const getOrCreateUser = async (userId: string, username: string, firstName?: string, lastName?: string): Promise<{ balance: number } | null> => {
     try {
+      // Check cache first
+      const cached = userBalanceCache.get(userId);
+      if (cached && Date.now() - cached.timestamp < 30000) {
+        return { balance: cached.balance };
+      }
+
       const { data, error } = await supabase.from('users').select('balance').eq('id', userId);
       if (error) {
         logBot(`supabase error fetching user ID=${userId}: ${error.message}`);
@@ -786,7 +902,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
       if (data && data.length > 0) {
         registeredUsersCache.add(userId);
-        return { balance: Number(data[0].balance) };
+        const balance = Number(data[0].balance);
+        userBalanceCache.set(userId, { balance, timestamp: Date.now() });
+        return { balance };
       }
 
       logBot(`User ID=${userId} not found. Creating user in database...`);
@@ -807,7 +925,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return { balance: 0 };
       }
       registeredUsersCache.add(userId);
-      return { balance: insertedData ? Number(insertedData.balance) : 0 };
+      const balance = insertedData ? Number(insertedData.balance) : 0;
+      userBalanceCache.set(userId, { balance, timestamp: Date.now() });
+      return { balance };
     } catch (e: any) {
       logBot(`Unexpected error in getOrCreateUser for ID=${userId}: ${e?.message || e}`);
       return { balance: 0 };
@@ -1561,6 +1681,81 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
   }
 
 
+  function sendBankSettings(chatId: number, bankId: string, messageId?: number) {
+    const bank = promptsConfig.banks[bankId];
+    if (!bank) {
+       logBot(`[WARNING] Attempted to show settings for non-existent bank: ${bankId}`);
+       bot.sendMessage(chatId, `❌ Bank "${bankId}" not found in configuration.`);
+       return;
+    }
+
+    const text = `🏦 <b>Bank Settings: ${bankId}</b>\n\n` +
+      `🏷️ <b>Display Name:</b> <code>${bank.name}</code>\n` +
+      `💳 <b>Account/Phone:</b> <code>${bank.account}</code>\n` +
+      `👤 <b>Owner Name:</b> <code>${bank.owner_name}</code>\n` +
+      `📝 <b>Withdraw Prompt:</b> <code>${bank.withdraw_prompt || "Default"}</code>\n\n` +
+      `Select which property you want to edit:`;
+    
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "🏷️ Edit Display Name", callback_data: `edit_bankval_${bankId}_name` }],
+        [{ text: "💳 Edit Account/Phone", callback_data: `edit_bankval_${bankId}_account` }],
+        [{ text: "👤 Edit Owner Name", callback_data: `edit_bankval_${bankId}_owner_name` }],
+        [{ text: "📝 Edit Withdraw Prompt", callback_data: `edit_bankval_${bankId}_withdraw_prompt` }],
+        [{ text: "🛑 DELETE THIS BANK", callback_data: `delete_bank_confirm_${bankId}` }],
+        [{ text: "🔙 Back to Banks", callback_data: "edit_section_banks" }]
+      ]
+    };
+
+    logBot(`[ADMIN] Showing bank settings for: ${bankId} to Chat: ${chatId}`);
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard }).catch(e => {
+        bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+      });
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
+  function sendManageBanksMenu(chatId: number, messageId?: number) {
+    if (!isAnyAdmin(chatId.toString())) {
+      bot.sendMessage(chatId, "❌ Access Denied.");
+      return;
+    }
+    const bk = promptsConfig.banks || {};
+    const bankIds = Object.keys(bk);
+    const text = `🏦 <b>Bank & Gateway Management</b>\n\n` +
+      `Active Gateways: <b>${bankIds.length}</b>\n\n` +
+      `<i>Changes made here are reflected immediately in player deposit/withdrawal flows.</i>`;
+    
+    const inline_keyboard: any[][] = [];
+
+    // Banks in rows of 2 for better layout
+    for (let i = 0; i < bankIds.length; i += 2) {
+      const row: any[] = [];
+      row.push({ text: `✏️ ${bk[bankIds[i]]?.name || bankIds[i]}`, callback_data: `edit_bank_${bankIds[i]}` });
+      if (i + 1 < bankIds.length) {
+        row.push({ text: `✏️ ${bk[bankIds[i+1]]?.name || bankIds[i+1]}`, callback_data: `edit_bank_${bankIds[i+1]}` });
+      }
+      inline_keyboard.push(row);
+    }
+
+    inline_keyboard.push([{ text: "✨ ADD NEW BANK GATEWAY", callback_data: "add_bank_start" }]);
+    inline_keyboard.push([{ text: "🔄 Force Sync from Disk", callback_data: "reload_config_silent" }]);
+    inline_keyboard.push([{ text: "🔙 Back to Prompts Menu", callback_data: "control_edit" }]);
+
+    const keyboard = { inline_keyboard };
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard }).catch(() => {
+        bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+      });
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
   function sendEditPanelMenu(chatId: number, messageId?: number) {
     const text = "📝 <b>Edit Panel</b>\n\nSelect the flow or section you want to customize below:";
     const keyboard = {
@@ -1584,7 +1779,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "🤝 Referral Prompt", callback_data: "edit_section_referral" }
         ],
         [
-          { text: "🏦 Bank Accounts Detail", callback_data: "edit_section_banks" }
+          { text: "🏦 Manage Banks (Add/Delete)", callback_data: "edit_section_banks" }
         ],
         [
           { text: "✨ Custom Commands Manager", callback_data: "edit_section_custom_commands" }
@@ -2086,13 +2281,17 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
     processedMessages.add(msgKey);
+
+    // Show immediate activity feedback
+    bot.sendChatAction(chatId, 'typing').catch(() => {});
+
     if (processedMessages.size > 1000) {
       const first = processedMessages.values().next().value;
       if (first !== undefined) processedMessages.delete(first);
     }
 
     if (blockedUsersCache.has(userId)) {
-      const isStartingAdm = isStartingAdmin(userIdNum);
+      const isStartingAdm = isAnyAdmin(userIdNum);
       if (!isStartingAdm) {
         await bot.sendMessage(chatId, "ይቅርታ፣ እርስዎ ይህን አገልግሎት እንዳይጠቀሙ ታግደዋል። ተጨማሪ መረጃ ከፈለጉ እባክዎን በቀጥታ @scofiled1 ያነጋግሩ።\n\nSorry, you have been blocked from using this bot. For more info, please contact @scofiled1 directly.");
         return;
@@ -2110,7 +2309,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     // AI Support Logic
     if (supportState?.isSupportAI && text && !text.startsWith("/")) {
       logBot(`AI Support: Processing message from userId=${userId}`);
-      const isAdmin = isStartingAdmin(parseInt(userId, 10));
+      const isAdmin = isAnyAdmin(userId);
       const aiResult = await handleSupportChat(userId, text, supportState.aiHistory, isAdmin);
       
       if (aiResult.escalate) {
@@ -2140,7 +2339,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
       // Built-in system commands
       if (cmdName === "testclaim") {
-        if (!isStartingAdmin(userIdNum)) return;
+        if (!isAnyAdmin(userIdNum)) return;
         const { gridRooms } = await import("./gridState.js");
         const roomName = commandParts[1] || "mini";
         const slotNum = parseInt(commandParts[2] || "1", 10);
@@ -2155,7 +2354,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       if (cmdName === "gridstate") {
-        if (!isStartingAdmin(userIdNum)) return;
+        if (!isAnyAdmin(userIdNum)) return;
         const { gridRooms } = await import("./gridState.js");
         let status = "🎲 <b>Grid Rooms State:</b>\n\n";
         for (const [name, room] of Object.entries(gridRooms)) {
@@ -2167,7 +2366,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       if (cmdName === "envcheck") {
-        if (!isStartingAdmin(userIdNum)) return;
+        if (!isAnyAdmin(userIdNum)) return;
         const channelId = getChannelId();
         let status = "❌ <b>CHANNEL_ID Not Found</b>";
         if (channelId) {
@@ -2213,6 +2412,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               return startWithdrawalFlow(chatId, userId);
             }
             return;
+          } else if (payload === 'play') {
+            return bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: appUrl } }]] } });
           }
 
           let userBalanceStr = "0 ETB";
@@ -2314,7 +2515,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
       if (cmdName === "cancel") {
         userStates.set(userId, { step: 'idle' });
-        if (isStartingAdmin(userIdNum)) {
+        if (isAnyAdmin(userIdNum)) {
           setAdminStates.delete(userIdNum);
           broadcastStates.delete(userIdNum);
         }
@@ -2322,12 +2523,12 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
       if (cmdName === "announcement" || cmdName === "list_of_recent_announcement") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
         await renderAnnouncementCmdPanel(chatId);
         return;
       }
       if (cmdName === "announcement_delete") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
         const id = commandParts[1];
         if (!id) return bot.sendMessage(chatId, "Please specify an ID. Usage: /announcement_delete <id>");
         let anns = loadAnnouncements();
@@ -2342,14 +2543,14 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
       if (cmdName === "broadcast") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
         const composer: BroadcastComposer = { step: 'choose_target', target: 'all', template: 'none' };
         broadcastStates.set(userIdNum, composer);
         await renderBroadcastDashboard(bot, chatId, userIdNum, composer);
         return;
       }
       if (cmdName === "analysis") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
         await bot.sendMessage(chatId, "📊 <b>Select Timeframe:</b>", {
           parse_mode: "HTML",
           reply_markup: {
@@ -2362,23 +2563,28 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
       if (cmdName === "manage_affiliate") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
         await renderManageAffiliate(chatId);
         return;
       }
       if (cmdName === "edit") {
-        if (!isStartingAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
         await sendEditPanelMenu(chatId);
         return;
       }
-      if (cmdName === "setadmin" || cmdName === "control") {
-        if (isStartingAdmin(userIdNum)) {
+      if (cmdName === "setadmin" || cmdName === "control" || cmdName === "reload_config") {
+        if (isAnyAdmin(userId)) {
           if (cmdName === "control") {
              renderMainControlPanel(chatId);
-          } else {
+          } else if (cmdName === "reload_config") {
+             promptsConfig = loadPromptsConfig();
+             await bot.sendMessage(chatId, "✅ <b>Configuration Reloaded!</b>\n\nAll prompts and bank settings have been refreshed from disk.", { parse_mode: "HTML" });
+          } else if (isAnyAdmin(userIdNum)) {
              await renderSetAdminMenu(bot, chatId);
+          } else {
+             await bot.sendMessage(chatId, "❌ <b>Access Denied.</b>\n\nOnly the primary owner can manage administrators.", { parse_mode: "HTML" });
           }
-        } else if (cmdName === "control") {
+        } else if (cmdName === "control" || cmdName === "reload_config") {
            await bot.sendMessage(chatId, `❌ <b>Unknown command.</b>\n\nPlease use /help or /start to see available commands.`, { parse_mode: "HTML" });
            const username = msg.from?.username || msg.from?.first_name || "Unknown User";
            const now = new Date();
@@ -2511,7 +2717,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // Process User Lookup
     if (editState && editState.step === 'waiting_for_lookup_id') {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2534,7 +2740,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // Process AI Instructions Editing
     if (editState && editState.step === 'editing_ai_instructions') {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2583,7 +2789,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 1. Edit custom interval
     if (editState && editState.step === 'waiting_for_ann_interval' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2615,7 +2821,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 2. Edit message text
     if (editState && editState.step === 'waiting_for_ann_text' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2646,7 +2852,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 3. Edit photo URL
     if (editState && editState.step === 'waiting_for_ann_photo' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2692,7 +2898,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 4. Create Step 1: ID
     if (editState && editState.step === 'waiting_for_ann_create_id') {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2726,7 +2932,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 5. Create Step 2: Text
     if (editState && editState.step === 'waiting_for_ann_create_text' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2754,7 +2960,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 6. Create Step 3: Photo
     if (editState && editState.step === 'waiting_for_ann_create_photo' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2797,7 +3003,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 7. Create Step 4: Interval & Save
     if (editState && editState.step === 'waiting_for_ann_create_interval' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2834,8 +3040,38 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
 
+    if (editState && editState.step === 'awaiting_new_bank_id') {
+      if (!numUserId || !isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+      const bankId = text.trim();
+      if (bankId.includes(" ") || bankId.length === 0) {
+        return bot.sendMessage(chatId, "❌ <b>Bank ID must be a single word without spaces.</b> Please try again:", { parse_mode: "HTML" });
+      }
+      if (promptsConfig.banks[bankId]) {
+        return bot.sendMessage(chatId, `❌ <b>Bank ID "${bankId}" already exists.</b> Please choose a unique one:`, { parse_mode: "HTML" });
+      }
+
+      // Initialize new bank
+      promptsConfig.banks[bankId] = {
+        name: `🏦 ${bankId}`,
+        account: "0000000000",
+        owner_name: "Required",
+        withdraw_prompt: ""
+      };
+      savePromptsConfig(promptsConfig);
+      userStates.set(userId, { step: 'idle' });
+
+      await bot.sendMessage(chatId, `✅ <b>New bank "${bankId}" added successfully!</b>\n\nYou can now edit its details.`, { parse_mode: "HTML" });
+      
+      // Show the bank's edit menu
+      sendBankSettings(chatId, bankId);
+      return;
+    }
+
     if (editState && editState.step === 'edit_prompt_value' && editState.editingKey) {
-      if (!numUserId || !isStartingAdmin(numUserId)) {
+      if (!numUserId || !isAnyAdmin(userId)) {
         userStates.set(userId, { step: 'idle' });
         return;
       }
@@ -2880,23 +3116,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           await bot.sendMessage(chatId, `✅ <b>Successfully updated ${bankId} bank property "${prop}"!</b>`, { parse_mode: "HTML" });
           
           // Render bank menu back to admin
-          const bank = promptsConfig.banks[bankId];
-          const editBankText = `🏦 <b>Bank Settings: ${bankId}</b>\n\n` +
-            `🏷️ <b>Display Name:</b> <code>${bank.name}</code>\n` +
-            `💳 <b>Account/Phone:</b> <code>${bank.account}</code>\n` +
-            `👤 <b>Owner Name:</b> <code>${bank.owner_name}</code>\n` +
-            `📝 <b>Withdraw Prompt:</b> <code>${bank.withdraw_prompt || "Default"}</code>\n\n` +
-            `Select which property you want to edit:`;
-          const keyboard = {
-            inline_keyboard: [
-              [{ text: "🏷️ Edit Display Name", callback_data: `edit_bankval_${bankId}_name` }],
-              [{ text: "💳 Edit Account/Phone", callback_data: `edit_bankval_${bankId}_account` }],
-              [{ text: "👤 Edit Owner Name", callback_data: `edit_bankval_${bankId}_owner_name` }],
-              [{ text: "📝 Edit Withdraw Prompt", callback_data: `edit_bankval_${bankId}_withdraw_prompt` }],
-              [{ text: "🔙 Back to Banks", callback_data: "edit_section_banks" }]
-            ]
-          };
-          await bot.sendMessage(chatId, editBankText, { parse_mode: "HTML", reply_markup: keyboard });
+          sendBankSettings(chatId, bankId);
           return;
         } else {
           // Regular prompt key
@@ -2974,7 +3194,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     // Process auto campaign config states
-    if (numUserId && isStartingAdmin(numUserId)) {
+    if (numUserId && isAnyAdmin(userId)) {
       const state = userStates.get(userId);
       if (state && state.step && state.step.startsWith("autocamp_")) {
         if (text === "/cancel") {
@@ -3092,7 +3312,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     // Process admin broadcast interactive states
-    if (numUserId && isStartingAdmin(numUserId)) {
+    if (numUserId && isAnyAdmin(userId)) {
       const bcastState = broadcastStates.get(numUserId);
       if (bcastState) {
         // Step 1: Awaiting text message
@@ -3246,7 +3466,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     // Process setadmin interactive states for the Owner
-    if (isStartingAdmin(numUserId)) {
+    if (isAnyAdmin(userId)) {
       const adminState = setAdminStates.get(numUserId);
       if (adminState && adminState.action !== 'idle') {
         // 1. Awaiting User ID to add
@@ -3399,18 +3619,27 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       });
 
       const bk = promptsConfig.banks;
+      // Dynamically build bank selection keyboard
+      const inline_keyboard: any[][] = [];
+      const bankIds = Object.keys(bk);
+      
+      if (bankIds.length === 0) {
+        logBot(`[WARNING] No banks configured for deposit! User: ${userId}`);
+        return bot.sendMessage(chatId, "⚠️ <b>Currently no payment methods are available.</b>\n\nPlease contact support for manual deposit options.", { parse_mode: "HTML" });
+      }
+
+      for (let i = 0; i < bankIds.length; i += 2) {
+        const row: any[] = [];
+        row.push({ text: bk[bankIds[i]].name || bankIds[i], callback_data: `dep_bank_${bankIds[i]}` });
+        if (i + 1 < bankIds.length) {
+          row.push({ text: bk[bankIds[i + 1]].name || bankIds[i + 1], callback_data: `dep_bank_${bankIds[i + 1]}` });
+        }
+        inline_keyboard.push(row);
+      }
+
       return bot.sendMessage(chatId, "እባክዎት ማስገባት የሚፈልጉበትን ባንክ ይምረጡ።", {
         reply_markup: {
-          inline_keyboard: [
-            [
-              { text: bk["Telebirr"]?.name || "📱 Telebirr", callback_data: `dep_bank_Telebirr` },
-              { text: bk["CBE"]?.name || "🏦 CBE (የኢትዮጵያ ንግድ ባንክ)", callback_data: `dep_bank_CBE` }
-            ],
-            [
-              { text: bk["Abyssinia"]?.name || "🏦 Abyssinia Bank", callback_data: `dep_bank_Abyssinia` },
-              { text: bk["Dashen"]?.name || "🏦 Dashen Bank", callback_data: `dep_bank_Dashen` }
-            ]
-          ]
+          inline_keyboard
         }
       });
     }
@@ -3437,6 +3666,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         receiptText: text,
         chatId
       });
+      savePendingRequestsToDB().catch(e => logBot(`Error saving pending request: ${e.message}`));
 
       // Send Confirmation to User
       bot.sendMessage(chatId, "✅ *Your deposit Request have been sent to admins please wait 1 min.*", { parse_mode: "Markdown" });
@@ -3517,20 +3747,28 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           amount
         });
 
-        // Prompt bank selection
+        // Dynamically build bank selection keyboard
         const bk = promptsConfig.banks;
+        const inline_keyboard: any[][] = [];
+        const bankIds = Object.keys(bk);
+
+        if (bankIds.length === 0) {
+          logBot(`[WARNING] No banks configured for withdrawal! User: ${userId}`);
+          return bot.sendMessage(chatId, "⚠️ <b>Currently no withdrawal methods are available.</b>\n\nPlease contact support.", { parse_mode: "HTML" });
+        }
+
+        for (let i = 0; i < bankIds.length; i += 2) {
+          const row: any[] = [];
+          row.push({ text: bk[bankIds[i]].name || bankIds[i], callback_data: `wd_bank_${bankIds[i]}` });
+          if (i + 1 < bankIds.length) {
+            row.push({ text: bk[bankIds[i + 1]].name || bankIds[i + 1], callback_data: `wd_bank_${bankIds[i + 1]}` });
+          }
+          inline_keyboard.push(row);
+        }
+
         return bot.sendMessage(chatId, "እባክዎን የሚያወጡበትን ባንክ ይምረጡ።", {
           reply_markup: {
-            inline_keyboard: [
-              [
-                { text: bk["Telebirr"]?.name || "📱 Telebirr", callback_data: `wd_bank_Telebirr` },
-                { text: bk["CBE"]?.name || "🏦 CBE (የኢትዮጵያ ንግድ ባንክ)", callback_data: `wd_bank_CBE` }
-              ],
-              [
-                { text: bk["Abyssinia"]?.name || "🏦 Abyssinia Bank", callback_data: `wd_bank_Abyssinia` },
-                { text: bk["Dashen"]?.name || "🏦 Dashen Bank", callback_data: `wd_bank_Dashen` }
-              ]
-            ]
+            inline_keyboard
           }
         });
 
@@ -3540,28 +3778,40 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
     }
 
+// Simple in-memory maps for rate limiting
+const withdrawalCooldowns = new Map<string, number>();
+
     // 4. WITHDRAWAL: ACCOUNT / PHONE ENTRY
     if (state.step === 'withdraw_account') {
+      const lastWithdraw = withdrawalCooldowns.get(userId) || 0;
+      if (Date.now() - lastWithdraw < 10000) {
+        return bot.sendMessage(chatId, "⚠️ *እባክዎን ትንሽ ይጠብቁ!* በየ 10 ሴኮንዱ አንድ ጊዜ ብቻ ማውጣት ይችላሉ።\n\n_(Please wait 10 seconds between requests)_", { parse_mode: "Markdown" });
+      }
+      withdrawalCooldowns.set(userId, Date.now());
+
       const amount = state.amount || 100;
       const bank = state.bank || "Telebirr";
       const username = msg.from?.username || "no_username";
       const fullName = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "Player";
 
       try {
-        // Prevent double spending by deducting balance IMMEDIATELY upon request
-        const user = await getOrCreateUser(userId, msg.from?.username || "", msg.from?.first_name, msg.from?.last_name);
-        const currentBalance = user ? Number(user.balance) : 0;
-
-        if (currentBalance < amount) {
-          userStates.set(userId, { step: 'idle' });
-          return bot.sendMessage(chatId, "❌ *በቂ ባላንስ የለዎትም!* Withdrawal request cancelled.", { parse_mode: "Markdown" });
-        }
-
-        const newBalance = currentBalance - amount;
-        await supabase.from('users').update({ balance: newBalance }).eq('id', userId);
-
         // Generate unique request code
         const requestId = "WD_" + generateRef(8);
+
+        // Prevent double spending by deducting balance IMMEDIATELY upon request using atomic transaction queue
+        const result = await txManager.modifyBalance(
+          userId,
+          -amount,
+          'bet',
+          `Withdrawal Pending (Ref: ${requestId})`
+        );
+
+        if (!result.success) {
+          userStates.set(userId, { step: 'idle' });
+          return bot.sendMessage(chatId, `❌ *ባላንስ መቀነስ አልተቻለም!* ${result.error || "በቂ ባላንስ የለዎትም ወይም ሌላ ስህተት አጋጥሟል።"}`, { parse_mode: "Markdown" });
+        }
+
+        const newBalance = result.newBalance;
 
         pendingRequests.set(requestId, {
           id: requestId,
@@ -3574,6 +3824,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           account: text,
           chatId
         });
+        savePendingRequestsToDB().catch(e => logBot(`Error saving pending request: ${e.message}`));
 
         // Notify User
         const successMsgText = promptsConfig.withdraw_success_msg.replace(/{amount}/g, amount.toLocaleString());
@@ -3628,7 +3879,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 5. WELCOME BUTTON: EDIT LABEL
     if (state.step === 'awaiting_wbtn_label_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const rIndex = state.row;
       const cIndex = state.col;
       if (rIndex !== undefined && cIndex !== undefined && promptsConfig.welcome_buttons?.[rIndex]?.[cIndex]) {
@@ -3661,7 +3912,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 6. WELCOME BUTTON: EDIT URL
     if (state.step === 'awaiting_wbtn_url_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const rIndex = state.row;
       const cIndex = state.col;
       if (rIndex !== undefined && cIndex !== undefined && promptsConfig.welcome_buttons?.[rIndex]?.[cIndex]) {
@@ -3695,7 +3946,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 7. WELCOME BUTTON: ADD LABEL
     if (state.step === 'awaiting_wbtn_add_label') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       userStates.set(userId, {
         step: 'idle',
         new_label: text
@@ -3717,7 +3968,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 8. WELCOME BUTTON: ADD URL
     if (state.step === 'awaiting_wbtn_add_url') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const label = state.new_label || "New Button";
       if (!promptsConfig.welcome_buttons) promptsConfig.welcome_buttons = [];
       promptsConfig.welcome_buttons.push([{ text: label, type: 'url', value: text }]);
@@ -3748,7 +3999,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 9. CUSTOM COMMAND: REGISTER NAME
     if (state.step === 'awaiting_ccmd_name') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const cmdName = text.toLowerCase().replace(/[^a-z0-9]/g, "");
       if (!cmdName) {
         return bot.sendMessage(chatId, "❌ <b>Invalid command name.</b> Please send a single word with lowercase letters/numbers only:");
@@ -3805,7 +4056,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 10. CUSTOM COMMAND: VAL CHANGE
     if (state.step === 'awaiting_ccmd_val_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const cmdName = state.cmd_name;
       const field = state.field;
       if (cmdName && field && promptsConfig.custom_commands?.[cmdName]) {
@@ -3862,7 +4113,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 11. CUSTOM COMMAND BUTTON: EDIT LABEL
     if (state.step === 'awaiting_cc_btn_label_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const cmdName = state.cmd_name;
       const rIndex = state.row;
       const cIndex = state.col;
@@ -3878,7 +4129,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 12. CUSTOM COMMAND BUTTON: ADD LABEL
     if (state.step === 'awaiting_cc_btn_add_label') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const cmdName = state.cmd_name;
       if (cmdName) {
         userStates.set(userId, {
@@ -3904,7 +4155,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 13. CUSTOM COMMAND BUTTON: ADD URL
     if (state.step === 'awaiting_cc_btn_add_url') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const cmdName = state.cmd_name;
       const label = state.new_label || "New Button";
       if (cmdName && promptsConfig.custom_commands?.[cmdName]) {
@@ -3922,7 +4173,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 14. REFERRAL BUTTON: EDIT LABEL
     if (state.step === 'awaiting_refbtn_label_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const rIndex = state.row;
       const cIndex = state.col;
       if (rIndex !== undefined && cIndex !== undefined && promptsConfig.referral_buttons?.[rIndex]?.[cIndex]) {
@@ -3941,7 +4192,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 15. REFERRAL BUTTON: EDIT URL
     if (state.step === 'awaiting_refbtn_url_change') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const rIndex = state.row;
       const cIndex = state.col;
       if (rIndex !== undefined && cIndex !== undefined && promptsConfig.referral_buttons?.[rIndex]?.[cIndex]) {
@@ -3960,7 +4211,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 16. REFERRAL BUTTON: ADD LABEL
     if (state.step === 'awaiting_refbtn_add_label') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       userStates.set(userId, {
         ...state,
         step: 'awaiting_refbtn_add_url',
@@ -3972,7 +4223,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 17. REFERRAL BUTTON: ADD URL
     if (state.step === 'awaiting_refbtn_add_url') {
-      if (!numUserId || !isStartingAdmin(numUserId)) return;
+      if (!numUserId || !isAnyAdmin(userId)) return;
       const label = state.new_label || "New Button";
       if (!promptsConfig.referral_buttons) promptsConfig.referral_buttons = [];
       promptsConfig.referral_buttons.push([{ text: label, type: 'url', value: text }]);
@@ -4160,7 +4411,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (blockedUsersCache.has(userId)) {
-      const isStartingAdm = isStartingAdmin(parseInt(userId, 10));
+      const isStartingAdm = isAnyAdmin(userId);
       if (!isStartingAdm) {
         try {
           await bot.answerCallbackQuery(query.id, { text: "❌ You are blocked from using this bot.", show_alert: true });
@@ -4169,9 +4420,30 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
     }
 
+    // Common Admin check for sensitive data prefixes
+    const adminPrefixes = ['analysis_', 'admin_', 'broadcast_', 'edit_section_', 'edit_bank', 'edit_key_'];
+    const isActuallyAdminAction = adminPrefixes.some(p => data?.startsWith(p));
+    if (isActuallyAdminAction && !isAnyAdmin(userId)) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+      } catch (e) {}
+      return;
+    }
+
+    // Provide immediate "typing..." status for better responsiveness
+    bot.sendChatAction(chatId, 'typing').catch(() => {});
+
     // Answer immediately to stop button spinner for better UX
     try {
-      await bot.answerCallbackQuery(query.id);
+      // Provide immediate "Processing..." toast for sensitive interactions
+      const sensitiveActions = ['withdraw', 'deposit', 'confirm', 'exec', 'save', 'delete', 'update', 'edit', 'analysis', 'broadcast', 'admin'];
+      const isSensitive = sensitiveActions.some(action => data?.toLowerCase().includes(action));
+      
+      if (isSensitive) {
+        await bot.answerCallbackQuery(query.id, { text: "⏳ Processing...", show_alert: false });
+      } else {
+        await bot.answerCallbackQuery(query.id);
+      }
     } catch (err) {
       // Ignore if already answered or expired
     }
@@ -4182,7 +4454,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       logBot(`[Callback Query] data=${data} user=${userId} chat=${chatId}`);
 
     if (data?.startsWith("analysis_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only", show_alert: true });
         return;
       }
@@ -4235,7 +4507,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_setadmin") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only", show_alert: true });
         return;
       }
@@ -4244,7 +4516,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
     if (data === "control_analysis") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only", show_alert: true });
         return;
       }
@@ -4275,7 +4547,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
     if (data === "control_broadcast") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only", show_alert: true });
         return;
       }
@@ -4286,7 +4558,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_autocamp") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4296,7 +4568,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_ai_instructions") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4306,7 +4578,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_ai_edit") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4425,7 +4697,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_toggle") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const config = loadAutoCampaignConfig();
       config.isEnabled = !config.isEnabled;
       saveAutoCampaignConfig(config);
@@ -4435,14 +4707,14 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_prompts_list" || data === "autocamp_edit_msg") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       await renderPromptsListDashboard(chatId, messageId);
       return;
     }
 
     if (data === "autocamp_p_add") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       userStates.set(userId, { step: "autocamp_await_add_prompt" });
       await bot.sendMessage(chatId, "📝 <b>Please type and send your new campaign prompt:</b>\n\n<i>Use placeholders like {name} and {balance}.</i>\n\nType /cancel to abort.", { parse_mode: "HTML" });
@@ -4450,7 +4722,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_p_view_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const pId = data.replace("autocamp_p_view_", "");
       await bot.answerCallbackQuery(query.id);
       await renderPromptDetailsDashboard(chatId, pId, messageId);
@@ -4458,7 +4730,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_p_activate_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const pId = data.replace("autocamp_p_activate_", "");
       const config = loadAutoCampaignConfig();
       config.activePromptId = pId;
@@ -4469,7 +4741,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_p_edit_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const pId = data.replace("autocamp_p_edit_", "");
       await bot.answerCallbackQuery(query.id);
       userStates.set(userId, { step: "autocamp_await_edit_prompt_text", editingPromptId: pId });
@@ -4478,7 +4750,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_p_delete_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const pId = data.replace("autocamp_p_delete_", "");
       const config = loadAutoCampaignConfig();
       const prompts = config.prompts || [];
@@ -4497,7 +4769,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_set_target") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       const keyboard = {
         inline_keyboard: [
@@ -4512,7 +4784,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_target_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const target = data.replace("autocamp_target_", "");
       const config = loadAutoCampaignConfig();
       config.targetCategory = target;
@@ -4523,7 +4795,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_set_days") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       userStates.set(userId, { step: "autocamp_await_days" });
       await bot.sendMessage(chatId, "💤 <b>Type and send the minimum number of inactive days:</b>\n\n<i>Example: type <code>3</code> to target players who haven't visited for 3+ days. (0 for no limit)</i>", { parse_mode: "HTML" });
@@ -4531,7 +4803,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_set_bal") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       const keyboard = {
         inline_keyboard: [
@@ -4546,7 +4818,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data?.startsWith("autocamp_balop_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const op = data.replace("autocamp_balop_", "");
       const config = loadAutoCampaignConfig();
       config.balanceThresholdOperator = op === 'any' ? 'any' : op === 'less' ? 'less_than' : 'greater_than';
@@ -4562,7 +4834,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_set_hours") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       await bot.answerCallbackQuery(query.id);
       userStates.set(userId, { step: "autocamp_await_hours" });
       await bot.sendMessage(chatId, "⏱️ <b>Type and send the send interval frequency in Hours:</b>\n\n<i>Example: type <code>24</code> to check and send campaigns once every day.</i>", { parse_mode: "HTML" });
@@ -4570,7 +4842,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "autocamp_test") {
-      if (!isStartingAdmin(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) return;
       const config = loadAutoCampaignConfig();
       const activePrompt = config.prompts?.find((p: any) => p.id === config.activePromptId) || config.prompts?.[0] || { text: "None configured." };
       try {
@@ -4603,7 +4875,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_edit") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4613,7 +4885,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_commands") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4634,7 +4906,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_deposit") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4647,6 +4919,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           [{ text: "✅ Success Message", callback_data: "edit_key_deposit_success_msg" }],
           [{ text: "🎉 Approved Message", callback_data: "edit_key_deposit_approved_msg" }],
           [{ text: "❌ Declined Message", callback_data: "edit_key_deposit_declined_msg" }],
+          [{ text: "🏦 Manage Banks (Add/Delete)", callback_data: "edit_section_banks" }],
           [{ text: "🔙 Back", callback_data: "control_edit" }]
         ]
       };
@@ -4657,7 +4930,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_withdrawal") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4671,6 +4944,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           [{ text: "✅ Success Message", callback_data: "edit_key_withdraw_success_msg" }],
           [{ text: "🎉 Approved Message", callback_data: "edit_key_withdraw_approved_msg" }],
           [{ text: "❌ Declined Message", callback_data: "edit_key_withdraw_declined_msg" }],
+          [{ text: "🏦 Manage Banks (Add/Delete)", callback_data: "edit_section_banks" }],
           [{ text: "🔙 Back", callback_data: "control_edit" }]
         ]
       };
@@ -4681,30 +4955,17 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_banks") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
       await bot.answerCallbackQuery(query.id);
-      const text = "🏦 <b>Bank Accounts Detail</b>\nSelect which bank's account details/display name you want to edit:";
-      const bk = promptsConfig.banks;
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: bk["Telebirr"]?.name || "📱 Telebirr", callback_data: "edit_bank_Telebirr" }],
-          [{ text: bk["CBE"]?.name || "🏦 CBE", callback_data: "edit_bank_CBE" }],
-          [{ text: bk["Abyssinia"]?.name || "🏦 Abyssinia Bank", callback_data: "edit_bank_Abyssinia" }],
-          [{ text: bk["Dashen"]?.name || "🏦 Dashen Bank", callback_data: "edit_bank_Dashen" }],
-          [{ text: "🔙 Back", callback_data: "control_edit" }]
-        ]
-      };
-      if (messageId) {
-        await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard });
-      }
+      sendManageBanksMenu(chatId, messageId);
       return;
     }
 
     if (data === "edit_section_welcome") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4727,7 +4988,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_welcome_buttons") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4770,7 +5031,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_referral") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4793,7 +5054,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_referral_buttons") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4826,7 +5087,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     
     if (data === "control_announcements") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4836,7 +5097,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
     
     if (data === "control_test_announcement_all") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4854,7 +5115,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_view:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4865,7 +5126,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cmd_ann_toggle:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4884,7 +5145,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cmd_ann_send:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4932,7 +5193,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_toggle:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4951,7 +5212,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_edit_int_sel:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -4986,7 +5247,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_set_int:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5008,7 +5269,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_edit_int_custom:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5021,7 +5282,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_edit_text:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5034,7 +5295,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_edit_photo:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5047,7 +5308,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_send_single:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5127,10 +5388,24 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               `⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
           }
 
+          const botUsername = botInfo?.username || "Wheelgames_bot";
+          const messageOptions = {
+            parse_mode: "HTML" as const,
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "🎮  ቁጥር ለመያዝ ይጫኑኝ  🚀", url: `https://t.me/${botUsername}?start=play` }]
+              ]
+            }
+          };
+
           if (photo) {
-            await downloadAndSendPhoto(bot, channelId, photo, { caption: messageText, parse_mode: "HTML" });
+            await downloadAndSendPhoto(bot, channelId, photo, {
+              caption: messageText,
+              parse_mode: "HTML",
+              reply_markup: messageOptions.reply_markup
+            });
           } else {
-            await bot.sendMessage(channelId, messageText, { parse_mode: "HTML" });
+            await bot.sendMessage(channelId, messageText, messageOptions);
           }
 
           ann.lastRunTime = Date.now();
@@ -5149,7 +5424,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_delete_conf:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5173,7 +5448,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_delete_exec:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5191,7 +5466,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "ann_create_start") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5214,7 +5489,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ann_create_type:")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5227,7 +5502,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_manage_affiliate") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5237,7 +5512,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "affiliate_payout_announce") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5300,7 +5575,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "affiliate_payout_weekly") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5415,7 +5690,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "control_back" || data === "control_panel_back") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5425,7 +5700,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data && data.startsWith("affiliate_review_")) {
-        if (!isStartingAdmin(parseInt(userId, 10))) {
+        if (!isAnyAdmin(userId)) {
             bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
             return;
         }
@@ -5494,7 +5769,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
     
     if (data && data.startsWith("affiliate_approve_")) {
-        if (!isStartingAdmin(parseInt(userId, 10))) return;
+        if (!isAnyAdmin(userId)) return;
         const reqId = data.replace("affiliate_approve_", "");
         const { data: req } = await supabase.from('transactions').select('*').eq('id', reqId).single();
         if (req) {
@@ -5518,7 +5793,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
     
     if (data && data.startsWith("affiliate_reject_")) {
-        if (!isStartingAdmin(parseInt(userId, 10))) return;
+        if (!isAnyAdmin(userId)) return;
         const reqId = data.replace("affiliate_reject_", "");
         const { data: req } = await supabase.from('transactions').select('*').eq('id', reqId).single();
         if (req) {
@@ -5532,7 +5807,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
     
     if (data && data.startsWith("affiliate_ban_")) {
-        if (!isStartingAdmin(parseInt(userId, 10))) return;
+        if (!isAnyAdmin(userId)) return;
         const targetUser = data.replace("affiliate_ban_", "");
         await supabase.from("transactions").insert({
              user_id: targetUser,
@@ -5547,7 +5822,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
          return;
     }
     if (data === "control_links") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5557,7 +5832,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_wbtn_click_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5599,7 +5874,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_wbtn_label_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5620,7 +5895,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_wbtn_dest_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5658,7 +5933,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("set_wbtn_type_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5725,7 +6000,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_wbtn_del_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5754,7 +6029,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_wbtn_add") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5769,7 +6044,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("add_wbtn_type_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5832,7 +6107,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_section_custom_commands") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5873,7 +6148,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "ccmd_create_start") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5888,7 +6163,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ccmd_edit_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5900,7 +6175,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("ccmd_val_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -5976,7 +6251,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cc_btn_click_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6013,7 +6288,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cc_btn_label_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6036,7 +6311,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cc_btn_del_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6062,7 +6337,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cc_btn_add_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6079,7 +6354,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("cc_add_type_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6130,7 +6405,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_refbtn_click_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6167,7 +6442,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_refbtn_label_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6188,7 +6463,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_refbtn_url_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6209,7 +6484,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_refbtn_del_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6237,7 +6512,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data === "edit_refbtn_add") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6251,27 +6526,29 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
 
-    if (data.startsWith("edit_bank_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+    if (data === "add_bank_start") {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
       await bot.answerCallbackQuery(query.id);
-      const bankId = data.replace("edit_bank_", "");
-      const bank: BankConfig = promptsConfig.banks[bankId] || { name: bankId, account: "", owner_name: "", withdraw_prompt: "" };
-      const text = `🏦 <b>Bank Settings: ${bankId}</b>\n\n` +
-        `🏷️ <b>Display Name:</b> <code>${bank.name}</code>\n` +
-        `💳 <b>Account/Phone:</b> <code>${bank.account}</code>\n` +
-        `👤 <b>Owner Name:</b> <code>${bank.owner_name}</code>\n` +
-        `📝 <b>Withdraw Prompt:</b> <code>${bank.withdraw_prompt || "Default"}</code>\n\n` +
-        `Select which property you want to edit:`;
+      userStates.set(userId, { step: 'awaiting_new_bank_id' });
+      await bot.sendMessage(chatId, "✍️ <b>Enter a unique ID for the new bank:</b>\n(e.g., <code>ZemenBank</code> - NO spaces allowed)", { parse_mode: "HTML" });
+      return;
+    }
+
+    if (data.startsWith("delete_bank_confirm_")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      const bankId = data.replace("delete_bank_confirm_", "");
+      const text = `⚠️ <b>Are you sure you want to delete bank: ${bankId}?</b>\n\nThis action cannot be undone. All settings for this bank will be removed.`;
       const keyboard = {
         inline_keyboard: [
-          [{ text: "🏷️ Edit Display Name", callback_data: `edit_bankval_${bankId}_name` }],
-          [{ text: "💳 Edit Account/Phone", callback_data: `edit_bankval_${bankId}_account` }],
-          [{ text: "👤 Edit Owner Name", callback_data: `edit_bankval_${bankId}_owner_name` }],
-          [{ text: "📝 Edit Withdraw Prompt", callback_data: `edit_bankval_${bankId}_withdraw_prompt` }],
-          [{ text: "🔙 Back to Banks", callback_data: "edit_section_banks" }]
+          [{ text: "✅ Yes, Delete", callback_data: `delete_bank_exec_${bankId}` }],
+          [{ text: "❌ No, Cancel", callback_data: `edit_bank_${bankId}` }]
         ]
       };
       if (messageId) {
@@ -6280,8 +6557,39 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
 
+    if (data.startsWith("delete_bank_exec_")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const bankId = data.replace("delete_bank_exec_", "");
+      if (promptsConfig.banks[bankId]) {
+        delete promptsConfig.banks[bankId];
+        savePromptsConfig(promptsConfig);
+        await bot.answerCallbackQuery(query.id, { text: "✅ Bank Deleted Permanently", show_alert: true });
+        
+        // Ensure we show the updated menu
+        sendManageBanksMenu(chatId, messageId);
+      } else {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Bank not found" });
+        sendManageBanksMenu(chatId, messageId);
+      }
+      return;
+    }
+
+    if (data.startsWith("edit_bank_")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      const bankId = data.replace("edit_bank_", "");
+      sendBankSettings(chatId, bankId, messageId);
+      return;
+    }
+
     if (data.startsWith("edit_key_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6338,7 +6646,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     if (data.startsWith("edit_bankval_")) {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
+      if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
@@ -6386,6 +6694,17 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       return;
     }
 
+    if (data === "reload_config_silent") {
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      promptsConfig = loadPromptsConfig();
+      await bot.answerCallbackQuery(query.id, { text: "✅ Configuration Refreshed!" });
+      sendManageBanksMenu(chatId, messageId);
+      return;
+    }
+    
     if (data === "register_start") {
       try {
         await bot.answerCallbackQuery(query.id);
@@ -6417,7 +6736,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (isAdminAction) {
       const clickerId = query.from.id;
-      if (!adminChatIds.has(clickerId) && !isStartingAdmin(clickerId)) {
+      if (!adminChatIds.has(clickerId) && !isAnyAdmin(clickerId)) {
         logBot(`Unauthorized transaction action attempt by clickerId=${clickerId} on ${data}`);
         try {
           await bot.answerCallbackQuery(query.id, { 
@@ -7093,7 +7412,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     // --- SETADMIN CONTROL PANEL CALLBACKS ---
     if (data === "setadmin_cancel") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         setAdminStates.delete(clickerId);
         try {
           await bot.answerCallbackQuery(query.id, { text: "Operation Canceled" });
@@ -7115,7 +7434,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data === "setadmin_add_start") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         setAdminStates.set(clickerId, { action: 'awaiting_add_userid' });
         try {
           await bot.answerCallbackQuery(query.id);
@@ -7142,7 +7461,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data === "setadmin_del_start") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         try {
           await bot.answerCallbackQuery(query.id);
 
@@ -7198,7 +7517,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data === "setadmin_back") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         setAdminStates.delete(clickerId);
         try {
           await bot.answerCallbackQuery(query.id);
@@ -7235,7 +7554,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data === "setadmin_change_pw_start") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         setAdminStates.set(clickerId, { action: 'change_pw_old_auth' });
         try {
           await bot.answerCallbackQuery(query.id);
@@ -7268,7 +7587,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data === "setadmin_forget_pw") {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         try {
           await bot.answerCallbackQuery(query.id, { text: "Retrieving and sending password to @Scofield1621..." });
           const password = getStoredPassword();
@@ -7333,7 +7652,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     if (data.startsWith("setadmin_del_confirm_")) {
       const clickerId = query.from.id;
-      if (isStartingAdmin(clickerId)) {
+      if (isAnyAdmin(clickerId)) {
         const targetIdStr = data.replace("setadmin_del_confirm_", "");
         const targetId = parseInt(targetIdStr, 10);
 
@@ -7411,7 +7730,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       });
 
       const amount = state.amount || 10;
-      const bankConfig = promptsConfig.banks[bank] || DEFAULT_PROMPTS_CONFIG.banks[bank] || { name: bank, account: "N/A", owner_name: "N/A" };
+      const bankConfig = promptsConfig.banks[bank] || { name: bank, account: "N/A", owner_name: "N/A" };
       const supportTxt = promptsConfig.support_text;
 
       const paymentInstructions = `${supportTxt}\n\n` +
@@ -7462,22 +7781,26 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
 
+      // Instant feedback to admin
+      bot.answerCallbackQuery(query.id, { text: "⏳ Processing Deposit Approval..." }).catch(() => {});
+
       try {
-        // Fetch current user balance
-        const { data: user } = await supabase.from('users').select('balance').eq('id', request.userId).single();
-        const currentBalance = user ? Number(user.balance) : 0;
-        const newBalance = currentBalance + request.amount;
+        // Update user balance and insert transaction record atomically through txManager
+        const result = await txManager.modifyBalance(
+          request.userId,
+          request.amount,
+          'reward',
+          `Deposit Approved (Ref: ${requestId})`
+        );
 
-        // Update balance
-        await supabase.from('users').update({ balance: newBalance }).eq('id', request.userId);
+        if (!result.success) {
+          bot.sendMessage(chatId, `❌ Failed to approve deposit for user ${request.userId}: ${result.error || 'Database error'}`);
+          return;
+        }
 
-        // Add transaction ledger entry
-        await supabase.from('transactions').insert({
-          user_id: request.userId,
-          amount: request.amount,
-          type: 'reward',
-          description: `Deposit Approved (Ref: ${requestId})`
-        });
+        const newBalance = result.newBalance;
+        // Invalidate local cache for this user
+        userBalanceCache.delete(request.userId);
 
         // Unique verification Ref
         const refCode = "DEP_" + generateRef(10);
@@ -7492,8 +7815,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         // Update Client App UI Instantly via socket
         io.emit('balanceUpdated', { userId: request.userId, balance: newBalance });
 
-        // Delete from pending store
+        // Delete from pending store and sync
         pendingRequests.delete(requestId);
+        savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         // Update Admin inline message
         const adminUsername = query.from.username || query.from.first_name || "Admin";
@@ -7538,6 +7862,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
         // Delete from pending store
         pendingRequests.delete(requestId);
+        savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         // Acknowledge Admin click
         bot.answerCallbackQuery(query.id, { text: "❌ Deposit Declined" });
@@ -7577,14 +7902,14 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
 
+      // Instant feedback to admin
+      bot.answerCallbackQuery(query.id, { text: "⏳ Processing Withdrawal Approval..." }).catch(() => {});
+
       try {
-        // Funds were already deducted when they submitted. We finalize the withdrawal.
-        await supabase.from('transactions').insert({
-          user_id: request.userId,
-          amount: -request.amount,
-          type: 'bet', // Record as debit transaction
-          description: `Withdrawal Approved (Ref: ${requestId})`
-        });
+        // Funds were already deducted and logged when they submitted.
+        // Invalidate local cache for this user
+        userBalanceCache.delete(request.userId);
+        // We finalize the withdrawal by deleting from pending and notifying.
 
         // Unique Verification Ref
         const refCode = "WD_" + generateRef(10);
@@ -7596,8 +7921,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         await bot.sendMessage(request.chatId, successMsg, { parse_mode: "Markdown" });
         await postToChannel(`📤 <b>New Withdrawal Processed!</b>\n\n👤 <b>User:</b> @${request.username}\n💰 <b>Amount:</b> <code>${request.amount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${refCode}</code>`);
 
-        // Delete from pending store
+        // Delete from pending store and sync
         pendingRequests.delete(requestId);
+        savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         bot.answerCallbackQuery(query.id, { text: "✅ Withdrawal Approved!" });
 
@@ -7637,20 +7963,20 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       try {
-        // Refund back to user's balance because it was deducted upon request
-        const { data: user } = await supabase.from('users').select('balance').eq('id', request.userId).single();
-        const currentBalance = user ? Number(user.balance) : 0;
-        const refundedBalance = currentBalance + request.amount;
+        // Refund back to user's balance because it was deducted upon request using txManager
+        const result = await txManager.modifyBalance(
+          request.userId,
+          request.amount,
+          'reward',
+          `Withdrawal Declined & Refunded (Ref: ${requestId})`
+        );
 
-        await supabase.from('users').update({ balance: refundedBalance }).eq('id', request.userId);
+        if (!result.success) {
+          bot.answerCallbackQuery(query.id, { text: `❌ Refund failed: ${result.error || 'Database error'}` });
+          return;
+        }
 
-        // Record a Refund ledger entry
-        await supabase.from('transactions').insert({
-          user_id: request.userId,
-          amount: request.amount,
-          type: 'reward',
-          description: `Withdrawal Declined & Refunded (Ref: ${requestId})`
-        });
+        const refundedBalance = result.newBalance;
 
         // Send detailed Decline & Refund message to user
         const declineMsg = promptsConfig.withdraw_declined_msg
@@ -7661,8 +7987,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         // Update Client App UI instantly via socket
         io.emit('balanceUpdated', { userId: request.userId, balance: refundedBalance });
 
-        // Delete from pending store
+        // Delete from pending store and sync
         pendingRequests.delete(requestId);
+        savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         bot.answerCallbackQuery(query.id, { text: "❌ Withdrawal Declined" });
 

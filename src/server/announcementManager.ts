@@ -1,9 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import { logBot } from "./logger.js";
-import { getChannelId, postToChannel } from "./telegramBot.js";
+import { getChannelId, postToChannel, getBotUsername } from "./telegramBot.js";
 import { supabase } from "./supabase.js";
-import { getRemainingSlots, getGridRooms } from "./gridState.js";
+import { getRemainingSlots, getGridRooms, syncFromSupabase } from "./gridState.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
@@ -40,7 +40,10 @@ export function saveAnnouncements(announcements: Announcement[]) {
 
 export async function generateSlotNumbers(max: number): Promise<number[]> {
   logBot(`[generateSlotNumbers] CALLED: max=${max}`);
-  console.log(`[TEST] generateSlotNumbers CALLED: max=${max}`);
+  
+  // Ensure the latest grid state is pulled from Supabase before formatting remaining numbers list
+  await syncFromSupabase();
+
   let roomName = "mini";
   if (max === 100) roomName = "grand";
   else if (max === 50) roomName = "mini";
@@ -72,7 +75,7 @@ export function formatEmojiNumbers(nums: number[] | undefined | null, maxSlots: 
 
   const formatted = nums
     .map(n => n.toString().split('').map(digit => emojiMap[digit] || digit).join(''))
-    .join(' ');
+    .join(', ');
 
   logBot(`[FormatEmoji] Formatted ${nums.length} numbers to emojis.`);
   return formatted;
@@ -312,10 +315,11 @@ export async function processAnnouncements(bot: any) {
 
         logBot(`[Scheduler] Sending announcement ${ann.id} to channelId: "${channelId}"`);
 
+        const botUsername = getBotUsername() || "Wheelgames_bot";
         const messageOptions: any = { parse_mode: "HTML" };
         messageOptions.reply_markup = {
           inline_keyboard: [
-            [{ text: "🎮 Play Game Hub 🚀", url: "https://t.me/Wheelgames_bot/app" }]
+            [{ text: "🎮  ቁጥር ለመያዝ ይጫኑኝ  🚀", url: `https://t.me/${botUsername}?start=play` }]
           ]
         };
 

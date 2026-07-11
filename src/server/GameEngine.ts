@@ -2,7 +2,7 @@ import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { logBot } from "./logger.js";
-import { gridRooms, saveGridState } from "./gridState.js";
+import { gridRooms, saveGridState, syncFromSupabase } from "./gridState.js";
 
 export type Side = "even" | "odd";
 
@@ -882,6 +882,7 @@ export function initGameEngine(io: Server) {
 
     socket.on("grid_join", async (roomName: string) => {
       socket.join(roomName);
+      await syncFromSupabase();
       if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
       socket.emit("grid_state", gridRooms[roomName]);
     });
@@ -969,6 +970,7 @@ export function initGameEngine(io: Server) {
 
     socket.on("grid_claimSlot", async (data: { room: string, num: number, userId: string, username: string, photoUrl?: string }, callback) => {
       try {
+        await syncFromSupabase();
         const room = gridRooms[data.room];
         const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
         const { supabase } = await import("./supabase.js");
@@ -1007,6 +1009,7 @@ export function initGameEngine(io: Server) {
     });
 
     socket.on("grid_releaseSlot", async (data: { room: string, num: number, userId: string }, callback) => {
+      await syncFromSupabase();
       const room = gridRooms[data.room];
       const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
 
@@ -1033,6 +1036,7 @@ export function initGameEngine(io: Server) {
     });
 
     socket.on("grid_nextRound", async (roomName: string) => {
+       await syncFromSupabase();
        const room = gridRooms[roomName];
        if (room) {
           room.claimedSlots = {};

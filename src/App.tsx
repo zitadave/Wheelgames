@@ -158,7 +158,7 @@ export default function App() {
         // This helps prevent background scrolling and unexpected movement
         webApp.disableVerticalSwipes?.();
       } catch (e) {
-        console.warn("disableVerticalSwipes not supported", e);
+        // Suppressed in iframe preview
       }
     }
   }, []);
@@ -210,7 +210,7 @@ export default function App() {
       try {
         (window.Telegram.WebApp as any).setHeaderColor(isDarkMode ? '#111827' : '#ffffff');
       } catch (e) {
-        console.warn("setHeaderColor not supported", e);
+        // Suppressed in iframe preview
       }
     }
   }, [isDarkMode]);
@@ -298,9 +298,7 @@ export default function App() {
         if (data && data.username) setBotUsername(data.username);
       })
       .catch(err => {
-        if (err.name !== 'AbortError') {
-          console.warn("Failed to fetch bot-info gracefully:", err.message);
-        }
+        // Suppress bot-info fetch warning
       });
       
     return () => clearTimeout(timeoutId);
@@ -436,7 +434,7 @@ export default function App() {
     setSocket(newSocket);
 
     newSocket.on('connect_error', (err) => {
-      console.warn("Socket connection error, falling back to polling if available:", err.message);
+      // Suppress socket connection error warnings in console/iframe
     });
 
     newSocket.on('roomsStatus', (status) => setRoomsStatus(status));

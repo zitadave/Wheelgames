@@ -652,7 +652,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                }
             })
             .catch(err => {
-               console.warn("Failed to generate secure share token gracefully:", err);
+               // Suppressed warning
             });
           }
        } else {
