@@ -12,7 +12,7 @@ import { handleSupportChat } from "./aiSupport.js";
 
 let botInfo: any = (globalThis as any).telegramBotInfo || null;
 let botInstance: any = (globalThis as any).telegramBotInstance && (globalThis as any).telegramBotInstance !== "initializing" ? (globalThis as any).telegramBotInstance : null;
-let globalAppUrl = "https://wheelgames1.onrender.com";
+let globalAppUrl = process.env.APP_URL || "https://wheelgames1.onrender.com";
 
 export function getChannelId() {
   const id = process.env.CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
@@ -690,7 +690,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         }
 
         // 4. Set Channel Title & Description (if CHANNEL_ID is configured and bot is admin)
-        const channelId = process.env.CHANNEL_ID;
+        const channelId = getChannelId();
         if (channelId) {
           try {
             await bot.setChatTitle(channelId, "ዲጂታል ዕጣ | Digital Eta - Official Channel");
@@ -4891,7 +4891,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const annId = data.substring("cmd_ann_send:".length);
       await bot.answerCallbackQuery(query.id, { text: "⏳ Sending announcement..." });
       
-      const channelId = process.env.CHANNEL_ID;
+      const channelId = getChannelId();
       if (!channelId) {
         await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
         return;
@@ -4902,9 +4902,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       if (ann) {
         try {
           const slotsInfo = {
-            grand: formatEmojiNumbers(await generateSlotNumbers(100)),
-            mini: formatEmojiNumbers(await generateSlotNumbers(50)),
-            fast: formatEmojiNumbers(await generateSlotNumbers(20))
+            grand: formatEmojiNumbers(await generateSlotNumbers(100), 100),
+            mini: formatEmojiNumbers(await generateSlotNumbers(50), 50),
+            fast: formatEmojiNumbers(await generateSlotNumbers(20), 20)
           };
 
           const messageText = processAnnouncementText(ann, slotsInfo);
@@ -5069,9 +5069,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           let photo = ann.photoUrl;
           
           const slotsInfo = {
-            grand: formatEmojiNumbers(await generateSlotNumbers(100)),
-            mini: formatEmojiNumbers(await generateSlotNumbers(50)),
-            fast: formatEmojiNumbers(await generateSlotNumbers(20))
+            grand: formatEmojiNumbers(await generateSlotNumbers(100), 100),
+            mini: formatEmojiNumbers(await generateSlotNumbers(50), 50),
+            fast: formatEmojiNumbers(await generateSlotNumbers(20), 20)
           };
 
           messageText = processAnnouncementText(ann, slotsInfo);
@@ -5115,9 +5115,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
             photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
           } else if (ann.type === "join_play") {
-            const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100));
-            const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50));
-            const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20));
+            const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);
+            const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50), 50);
+            const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20), 20);
 
             messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
               `⏳ <b>Games available:</b>\n\n` +

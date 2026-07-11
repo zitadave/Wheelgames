@@ -56,31 +56,26 @@ export async function generateSlotNumbers(max: number): Promise<number[]> {
 
 export function formatEmojiNumbers(nums: number[] | undefined | null, maxSlots: number): string {
   if (!nums || !Array.isArray(nums) || nums.length === 0) return "<i>ሁሉም ተይዘዋል (None available)</i>";
-  if (nums.length === maxSlots) return `ሙሉ ${maxSlots} ቁጥሮች ክፍት ናቸው`;
   
-  const ranges: number[][] = [];
-  let currentRange: number[] = [nums[0]];
-  
-  for (let i = 1; i < nums.length; i++) {
-    if (nums[i] === nums[i - 1] + 1) {
-      currentRange.push(nums[i]);
-    } else {
-      ranges.push(currentRange);
-      currentRange = [nums[i]];
-    }
-  }
-  if (currentRange.length > 0) {
-    ranges.push(currentRange);
-  }
+  const emojiMap: Record<string, string> = {
+    "0": "0️⃣",
+    "1": "1️⃣",
+    "2": "2️⃣",
+    "3": "3️⃣",
+    "4": "4️⃣",
+    "5": "5️⃣",
+    "6": "6️⃣",
+    "7": "7️⃣",
+    "8": "8️⃣",
+    "9": "9️⃣"
+  };
 
-  const formatted = ranges.map(r => {
-    if (r.length === 1) return r[0].toString();
-    if (r.length === 2) return `${r[0]}, ${r[1]}`;
-    return `${r[0]}-${r[r.length - 1]}`;
-  }).join(', ');
+  const formatted = nums
+    .map(n => n.toString().split('').map(digit => emojiMap[digit] || digit).join(''))
+    .join(' ');
 
-  logBot(`[FormatEmoji] Formatted ${nums.length} numbers: ${formatted.substring(0, 50)}...`);
-  return `${formatted} (ቀሪ: ${nums.length})`;
+  logBot(`[FormatEmoji] Formatted ${nums.length} numbers to emojis.`);
+  return formatted;
 }
 
 export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
@@ -202,10 +197,10 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
     if (text === "Scheduled Match placeholder" || !text.includes("{slots}")) {
       return `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
         `⏳ <b>Games available:</b>\n\n` +
-        `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.grand}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
-        `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.mini}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
-        `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.fast}\n<i>ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰</i>\n\n` +
-        `🎯 <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
+        `🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.grand} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.mini} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> ${slotsInfo.fast} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n` +
+        `⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>`;
     }
     // Otherwise replace placeholders
     text = text.replace("{slots_grand}", slotsInfo.grand)

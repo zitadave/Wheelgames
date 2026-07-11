@@ -27,9 +27,55 @@ function loadState() {
 
 export function saveGridState() {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify((globalThis as any)[GLOBAL_GRID_KEY] || gridRooms, null, 2));
+    const current = (globalThis as any)[GLOBAL_GRID_KEY] || gridRooms;
+    fs.writeFileSync(STATE_FILE, JSON.stringify(current, null, 2));
+    
+    // Background async sync to Supabase
+    if (supabase) {
+      (async () => {
+        try {
+          const { error } = await supabase
+            .from("bot_config")
+            .upsert({
+              key: "grid_state",
+              value: JSON.stringify(current),
+              updated_at: new Date().toISOString()
+            });
+          if (error) {
+            logBot(`[GridState] Background save to Supabase error: ${error.message}`);
+          } else {
+            logBot(`[GridState] Background save to Supabase succeeded.`);
+          }
+        } catch (err) {
+          logBot(`[GridState] Background save to Supabase exception: ${err}`);
+        }
+      })();
+    }
   } catch (e) {
     logBot(`[GridState] Error saving state file: ${e}`);
+  }
+}
+
+export async function syncFromSupabase() {
+  try {
+    if (!supabase) return;
+    const { data, error } = await supabase
+      .from("bot_config")
+      .select("value")
+      .eq("key", "grid_state")
+      .single();
+    if (data && data.value) {
+      const dbState = JSON.parse(data.value);
+      const current = (globalThis as any)[GLOBAL_GRID_KEY];
+      if (current) {
+        Object.keys(dbState).forEach(key => {
+          current[key] = dbState[key];
+        });
+      }
+      logBot(`[GridState] State loaded from Supabase.`);
+    }
+  } catch (e) {
+    logBot(`[GridState] Error syncing state from Supabase: ${e}`);
   }
 }
 
@@ -37,6 +83,7 @@ if (!(globalThis as any)[GLOBAL_GRID_KEY]) {
   logBot(`[GridState] Initializing global grid rooms state... (PID: ${process.pid})`);
   const saved = loadState();
   (globalThis as any)[GLOBAL_GRID_KEY] = saved || defaultRooms;
+  syncFromSupabase().catch(e => logBot(`[GridState] Initial sync error: ${e}`));
 } else {
   logBot(`[GridState] Re-using existing global grid rooms state. (PID: ${process.pid})`);
 }

@@ -880,7 +880,7 @@ export function initGameEngine(io: Server) {
       socket.emit("roomsStatus", status);
     });
 
-    socket.on("grid_join", (roomName: string) => {
+    socket.on("grid_join", async (roomName: string) => {
       socket.join(roomName);
       if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
       socket.emit("grid_state", gridRooms[roomName]);
@@ -968,11 +968,9 @@ export function initGameEngine(io: Server) {
     });
 
     socket.on("grid_claimSlot", async (data: { room: string, num: number, userId: string, username: string, photoUrl?: string }, callback) => {
-      // Balance and authentication check (unauthenticated or 0.00 ETB balance users cannot claim slots)
-      const room = gridRooms[data.room];
-      const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
-
       try {
+        const room = gridRooms[data.room];
+        const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
         const { supabase } = await import("./supabase.js");
         if (!supabase || !data.userId) {
           if (callback) callback({ success: false, message: "Unauthenticated session." });
@@ -1034,7 +1032,7 @@ export function initGameEngine(io: Server) {
       }
     });
 
-    socket.on("grid_nextRound", (roomName: string) => {
+    socket.on("grid_nextRound", async (roomName: string) => {
        const room = gridRooms[roomName];
        if (room) {
           room.claimedSlots = {};
