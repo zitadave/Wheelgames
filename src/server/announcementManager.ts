@@ -1,10 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getChannelId, postToChannel } from "./telegramBot.js";
 import { logBot } from "./logger.js";
+import { getChannelId, postToChannel } from "./telegramBot.js";
 import { supabase } from "./supabase.js";
-import { gridRooms } from "./gridState.js";
-import { getRemainingSlots } from "./gridState.js";
+import { getRemainingSlots, getGridRooms } from "./gridState.js";
 
 const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
@@ -39,7 +38,9 @@ export function saveAnnouncements(announcements: Announcement[]) {
   }
 }
 
-export function generateSlotNumbers(max: number): number[] {
+export async function generateSlotNumbers(max: number): Promise<number[]> {
+  logBot(`[generateSlotNumbers] CALLED: max=${max}`);
+  console.log(`[TEST] generateSlotNumbers CALLED: max=${max}`);
   let roomName = "mini";
   if (max === 100) roomName = "grand";
   else if (max === 50) roomName = "mini";
@@ -47,22 +48,16 @@ export function generateSlotNumbers(max: number): number[] {
   else if (max === 10) roomName = "1-10";
 
   // Use a fresh reference to gridRooms from globalThis to ensure latest data
-  const remaining = getRemainingSlots(roomName, max, gridRooms);
+  const gridRooms = getGridRooms();
+  const remaining = await getRemainingSlots(roomName, max, gridRooms);
   logBot(`[generateSlotNumbers] Max=${max} -> Room="${roomName}". Found ${remaining.length} slots.`);
   return remaining;
 }
 
-export function formatEmojiNumbers(nums: number[]): string {
-  if (!nums || nums.length === 0) return "<i>None available</i>";
+export function formatEmojiNumbers(nums: number[] | undefined | null): string {
+  if (!nums || !Array.isArray(nums) || nums.length === 0) return "<i>None available</i>";
   
-  const emojiMap: { [key: string]: string } = {
-    '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
-    '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
-  };
-
-  const formatted = nums.map(n => {
-    return n.toString().split('').map(digit => emojiMap[digit] || digit).join('');
-  }).join(' ');
+  const formatted = nums.join(', ');
 
   logBot(`[FormatEmoji] Formatted ${nums.length} numbers: ${formatted.substring(0, 50)}...`);
   return formatted;
@@ -200,12 +195,15 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
   }
 
   if (ann.type === "vip_slots_100") {
+    const gridRooms = getGridRooms();
     return text.replace("{slots}", slotsInfo.grand) + `\n\n(Debug: PID ${process.pid})`;
   }
   if (ann.type === "vip_slots_50") {
+    const gridRooms = getGridRooms();
     return text.replace("{slots}", slotsInfo.mini) + `\n\n(Debug: PID ${process.pid})`;
   }
   if (ann.type === "vip_slots_20") {
+    const gridRooms = getGridRooms();
     return text.replace("{slots}", slotsInfo.fast) + `\n\n(Debug: PID ${process.pid})`;
   }
 
@@ -213,6 +211,7 @@ export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: s
 }
 
 export async function processAnnouncements(bot: any) {
+  logBot(`[ProcessAnnouncements] CALLED`);
   const announcements = loadAnnouncements();
   const now = Date.now();
   let updated = false;
@@ -230,9 +229,9 @@ export async function processAnnouncements(bot: any) {
       let photo = ann.photoUrl;
       
       const slotsInfo = {
-        grand: formatEmojiNumbers(generateSlotNumbers(100)),
-        mini: formatEmojiNumbers(generateSlotNumbers(50)),
-        fast: formatEmojiNumbers(generateSlotNumbers(20))
+        grand: formatEmojiNumbers(await generateSlotNumbers(100)),
+        mini: formatEmojiNumbers(await generateSlotNumbers(50)),
+        fast: formatEmojiNumbers(await generateSlotNumbers(20))
       };
       
       logBot(`[ProcessAnnouncements] Generated slotsInfo for ${ann.id}: Grand=${slotsInfo.grand.substring(0, 50)}..., Mini=${slotsInfo.mini.substring(0, 50)}..., Fast=${slotsInfo.fast.substring(0, 50)}...`);
@@ -278,9 +277,9 @@ export async function processAnnouncements(bot: any) {
           `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
         photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
       } else if (ann.type === "join_play") {
-        const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
-        const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
-        const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
+        const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100));
+        const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50));
+        const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20));
 
         messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
           `⏳ <b>Games available:</b>\n\n` +
@@ -301,13 +300,21 @@ export async function processAnnouncements(bot: any) {
 
         logBot(`[Scheduler] Sending announcement ${ann.id} to channelId: "${channelId}"`);
 
+        const messageOptions: any = { parse_mode: "HTML" };
+        messageOptions.reply_markup = {
+          inline_keyboard: [
+            [{ text: "🎮 Play Game Hub 🚀", web_app: { url: "https://wheelgames1.onrender.com" } }]
+          ]
+        };
+
         if (photo) {
           await downloadAndSendPhoto(bot, channelId, photo, {
             caption: messageText,
-            parse_mode: "HTML"
+            parse_mode: "HTML",
+            reply_markup: messageOptions.reply_markup
           });
         } else {
-          await bot.sendMessage(channelId, messageText, { parse_mode: "HTML" });
+          await bot.sendMessage(channelId, messageText, messageOptions);
         }
         
         ann.lastRunTime = now;
@@ -328,6 +335,7 @@ export async function processAnnouncements(bot: any) {
 
 export function startAnnouncementScheduler(bot: any) {
   logBot("🤖 Announcement Scheduler started!");
+  logBot("[Scheduler] Initial processAnnouncements call");
   // Check every 5 minutes
   processAnnouncements(bot);
   setInterval(() => {

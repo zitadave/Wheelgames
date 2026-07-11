@@ -5,7 +5,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n🔥 <b>ዕድል 100 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1596838132731-3301c3fd4317?w=800",
     "intervalHours": 3,
-    "lastRunTime": 1,
+    "lastRunTime": 0,
     "enabled": true
   },
   {
@@ -14,7 +14,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n💥 <b>ዕድል 50 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=800",
     "intervalHours": 3,
-    "lastRunTime": 1,
+    "lastRunTime": 0,
     "enabled": true
   },
   {
@@ -23,7 +23,7 @@
     "text": "🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n⏳ <b>Games available:</b>\n\n⚡ <b>ፈጣን 20 ሰው ቀሪ ቁጥሮች:</b> {slots} ቶሎ ብለው ቁጥር ሳያልቅ ያዝ ያዝ ያድርጉ እና ያሸንፉ፤ ይደሰቱ 🥰\n\n⚡ <i>Don't miss the next round! Log in to the Mini App and place your bets!</i>",
     "photoUrl": "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800",
     "intervalHours": 3,
-    "lastRunTime": 1,
+    "lastRunTime": 0,
     "enabled": true
   },
   {

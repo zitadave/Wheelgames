@@ -4902,9 +4902,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       if (ann) {
         try {
           const slotsInfo = {
-            grand: formatEmojiNumbers(generateSlotNumbers(100)),
-            mini: formatEmojiNumbers(generateSlotNumbers(50)),
-            fast: formatEmojiNumbers(generateSlotNumbers(20))
+            grand: formatEmojiNumbers(await generateSlotNumbers(100)),
+            mini: formatEmojiNumbers(await generateSlotNumbers(50)),
+            fast: formatEmojiNumbers(await generateSlotNumbers(20))
           };
 
           const messageText = processAnnouncementText(ann, slotsInfo);
@@ -5069,9 +5069,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           let photo = ann.photoUrl;
           
           const slotsInfo = {
-            grand: formatEmojiNumbers(generateSlotNumbers(100)),
-            mini: formatEmojiNumbers(generateSlotNumbers(50)),
-            fast: formatEmojiNumbers(generateSlotNumbers(20))
+            grand: formatEmojiNumbers(await generateSlotNumbers(100)),
+            mini: formatEmojiNumbers(await generateSlotNumbers(50)),
+            fast: formatEmojiNumbers(await generateSlotNumbers(20))
           };
 
           messageText = processAnnouncementText(ann, slotsInfo);
@@ -5115,9 +5115,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
             photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
           } else if (ann.type === "join_play") {
-            const vipGrandSlots = formatEmojiNumbers(generateSlotNumbers(100));
-            const miniVipSlots = formatEmojiNumbers(generateSlotNumbers(50));
-            const fastSlots = formatEmojiNumbers(generateSlotNumbers(20));
+            const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100));
+            const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50));
+            const fastSlots = formatEmojiNumbers(await generateSlotNumbers(20));
 
             messageText = `🎮 <b>Scheduled Match Starting Soon!</b> 🎮\n\n` +
               `⏳ <b>Games available:</b>\n\n` +
