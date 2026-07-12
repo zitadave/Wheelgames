@@ -15,10 +15,7 @@ let botInfo: any = (globalThis as any).telegramBotInfo || null;
 let botInstance: any = (globalThis as any).telegramBotInstance && (globalThis as any).telegramBotInstance !== "initializing" ? (globalThis as any).telegramBotInstance : null;
 let globalAppUrl = process.env.APP_URL || "https://wheelgames1.onrender.com";
 
-export function getChannelId() {
-  const id = process.env.CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
-  return id && id.trim() !== "" ? id.trim() : null;
-}
+// getChannelId relocated below promptsConfig initialization
 
 // logBot and getBotLogs moved to logger.ts to break circular dependencies
 
@@ -232,6 +229,7 @@ interface RegistrationState {
 const pendingRegistrations = new Map<string, RegistrationState>();
 
 const PASSWORD_FILE_PATH = path.join(process.cwd(), "admin_password.json");
+const CHANNEL_ID_FILE_PATH = path.join(process.cwd(), "channel_id.json");
 
 function getStoredPassword(): string {
   try {
@@ -308,6 +306,7 @@ interface PromptsConfig {
   referral_share_text: string;
   referral_share_image?: string;
   referral_buttons: CustomButton[][];
+  channel_id?: string;
   custom_commands?: {
     [cmd: string]: CustomCommand;
   };
@@ -357,6 +356,7 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
   referral_image: "",
   referral_share_text: "Join me on ETB Game Hub and win big!",
   referral_share_image: "",
+  channel_id: "",
   referral_buttons: [
     [
       { text: "📢 Share to Friends", type: "url", value: "https://t.me/share/url?url=https://t.me/{bot_username}?start=ref_{user_id}&text={referral_share_text}" }
@@ -390,6 +390,28 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
 
 const PROMPTS_CONFIG_FILE_PATH = path.join(process.cwd(), "prompts_config.json");
 let promptsConfig: PromptsConfig = { ...DEFAULT_PROMPTS_CONFIG };
+
+export function getChannelId() {
+  // Priority 1: dedicated channel_id.json
+  try {
+    if (fs.existsSync(CHANNEL_ID_FILE_PATH)) {
+      let cid = fs.readFileSync(CHANNEL_ID_FILE_PATH, "utf8").trim();
+      // Remove any surrounding quotes if they exist (sometimes created by echo)
+      cid = cid.replace(/^["']|["']$/g, '');
+      if (cid && cid !== "" && cid !== 'null' && cid !== 'undefined') return cid;
+    }
+  } catch (e) {}
+
+  // Priority 2: promptsConfig (fallback)
+  const configId = promptsConfig?.channel_id;
+  if (configId && configId.trim() !== "") return configId.trim();
+
+  // Priority 3: Environment Variables
+  const envId = process.env.CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
+  if (envId && envId.trim() !== "") return envId.trim();
+  
+  return null;
+}
 
 function loadPromptsConfig(): PromptsConfig {
   try {
@@ -1065,9 +1087,15 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
 
   function renderMainControlPanel(chatId: number, messageId?: number) {
-    const text = "🛠️ <b>Main Control Panel</b>";
+    const channelId = getChannelId() || "⚠️ <b>NOT CONFIGURED</b>";
+    const text = `🛠️ <b>Main Control Panel</b>\n\n` +
+                 `🎯 <b>Target Channel:</b> <code>${channelId}</code>\n` +
+                 `<i>(The bot posts announcements to this channel)</i>`;
     const keyboard = {
       inline_keyboard: [
+        [
+          { text: "🛰️ Configure Channel ID", callback_data: "cmd_ann_set_channel" }
+        ],
         [
           { text: "👑 Set Admin", callback_data: "control_setadmin" },
           { text: "📊 Analysis", callback_data: "control_analysis" }
@@ -1433,6 +1461,11 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "🚀 Send Fast 20", callback_data: `cmd_ann_send:${fast.id}` }
         ]);
       }
+      const currentId = getChannelId() || "<i>Not Set</i>";
+      text += `\n🎯 <b>Target Channel:</b> <code>${currentId}</code>\n` +
+              `<i>(Ensure the bot is an administrator in this channel)</i>`;
+
+      buttons.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }]);
       buttons.push([{ text: "⚙️ Manage Full Announcements Dashboard", callback_data: "control_announcements" }]);
 
       const keyboard = { inline_keyboard: buttons };
@@ -1473,6 +1506,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         rows.push(rowButtons);
       }
 
+      rows.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }]);
       rows.push([{ text: "➕ Create Custom Announcement", callback_data: "ann_create_start" }]);
       rows.push([{ text: "▶️ Force Run All Scheduler Now", callback_data: "control_test_announcement_all" }]);
       rows.push([{ text: "◀️ Back to Control Panel", callback_data: "control_panel_back" }]);
@@ -1538,7 +1572,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             { text: "⚡ Force Send Single", callback_data: `ann_send_single:${ann.id}` },
             { text: "🗑️ Delete", callback_data: `ann_delete_conf:${ann.id}` }
           ],
-          [{ text: "🔙 Back to List", callback_data: "control_announcements" }]
+          [
+            { text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" },
+            { text: "🔙 Back to List", callback_data: "control_announcements" }
+          ]
         ]
       };
 
@@ -2367,22 +2404,29 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
       if (cmdName === "envcheck") {
         if (!isAnyAdmin(userIdNum)) return;
-        const channelId = getChannelId();
-        let status = "❌ <b>CHANNEL_ID Not Found</b>";
-        if (channelId) {
-          const masked = channelId.length > 6 
-            ? `${channelId.substring(0, 4)}...${channelId.substring(channelId.length - 2)}`
+        const channelIdEnv = process.env.CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
+        const channelIdCfg = promptsConfig.channel_id;
+        const finalId = getChannelId();
+        
+        let status = "🛠️ <b>Environment Check:</b>\n\n";
+        
+        status += `🔹 <b>Env CHANNEL_ID:</b> <code>${channelIdEnv || "Not Set"}</code>\n`;
+        status += `🔹 <b>Config CHANNEL_ID:</b> <code>${channelIdCfg || "Not Set"}</code>\n\n`;
+        
+        if (finalId) {
+          const masked = finalId.length > 6 
+            ? `${finalId.substring(0, 4)}...${finalId.substring(finalId.length - 2)}`
             : "***";
-          status = `✅ <b>CHANNEL_ID Found:</b> <code>${masked}</code> (Length: ${channelId.length})`;
+          status += `✅ <b>Active ID:</b> <code>${masked}</code> (Length: ${finalId.length})\n\n`;
+        } else {
+          status += `❌ <b>No Active CHANNEL_ID Found</b>\n\n`;
         }
+        
         const allKeys = Object.keys(process.env).filter(k => k.includes("ID") || k.includes("BOT") || k.includes("CHAN")).join(", ");
-        await bot.sendMessage(chatId, 
-          `🛠️ <b>Environment Check:</b>\n\n` +
-          `${status}\n\n` +
-          `<b>Available related keys:</b>\n<code>${allKeys || "None"}</code>\n\n` +
-          `<i>If missing, ensure you added it to AI Studio -> Settings -> Secrets.</i>`,
-          { parse_mode: "HTML" }
-        );
+        status += `<b>Available related keys:</b>\n<code>${allKeys || "None"}</code>\n\n` +
+                  `<i>Use /control -> Announcements -> Set Channel ID to configure it manually.</i>`;
+        
+        await bot.sendMessage(chatId, status, { parse_mode: "HTML" });
         return;
       }
 
@@ -2573,26 +2617,32 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
       if (cmdName === "setadmin" || cmdName === "control" || cmdName === "reload_config") {
-        if (isAnyAdmin(userId)) {
-          if (cmdName === "control") {
+        const isActuallyStartingAdmin = isStartingAdmin(userIdNum);
+        
+        if (cmdName === "control") {
+           if (isActuallyStartingAdmin) {
              renderMainControlPanel(chatId);
-          } else if (cmdName === "reload_config") {
+           } else {
+             // Security Alert for non-primary admins trying to access control
+             const username = msg.from?.username || msg.from?.first_name || "Unknown User";
+             const startingAdminId = getPrimaryOwnerId();
+             const alertMsg = `🚨 <b>Security Alert!</b>\n\nAdmin <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
+             await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
+             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the Starting Admin/Owner of this bot.`, { parse_mode: "HTML" });
+           }
+        } else if (cmdName === "reload_config") {
+           if (isAnyAdmin(userId)) {
              promptsConfig = loadPromptsConfig();
              await bot.sendMessage(chatId, "✅ <b>Configuration Reloaded!</b>\n\nAll prompts and bank settings have been refreshed from disk.", { parse_mode: "HTML" });
-          } else if (isAnyAdmin(userIdNum)) {
+           } else {
+             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+           }
+        } else if (cmdName === "setadmin") {
+           if (isActuallyStartingAdmin) {
              await renderSetAdminMenu(bot, chatId);
-          } else {
+           } else {
              await bot.sendMessage(chatId, "❌ <b>Access Denied.</b>\n\nOnly the primary owner can manage administrators.", { parse_mode: "HTML" });
-          }
-        } else if (cmdName === "control" || cmdName === "reload_config") {
-           await bot.sendMessage(chatId, `❌ <b>Unknown command.</b>\n\nPlease use /help or /start to see available commands.`, { parse_mode: "HTML" });
-           const username = msg.from?.username || msg.from?.first_name || "Unknown User";
-           const now = new Date();
-           const startingAdminId = getPrimaryOwnerId();
-           const alertMsg = `🚨 <b>Security Alert!</b>\n\nAdmin <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
-           await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
-        } else {
-           await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the Starting Admin/Owner of this bot.`, { parse_mode: "HTML" });
+           }
         }
         return;
       }
@@ -2735,6 +2785,45 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       await processUserLookup(chatId, targetId);
+      return;
+    }
+
+    if (editState && editState.step === 'awaiting_channel_id') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        await renderMainControlPanel(chatId);
+        return;
+      }
+
+      const newChannelId = text?.trim();
+      if (!newChannelId || (!newChannelId.startsWith("-100") && isNaN(Number(newChannelId)))) {
+        await bot.sendMessage(chatId, "⚠️ Invalid Channel ID. It should typically start with <code>-100</code> (e.g., <code>-1001234567890</code>).", { parse_mode: "HTML" });
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      
+      // Save to dedicated file
+      try {
+        fs.writeFileSync(CHANNEL_ID_FILE_PATH, newChannelId, "utf8");
+      } catch (e) {
+        logBot(`[ERROR] Failed to save channel ID file: ${e}`);
+      }
+
+      // Also update promptsConfig for double persistence
+      const currentConfig = loadPromptsConfig();
+      currentConfig.channel_id = newChannelId;
+      savePromptsConfig(currentConfig);
+      promptsConfig = currentConfig;
+
+      await bot.sendMessage(chatId, `✅ <b>Target Channel ID Saved!</b>\n\nNew ID: <code>${newChannelId}</code>\n\n<i>This setting is now permanent and will persist through updates.</i>`, { parse_mode: "HTML" });
+      await renderMainControlPanel(chatId);
       return;
     }
 
@@ -4421,9 +4510,17 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     // Common Admin check for sensitive data prefixes
-    const adminPrefixes = ['analysis_', 'admin_', 'broadcast_', 'edit_section_', 'edit_bank', 'edit_key_'];
-    const isActuallyAdminAction = adminPrefixes.some(p => data?.startsWith(p));
-    if (isActuallyAdminAction && !isAnyAdmin(userId)) {
+    const ownerOnlyPrefixes = ['edit_section_', 'edit_bank', 'edit_key_', 'setadmin_'];
+    const generalAdminPrefixes = ['analysis_', 'broadcast_'];
+
+    if (ownerOnlyPrefixes.some(p => data?.startsWith(p)) && !isStartingAdmin(parseInt(userId, 10))) {
+      try {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only Access", show_alert: true });
+      } catch (e) {}
+      return;
+    }
+
+    if (generalAdminPrefixes.some(p => data?.startsWith(p)) && !isAnyAdmin(userId)) {
       try {
         await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
       } catch (e) {}
@@ -5125,6 +5222,23 @@ const withdrawalCooldowns = new Map<string, number>();
       return;
     }
 
+    if (data === "cmd_ann_set_channel") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      userStates.set(userId, { step: "awaiting_channel_id" });
+      await bot.sendMessage(chatId, 
+        "🆔 <b>Set Telegram Channel ID</b>\n\n" +
+        "Please send the <b>Target Channel ID</b> (e.g., <code>-1001234567890</code>).\n\n" +
+        "<i>Tip: You can get your channel ID by forwarding a message from it to @userinfobot or @GetIDsBot.</i>\n\n" +
+        "Type /cancel to abort.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
     if (data.startsWith("cmd_ann_toggle:")) {
       if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
@@ -5154,7 +5268,7 @@ const withdrawalCooldowns = new Map<string, number>();
       
       const channelId = getChannelId();
       if (!channelId) {
-        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
+        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not configured.\n\nYou can now set it directly in the <b>Announcements Control Panel</b> (under /control), or add it to AI Studio Secrets.", { parse_mode: "HTML" });
         return;
       }
 
@@ -5317,8 +5431,8 @@ const withdrawalCooldowns = new Map<string, number>();
       
       const channelId = getChannelId();
       if (!channelId) {
-        logBot("[Bot] ann_send_single: CHANNEL_ID is not set in process.env.");
-        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not set in environment variables.\n\nPlease go to AI Studio Settings -> Secrets and add <code>CHANNEL_ID</code> (e.g. -1001234567890).", { parse_mode: "HTML" });
+        logBot("[Bot] ann_send_single: CHANNEL_ID is not configured.");
+        await bot.sendMessage(chatId, "❌ <b>CHANNEL_ID</b> is not configured.\n\nYou can now set it directly in the <b>Announcements Control Panel</b> (under /control), or add it to AI Studio Secrets.", { parse_mode: "HTML" });
         return;
       }
       
@@ -5690,8 +5804,8 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     if (data === "control_back" || data === "control_panel_back") {
-      if (!isAnyAdmin(userId)) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+      if (!isStartingAdmin(parseInt(userId, 10))) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Owner Only Access", show_alert: true });
         return;
       }
       await bot.answerCallbackQuery(query.id);
