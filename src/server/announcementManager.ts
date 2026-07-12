@@ -9,7 +9,7 @@ const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
 export interface Announcement {
   id: string;
-  type: "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "weekly_promoter" | "high_withdrawal" | "high_deposit" | "vip_slots_100" | "vip_slots_50" | "vip_slots_20" | "scheduled_match";
+  type: "static" | "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "weekly_promoter" | "high_withdrawal" | "high_deposit" | "vip_slots_100" | "vip_slots_50" | "vip_slots_20" | "scheduled_match";
   text: string;
   photoUrl?: string;
   intervalHours?: number;
@@ -33,8 +33,35 @@ export function loadAnnouncements(): Announcement[] {
 export function saveAnnouncements(announcements: Announcement[]) {
   try {
     fs.writeFileSync(ANNOUNCEMENT_FILE, JSON.stringify(announcements, null, 2), "utf-8");
+    saveAnnouncementsToSupabase(announcements).catch(e => logBot(`[ERROR] Supabase announcement sync failed: ${e}`));
   } catch (e) {
     logBot(`Failed to save announcements: ${e}`);
+  }
+}
+
+async function saveAnnouncementsToSupabase(announcements: Announcement[]) {
+  try {
+    const jsonStr = JSON.stringify(announcements);
+    await supabase.from("bot_config").upsert({ key: "announcements_v3", value: jsonStr });
+    logBot("[SUPABASE] Announcements persisted to database (announcements_v3).");
+  } catch (err) {
+    logBot(`[SUPABASE] Failed to save announcements_v3: ${err}`);
+  }
+}
+
+export async function syncAnnouncementsFromSupabase() {
+  try {
+    logBot("[SUPABASE] Syncing announcements from database (announcements_v3)...");
+    const { data } = await supabase.from("bot_config").select("value").eq("key", "announcements_v3").maybeSingle();
+    if (data?.value) {
+      const anns = JSON.parse(data.value);
+      fs.writeFileSync(ANNOUNCEMENT_FILE, JSON.stringify(anns, null, 2), "utf-8");
+      logBot("[SUPABASE] Announcements synced and cached to disk.");
+    } else {
+      logBot("[SUPABASE] No announcements_v3 found in database, using local defaults.");
+    }
+  } catch (err) {
+    logBot(`[SUPABASE] Error syncing announcements: ${err}`);
   }
 }
 
@@ -186,7 +213,11 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
           reply_markup: options.reply_markup
         });
       } else {
-        throw directErr;
+        logBot(`[downloadAndSendPhoto] ❌ ALL photo send attempts failed for ${chatId}. Sending text only as last resort.`);
+        await bot.sendMessage(chatId, captionText, {
+          parse_mode: options.parse_mode || "HTML",
+          reply_markup: options.reply_markup
+        });
       }
     }
   }

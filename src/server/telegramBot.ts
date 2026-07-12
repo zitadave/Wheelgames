@@ -5,7 +5,7 @@ import { getAnalysisSummary } from "./analysis.js";
 import { Server } from "socket.io";
 import { fetchLeaderboardData, getStartOfWeekUTC } from "./leaderboardHelper.js";
 import { logBot, getBotLogs } from "./logger.js";
-import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto, processAnnouncementText } from "./announcementManager.js";
+import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Announcement, processAnnouncements, generateSlotNumbers, formatEmojiNumbers, downloadAndSendPhoto, processAnnouncementText, syncAnnouncementsFromSupabase } from "./announcementManager.js";
 import { txManager } from "./transactionManager.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -229,7 +229,6 @@ interface RegistrationState {
 const pendingRegistrations = new Map<string, RegistrationState>();
 
 const PASSWORD_FILE_PATH = path.join(process.cwd(), "admin_password.json");
-const CHANNEL_ID_FILE_PATH = path.join(process.cwd(), "channel_id.json");
 
 function getStoredPassword(): string {
   try {
@@ -334,15 +333,23 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
   balance_msg: "💳 *Your current balance:* `{balance} ETB`",
   affiliate_msg: "🤝 *Join our Affiliate Program!*\n\nInvite friends and earn commissions.",
 
-  welcome_msg: "👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\nExperience the thrill of real-time multiplayer gaming right here in Telegram!\n\n💰 *Your current balance:* `{balance}`\n\n🚀 *Available Games:*\n• 🟢 *Even/Odd* - High-octane multipliers and double-ups\n• 🏆 *Jackpot Arena* - Secure spots and sweep the pool prize\n• 🎡 *Wheel of Chance* - High stakes wheel of fortune\n\n👇 Click the button below to launch the Mini App and start playing immediately!",
+  welcome_msg: "👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\nExperience the thrill of real-time multiplayer gaming right here in Telegram!\n\n💰 *Your current balance:* `{balance}`\n\n🚀 *Available Games:*\n• 🎱 <b>Bingo (ቢንጎ):</b> Focusing on daily tournaments and big wins.\n• ⚖️ <b>Mola/Godele (ሞላ/ጎደለ):</b> Highlighting the simplicity and instant results of the game.\n• 🍀 <b>Edil (ዕድል):</b> Focusing on daily luck and jackpot opportunities.\n• 🚀 <b>Fettan (ፈጣን):</b> Emphasizing speed, 24/7 service, and fast payouts.\n\n👇 Click the buttons below to start playing!",
   welcome_image: "",
-  welcome_guest_msg: "🎮 <b>Welcome to ETB Game Hub!</b> 🚀\n\nExperience the ultimate Telegram gaming destination! Test your prediction skills with 🟢 <b>Even/Odd</b>, enter the 🏆 <b>Jackpot Arena</b>, or spin the 🎡 <b>Wheel of Chance</b> to win incredible rewards.\n\n💎 <i>Play instantly, win with real-time multipliers, and withdraw directly to your favorite wallet!</i>",
+  welcome_guest_msg: "🎮 <b>Welcome to ETB Game Hub!</b> 🚀\n\nExperience the ultimate Telegram gaming destination!\n\n• 🎱 <b>Bingo (ቢንጎ):</b> Daily tournaments & big wins.\n• ⚖️ <b>Mola/Godele (ሞላ/ጎደለ):</b> Simple & instant results.\n• 🍀 <b>Edል (ዕድል):</b> Luck & jackpot opportunities.\n• 🚀 <b>Fettan (ፈጣን):</b> Speed & fast payouts.\n\n💎 <i>Play instantly, win with real-time multipliers, and withdraw directly to your favorite wallet!</i>",
   welcome_guest_image: "",
   support_card_msg: "📞 *Contact Support*\n\n📱 *Phone:* `+251-931-50-35-59`\n📧 *Email:* `support@wheelgame.et`\n💬 *Telegram:* @scofiled1\n\n⏰ *Support Hours:*\nMonday - Sunday: 9 AM - 9 PM\n\nWe're here to help!",
-
+ 
   welcome_buttons: [
     [
       { text: "🎮 Play Game Hub 🚀", type: "webapp", value: "appUrl" }
+    ],
+    [
+      { text: "🎱 Bingo (ቢንጎ)", type: "webapp", value: "appUrl" },
+      { text: "⚖️ Mola/Godele (ሞላ/ጎደለ)", type: "webapp", value: "appUrl" }
+    ],
+    [
+      { text: "🍀 Edil (ዕድል)", type: "webapp", value: "appUrl" },
+      { text: "🚀 Fettan (ፈጣን)", type: "webapp", value: "appUrl" }
     ],
     [
       { text: "💸 Deposit / ማስገቢያ", type: "callback", value: "menu_deposit" },
@@ -389,20 +396,27 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
 };
 
 const PROMPTS_CONFIG_FILE_PATH = path.join(process.cwd(), "prompts_config.json");
+const AUTO_CAMPAIGN_FILE = path.join(process.cwd(), "auto_campaign_config.json");
+const CHANNEL_ID_FILE_PATH = path.join(process.cwd(), "channel_id.json");
+
 let promptsConfig: PromptsConfig = { ...DEFAULT_PROMPTS_CONFIG };
 
+/**
+ * Persists Channel ID and Prompts Config to Supabase for durability in ephemeral environments (Cloud Run).
+ * Falls back to local files for initialization.
+ */
+
 export function getChannelId() {
-  // Priority 1: dedicated channel_id.json
+  // Priority 1: dedicated channel_id.json (Local Cache)
   try {
     if (fs.existsSync(CHANNEL_ID_FILE_PATH)) {
       let cid = fs.readFileSync(CHANNEL_ID_FILE_PATH, "utf8").trim();
-      // Remove any surrounding quotes if they exist (sometimes created by echo)
       cid = cid.replace(/^["']|["']$/g, '');
       if (cid && cid !== "" && cid !== 'null' && cid !== 'undefined') return cid;
     }
   } catch (e) {}
 
-  // Priority 2: promptsConfig (fallback)
+  // Priority 2: promptsConfig
   const configId = promptsConfig?.channel_id;
   if (configId && configId.trim() !== "") return configId.trim();
 
@@ -411,6 +425,91 @@ export function getChannelId() {
   if (envId && envId.trim() !== "") return envId.trim();
   
   return null;
+}
+
+async function saveChannelIdToSupabase(channelId: string) {
+  try {
+    await supabase.from("bot_config").upsert({ key: "channel_id", value: channelId });
+  } catch (err) {
+    logBot(`[SUPABASE] Failed to save channel_id: ${err}`);
+  }
+}
+
+async function savePromptsToSupabase(config: PromptsConfig) {
+  try {
+    const jsonStr = JSON.stringify(config);
+    await supabase.from("bot_config").upsert({ key: "prompts_v3", value: jsonStr });
+    logBot("[SUPABASE] Prompts persisted to database (prompts_v3).");
+  } catch (err) {
+    logBot(`[SUPABASE] Failed to save prompts_v3: ${err}`);
+  }
+}
+
+async function loadConfigFromSupabase() {
+  try {
+    logBot("[SUPABASE] Loading configuration (v3)...");
+    
+    // 1. Load Channel ID
+    const { data: cidData } = await supabase.from("bot_config").select("value").eq("key", "channel_id").maybeSingle();
+    if (cidData?.value) {
+      const cid = cidData.value.trim();
+      fs.writeFileSync(CHANNEL_ID_FILE_PATH, cid, "utf8");
+      logBot(`[SUPABASE] Channel ID loaded: ${cid}`);
+    }
+
+    // 2. Load Prompts
+    const { data: promptsData } = await supabase.from("bot_config").select("value").eq("key", "prompts_v3").maybeSingle();
+    if (promptsData?.value) {
+      const data = JSON.parse(promptsData.value);
+      fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
+      promptsConfig = loadPromptsConfig();
+      logBot(`[SUPABASE] Prompts (v3) loaded. Keys found: ${Object.keys(data).length}`);
+    } else {
+      logBot("[SUPABASE] No prompts_v3 found in database.");
+    }
+
+    // 3. Load Auto Campaign
+    const { data: campaignData } = await supabase.from("bot_config").select("value").eq("key", "auto_campaign_v3").maybeSingle();
+    if (campaignData?.value) {
+      const data = JSON.parse(campaignData.value);
+      fs.writeFileSync(AUTO_CAMPAIGN_FILE, JSON.stringify(data, null, 2), "utf8");
+      logBot("[SUPABASE] Auto Campaign (v3) loaded.");
+    } else {
+      logBot("[SUPABASE] No auto_campaign_v3 found in database.");
+    }
+
+    // 4. Load Announcements
+    await syncAnnouncementsFromSupabase();
+
+    // 5. Load APP_URL
+    const { data: urlData } = await supabase.from("bot_config").select("value").eq("key", "app_url").maybeSingle();
+    if (urlData?.value) {
+      globalAppUrl = urlData.value.trim();
+      logBot(`[SUPABASE] APP_URL loaded: ${globalAppUrl}`);
+    }
+
+  } catch (err) {
+    logBot(`[SUPABASE] Error loading config: ${err}`);
+  }
+}
+
+async function saveAutoCampaignToSupabase(config: any) {
+  try {
+    const jsonStr = JSON.stringify(config);
+    await supabase.from("bot_config").upsert({ key: "auto_campaign_v3", value: jsonStr });
+    logBot("[SUPABASE] Auto Campaign persisted to database (auto_campaign_v3).");
+  } catch (err) {
+    logBot(`[SUPABASE] Failed to save auto_campaign_v3: ${err}`);
+  }
+}
+
+async function saveAppUrlToSupabase(url: string) {
+  try {
+    await supabase.from("bot_config").upsert({ key: "app_url", value: url });
+    logBot(`[SUPABASE] APP_URL persisted to database: ${url}`);
+  } catch (err) {
+    logBot(`[SUPABASE] Failed to save app_url: ${err}`);
+  }
 }
 
 function loadPromptsConfig(): PromptsConfig {
@@ -448,13 +547,16 @@ function savePromptsConfig(config: PromptsConfig) {
     const dataToSave = JSON.parse(JSON.stringify(config));
     const jsonStr = JSON.stringify(dataToSave, null, 2);
     
-    // 2. Synchronous write to ensure completion
+    // 2. Synchronous write to ensure completion (Local Cache)
     fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, jsonStr, "utf8");
     
     // 3. Update the global runtime variable with the snapshot
     promptsConfig = dataToSave;
+
+    // 4. Async push to Supabase for persistence across container restarts
+    savePromptsToSupabase(dataToSave).catch(err => logBot(`[ERROR] Supabase sync failed: ${err}`));
     
-    logBot(`[CONFIG] Saved to disk. Current Gateways: ${Object.keys(config.banks).join(", ")}`);
+    logBot(`[CONFIG] Saved to disk & sync started. Current Gateways: ${Object.keys(config.banks).join(", ")}`);
   } catch (err: any) {
     logBot(`[CONFIG] CRITICAL ERROR: Could not save configuration to disk! ${err.message}`);
   }
@@ -673,9 +775,12 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   const currentProcessId = process.pid;
   logBot(`Bot initialization started. PID: ${currentProcessId}, Timestamp: ${Date.now()}`);
+  
+  // Load persistent configuration from Supabase before starting the bot
+  await loadConfigFromSupabase();
+
   // Make sure we strip any trailing slash
   globalAppUrl = globalAppUrl.replace(/\/$/, "");
-  const appUrl = globalAppUrl;
   
   logBot(`Bot initializing with APP_URL: ${globalAppUrl}`);
   
@@ -878,7 +983,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           menu_button: {
             type: "web_app",
             text: "Play Game 🎮",
-            web_app: { url: appUrl }
+            web_app: { url: globalAppUrl }
           }
         });
         logBot("Telegram Bot menu button configured.");
@@ -1088,13 +1193,16 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   function renderMainControlPanel(chatId: number, messageId?: number) {
     const channelId = getChannelId() || "⚠️ <b>NOT CONFIGURED</b>";
+    const currentAppUrl = globalAppUrl || "⚠️ <b>NOT CONFIGURED</b>";
     const text = `🛠️ <b>Main Control Panel</b>\n\n` +
                  `🎯 <b>Target Channel:</b> <code>${channelId}</code>\n` +
-                 `<i>(The bot posts announcements to this channel)</i>`;
+                 `🌐 <b>App URL:</b> <code>${currentAppUrl}</code>\n` +
+                 `<i>(The bot posts announcements to the channel and launches the game using this URL)</i>`;
     const keyboard = {
       inline_keyboard: [
         [
-          { text: "🛰️ Configure Channel ID", callback_data: "cmd_ann_set_channel" }
+          { text: "🛰️ Configure Channel ID", callback_data: "cmd_ann_set_channel" },
+          { text: "🌐 Set APP_URL", callback_data: "cmd_set_app_url" }
         ],
         [
           { text: "👑 Set Admin", callback_data: "control_setadmin" },
@@ -1419,47 +1527,55 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const grand = anns.find(a => a.id === "vip_100_slots");
       const mini = anns.find(a => a.id === "vip_50_slots");
       const fast = anns.find(a => a.id === "fast_20_slots");
+      const bingo = anns.find(a => a.id === "ann_bingo");
+      const mola = anns.find(a => a.id === "ann_mola_godele");
+      const edil = anns.find(a => a.id === "ann_edil");
+      const fettan = anns.find(a => a.id === "ann_fettan");
 
-      let text = "📢 <b>Slot Announcements Control Panel</b>\n\n" +
-                 "You can toggle individual game announcements or send them instantly to the channel with a single click:\n\n";
+      let text = "📢 <b>Slot & Game Announcements Control Panel</b>\n\n" +
+                 "Toggle automatic announcements or force-send promotion messages instantly:\n\n";
 
       if (grand) {
-        text += `🔥 <b>ዕድል 100-ሰው (VIP Grand)</b>\n` +
-                `• Status: ${grand.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
-                `• Interval: <code>${grand.intervalHours || 3}h</code>\n` +
-                `• Last Sent: <code>${grand.lastRunTime ? new Date(grand.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+        text += `🔥 <b>ዕድል 100-ሰው (VIP Grand)</b>: ${grand.enabled ? "🟢" : "🔴"}\n`;
       }
       if (mini) {
-        text += `💥 <b>ዕድል 50-ሰው (VIP Mini)</b>\n` +
-                `• Status: ${mini.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
-                `• Interval: <code>${mini.intervalHours || 3}h</code>\n` +
-                `• Last Sent: <code>${mini.lastRunTime ? new Date(mini.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+        text += `💥 <b>ዕድል 50-ሰው (VIP Mini)</b>: ${mini.enabled ? "🟢" : "🔴"}\n`;
       }
       if (fast) {
-        text += `⚡ <b>ፈጣን 20-ሰው (Fast 20)</b>\n` +
-                `• Status: ${fast.enabled ? "🟢 Enabled" : "🔴 Disabled"}\n` +
-                `• Interval: <code>${fast.intervalHours || 3}h</code>\n` +
-                `• Last Sent: <code>${fast.lastRunTime ? new Date(fast.lastRunTime).toLocaleTimeString() : "Never"}</code>\n\n`;
+        text += `⚡ <b>ፈጣን 20-ሰው (Fast 20)</b>: ${fast.enabled ? "🟢" : "🔴"}\n`;
+      }
+      if (bingo) {
+        text += `🎱 <b>Bingo Promo</b>: ${bingo.enabled ? "🟢" : "🔴"}\n`;
+      }
+      if (mola) {
+        text += `⚖️ <b>Mola/Godele Promo</b>: ${mola.enabled ? "🟢" : "🔴"}\n`;
+      }
+      if (edil) {
+        text += `🍀 <b>Edil Promo</b>: ${edil.enabled ? "🟢" : "🔴"}\n`;
+      }
+      if (fettan) {
+        text += `🚀 <b>Fettan Promo</b>: ${fettan.enabled ? "🟢" : "🔴"}\n`;
       }
 
       const buttons = [];
       if (grand) {
         buttons.push([
-          { text: `${grand.enabled ? "🟢" : "🔴"} Toggle Grand 100`, callback_data: `cmd_ann_toggle:${grand.id}` },
-          { text: "🚀 Send Grand 100", callback_data: `cmd_ann_send:${grand.id}` }
-        ]);
-      }
-      if (mini) {
-        buttons.push([
-          { text: `${mini.enabled ? "🟢" : "🔴"} Toggle Mini 50`, callback_data: `cmd_ann_toggle:${mini.id}` },
-          { text: "🚀 Send Mini 50", callback_data: `cmd_ann_send:${mini.id}` }
+          { text: "🚀 Send Grand 100", callback_data: `cmd_ann_send:${grand.id}` },
+          { text: "🚀 Send Mini 50", callback_data: `cmd_ann_send:${mini?.id || 'vip_50_slots'}` }
         ]);
       }
       if (fast) {
         buttons.push([
-          { text: `${fast.enabled ? "🟢" : "🔴"} Toggle Fast 20`, callback_data: `cmd_ann_toggle:${fast.id}` },
-          { text: "🚀 Send Fast 20", callback_data: `cmd_ann_send:${fast.id}` }
+          { text: "🚀 Send Fast 20", callback_data: `cmd_ann_send:${fast.id}` },
+          { text: "🚀 Send Bingo", callback_data: `cmd_ann_send:${bingo?.id || 'ann_bingo'}` }
         ]);
+      }
+      if (mola || edil || fettan) {
+        const row = [];
+        if (mola) row.push({ text: "🚀 Mola", callback_data: `cmd_ann_send:${mola.id}` });
+        if (edil) row.push({ text: "🚀 Edil", callback_data: `cmd_ann_send:${edil.id}` });
+        if (fettan) row.push({ text: "🚀 Fettan", callback_data: `cmd_ann_send:${fettan.id}` });
+        buttons.push(row);
       }
       const currentId = getChannelId() || "<i>Not Set</i>";
       text += `\n🎯 <b>Target Channel:</b> <code>${currentId}</code>\n` +
@@ -1972,7 +2088,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       ]
     ];
 
-    const customCampaignRows = buildCampaignReplyMarkup(composer, appUrl);
+    const customCampaignRows = buildCampaignReplyMarkup(composer, globalAppUrl);
     const inlineButtons = [...customCampaignRows, ...actionButtons];
 
     if ((composer.type === 'photo' || composer.type === 'photo_button') && composer.photoFileId) {
@@ -2457,7 +2573,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             }
             return;
           } else if (payload === 'play') {
-            return bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: appUrl } }]] } });
+            return bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: globalAppUrl } }]] } });
           }
 
           let userBalanceStr = "0 ETB";
@@ -2468,9 +2584,11 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
           const welcomeMsgPattern = promptsConfig.welcome_msg || `👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\n💰 *Your current balance:* \`{balance}\`\n\n👇 Click below to play!`;
           const welcomeMsg = welcomeMsgPattern.replace(/{name}/g, firstName).replace(/{balance}/g, userBalanceStr);
-          const welcomeButtonsRows = (promptsConfig.welcome_buttons || [[{ text: "🎮 Play Game Hub 🚀", type: "webapp", value: "appUrl" }]]).map(row => 
+          const welcomeButtonsRows = ((promptsConfig.welcome_buttons && promptsConfig.welcome_buttons.length > 0) 
+            ? promptsConfig.welcome_buttons 
+            : DEFAULT_PROMPTS_CONFIG.welcome_buttons).map(row => 
             row.map(btn => {
-              const btnVal = btn.value === 'appUrl' ? appUrl : btn.value;
+              const btnVal = btn.value === 'appUrl' ? globalAppUrl : btn.value;
               if (btn.type === 'webapp') return { text: btn.text, web_app: { url: btnVal } };
               if (btn.type === 'url') return { text: btn.text, url: btnVal };
               return { text: btn.text, callback_data: btnVal };
@@ -2485,7 +2603,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           }
         } else {
           pendingRegistrations.set(userId, { payload });
-          const desc = promptsConfig.welcome_guest_msg || `🎮 <b>Welcome to ETB Game Hub!</b> 🚀`;
+          const desc = promptsConfig.welcome_guest_msg || DEFAULT_PROMPTS_CONFIG.welcome_guest_msg;
           const markup = { inline_keyboard: [[{ text: "🎮 Start Play / ለመጫወት ጀምር 🚀", callback_data: "register_start" }]] };
           if (promptsConfig.welcome_guest_image) {
             await bot.sendPhoto(chatId, promptsConfig.welcome_guest_image, { caption: desc, parse_mode: "HTML", reply_markup: markup })
@@ -2497,7 +2615,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
       if (cmdName === "play") {
-        await checkRegisteredAndHandle(msg, () => bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: appUrl } }]] } }));
+        await checkRegisteredAndHandle(msg, () => bot.sendMessage(chatId, "🎮 *ETB Game Hub is ready!*", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "🚀 Launch Game", web_app: { url: globalAppUrl } }]] } }));
         return;
       }
       if (cmdName === "deposit") {
@@ -2730,7 +2848,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         try {
           const buttons = (customCmd.buttons || []).map(row => 
             row.map(btn => {
-              const btnVal = btn.value === 'appUrl' ? appUrl : btn.value;
+              const btnVal = btn.value === 'appUrl' ? globalAppUrl : btn.value;
               if (btn.type === 'webapp') {
                 return { text: btn.text, web_app: { url: btnVal } };
               } else if (btn.type === 'url') {
@@ -2764,6 +2882,50 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const numUserId = msg.from?.id;
     const editState = userStates.get(userId);
     logBot(`AI Support: Processing message from userId=${userId}, editState=${JSON.stringify(editState)}`);
+
+    if (editState && editState.step === 'awaiting_new_app_url_config') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        await renderMainControlPanel(chatId);
+        return;
+      }
+
+      const newAppUrl = text?.trim().replace(/\/$/, "");
+      if (!newAppUrl || !newAppUrl.startsWith("http")) {
+        await bot.sendMessage(chatId, "⚠️ Invalid URL. It must start with http:// or https://", { parse_mode: "HTML" });
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      globalAppUrl = newAppUrl;
+      
+      // Update the bot menu button immediately
+      try {
+        await (bot as any).setChatMenuButton({
+          menu_button: {
+            type: "web_app",
+            text: "Play Game 🎮",
+            web_app: { url: globalAppUrl }
+          }
+        });
+        logBot("Telegram Bot menu button updated with new APP_URL.");
+      } catch (btnErr: any) {
+        logBot(`Couldn't update Telegram WebApp menu button: ${btnErr.message || btnErr}`);
+      }
+
+      // Sync to Supabase
+      saveAppUrlToSupabase(globalAppUrl).catch(err => logBot(`[ERROR] Supabase app_url sync failed: ${err}`));
+
+      await bot.sendMessage(chatId, `✅ <b>App URL Updated!</b>\n\nNew URL: <code>${globalAppUrl}</code>\n\n<i>The main bot menu button and game links will now use this URL.</i>`, { parse_mode: "HTML" });
+      await renderMainControlPanel(chatId);
+      return;
+    }
 
     // Process User Lookup
     if (editState && editState.step === 'waiting_for_lookup_id') {
@@ -2809,12 +2971,15 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
       userStates.set(userId, { step: 'idle' });
       
-      // Save to dedicated file
+      // Save to dedicated file (Local Cache)
       try {
         fs.writeFileSync(CHANNEL_ID_FILE_PATH, newChannelId, "utf8");
       } catch (e) {
         logBot(`[ERROR] Failed to save channel ID file: ${e}`);
       }
+
+      // Sync to Supabase
+      saveChannelIdToSupabase(newChannelId).catch(err => logBot(`[ERROR] Supabase channel sync failed: ${err}`));
 
       // Also update promptsConfig for double persistence
       const currentConfig = loadPromptsConfig();
@@ -4408,34 +4573,17 @@ const withdrawalCooldowns = new Map<string, number>();
       });
 
       // Show warm greeting and all commands with inline menu buttons
-      const welcomeMsgPattern = promptsConfig.welcome_msg || 
-        `👋 *Welcome to ETB Game Hub, {name}!* 🎮\n\n` +
-        `Experience the thrill of real-time multiplayer gaming right here in Telegram!\n\n` +
-        `💰 *Your current balance:* \`{balance}\`\n\n` +
-        `🚀 *Available Games:*\n` +
-        `• 🟢 *Even/Odd* - High-octane multipliers and double-ups\n` +
-        `• 🏆 *Jackpot Arena* - Secure spots and sweep the pool prize\n` +
-        `• 🎡 *Wheel of Chance* - High stakes wheel of fortune\n\n` +
-        `👇 Click the button below to launch the Mini App and start playing immediately!`;
+      const welcomeMsgPattern = promptsConfig.welcome_msg || DEFAULT_PROMPTS_CONFIG.welcome_msg;
         
       const greetingMsg = welcomeMsgPattern
         .replace(/{name}/g, firstName)
         .replace(/{balance}/g, "100,000 ETB");
 
-      const welcomeButtonsRows = (promptsConfig.welcome_buttons || [
-        [
-          { text: "🎮 Play Game Hub 🚀", type: "webapp", value: "appUrl" }
-        ],
-        [
-          { text: "💸 Deposit / ማስገቢያ", type: "callback", value: "menu_deposit" },
-          { text: "🏦 Withdraw / ማውጫ", type: "callback", value: "menu_withdraw" }
-        ],
-        [
-          { text: "📞 Contact Support", type: "callback", value: "menu_support" }
-        ]
-      ]).map(row => 
+      const welcomeButtonsRows = ((promptsConfig.welcome_buttons && promptsConfig.welcome_buttons.length > 0) 
+        ? promptsConfig.welcome_buttons 
+        : DEFAULT_PROMPTS_CONFIG.welcome_buttons).map(row => 
         row.map(btn => {
-          const btnVal = btn.value === 'appUrl' ? appUrl : btn.value;
+          const btnVal = btn.value === 'appUrl' ? globalAppUrl : btn.value;
           if (btn.type === 'webapp') {
             return { text: btn.text, web_app: { url: btnVal } };
           } else if (btn.type === 'url') {
@@ -4951,7 +5099,7 @@ const withdrawalCooldowns = new Map<string, number>();
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "🎮 Play Game Hub 🚀", web_app: { url: appUrl } }]
+              [{ text: "🎮 Play Game Hub 🚀", web_app: { url: globalAppUrl } }]
             ]
           }
         }).catch(async (e: any) => {
@@ -4959,7 +5107,7 @@ const withdrawalCooldowns = new Map<string, number>();
           await bot.sendMessage(chatId, `🧪 <b>TEST PREVIEW (Plain Text Fallback):</b>\n\n${customizedText}`, {
             reply_markup: {
               inline_keyboard: [
-                [{ text: "🎮 Play Game Hub 🚀", web_app: { url: appUrl } }]
+                [{ text: "🎮 Play Game Hub 🚀", web_app: { url: globalAppUrl } }]
               ]
             }
           });
@@ -5233,6 +5381,24 @@ const withdrawalCooldowns = new Map<string, number>();
         "🆔 <b>Set Telegram Channel ID</b>\n\n" +
         "Please send the <b>Target Channel ID</b> (e.g., <code>-1001234567890</code>).\n\n" +
         "<i>Tip: You can get your channel ID by forwarding a message from it to @userinfobot or @GetIDsBot.</i>\n\n" +
+        "Type /cancel to abort.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    if (data === "cmd_set_app_url") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      userStates.set(userId, { step: "awaiting_new_app_url_config" });
+      await bot.sendMessage(chatId, 
+        "🌐 <b>Set Application URL (Web App)</b>\n\n" +
+        "Please send the new <b>Application URL</b>.\n\n" +
+        "Current URL: <code>" + globalAppUrl + "</code>\n\n" +
+        "<i>Note: In AI Studio, use the 'Development App URL' from your metadata or the browser preview URL.</i>\n\n" +
         "Type /cancel to abort.",
         { parse_mode: "HTML" }
       );
@@ -7425,7 +7591,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
         const campaignRawText = composer.textMessage || "";
         const campaignFormattedText = formatMessageWithTemplate(campaignRawText, composer.template, composer.customHeader, composer.customFooter);
-        const playerButtons = buildCampaignReplyMarkup(composer, appUrl);
+        const playerButtons = buildCampaignReplyMarkup(composer, globalAppUrl);
         const playerReplyMarkup = playerButtons.length > 0 ? { inline_keyboard: playerButtons } : undefined;
 
         for (let i = 0; i < totalPlayers; i++) {
@@ -8188,8 +8354,6 @@ export async function triggerBotFlow(userId: string, flowType: 'deposit' | 'with
   return false;
 }
 
-const AUTO_CAMPAIGN_FILE = path.join(process.cwd(), "auto_campaign_config.json");
-
 export function loadAutoCampaignConfig() {
   try {
     if (fs.existsSync(AUTO_CAMPAIGN_FILE)) {
@@ -8237,7 +8401,10 @@ export function loadAutoCampaignConfig() {
 
 export function saveAutoCampaignConfig(config: any) {
   try {
-    fs.writeFileSync(AUTO_CAMPAIGN_FILE, JSON.stringify(config, null, 2), "utf-8");
+    const jsonStr = JSON.stringify(config, null, 2);
+    fs.writeFileSync(AUTO_CAMPAIGN_FILE, jsonStr, "utf-8");
+    saveAutoCampaignToSupabase(config).catch(err => logBot(`[ERROR] Supabase campaign sync failed: ${err}`));
+    logBot("[CONFIG] Auto Campaign saved and sync started.");
   } catch (e) {
     console.error("Failed to save auto campaign config:", e);
   }
