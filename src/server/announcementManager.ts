@@ -42,23 +42,42 @@ export function saveAnnouncements(announcements: Announcement[]) {
 async function saveAnnouncementsToSupabase(announcements: Announcement[]) {
   try {
     const jsonStr = JSON.stringify(announcements);
-    await supabase.from("bot_config").upsert({ key: "announcements_v3", value: jsonStr });
-    logBot("[SUPABASE] Announcements persisted to database (announcements_v3).");
+    await supabase.from("bot_config").upsert({ key: "announcements_v4", value: jsonStr, updated_at: new Date().toISOString() });
+    logBot("[SUPABASE] Announcements persisted to database (announcements_v4).");
   } catch (err) {
-    logBot(`[SUPABASE] Failed to save announcements_v3: ${err}`);
+    logBot(`[SUPABASE] Failed to save announcements_v4: ${err}`);
   }
 }
 
 export async function syncAnnouncementsFromSupabase() {
   try {
-    logBot("[SUPABASE] Syncing announcements from database (announcements_v3)...");
-    const { data } = await supabase.from("bot_config").select("value").eq("key", "announcements_v3").maybeSingle();
-    if (data?.value) {
-      const anns = JSON.parse(data.value);
+    logBot("[SUPABASE] Syncing announcements from database (announcements_v4)...");
+    
+    let announcementsDataVal = null;
+    const { data: annV4Data, error: annV4Error } = await supabase.from("bot_config").select("value").eq("key", "announcements_v4").maybeSingle();
+    if (annV4Error) throw new Error(`Announcements v4 fetch failed: ${annV4Error.message}`);
+    
+    if (annV4Data?.value) {
+      announcementsDataVal = annV4Data.value;
+      logBot("[SUPABASE] Announcements (v4) successfully found and loaded.");
+    } else {
+      logBot("[SUPABASE] No announcements_v4 found. Attempting to migrate from announcements_v3...");
+      const { data: annV3Data, error: annV3Error } = await supabase.from("bot_config").select("value").eq("key", "announcements_v3").maybeSingle();
+      if (annV3Error) {
+        logBot(`[SUPABASE] Migration warning: announcements_v3 fetch failed: ${annV3Error.message}`);
+      } else if (annV3Data?.value) {
+        announcementsDataVal = annV3Data.value;
+        await supabase.from("bot_config").upsert({ key: "announcements_v4", value: annV3Data.value, updated_at: new Date().toISOString() });
+        logBot("[SUPABASE] Migrated existing announcements from announcements_v3 to announcements_v4 successfully.");
+      }
+    }
+
+    if (announcementsDataVal) {
+      const anns = JSON.parse(announcementsDataVal);
       fs.writeFileSync(ANNOUNCEMENT_FILE, JSON.stringify(anns, null, 2), "utf-8");
       logBot("[SUPABASE] Announcements synced and cached to disk.");
     } else {
-      logBot("[SUPABASE] No announcements_v3 found in database, using local defaults.");
+      logBot("[SUPABASE] No announcements_v4 or announcements_v3 found in database, using local defaults.");
     }
   } catch (err) {
     logBot(`[SUPABASE] Error syncing announcements: ${err}`);

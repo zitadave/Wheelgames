@@ -10,6 +10,10 @@ import { txManager } from "./transactionManager.js";
 import * as fs from "fs";
 import * as path from "path";
 import { handleSupportChat } from "./aiSupport.js";
+import { handleUsersReport, handleFinancialReport } from "./reports.js";
+import PDFDocument from "pdfkit";
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle } from "docx";
+
 
 let botInfo: any = (globalThis as any).telegramBotInfo || null;
 let botInstance: any = (globalThis as any).telegramBotInstance && (globalThis as any).telegramBotInstance !== "initializing" ? (globalThis as any).telegramBotInstance : null;
@@ -427,7 +431,13 @@ export function getChannelId() {
   return null;
 }
 
+let isConfigLoaded = false;
+
 async function saveChannelIdToSupabase(channelId: string) {
+  if (!isConfigLoaded) {
+    logBot("[SUPABASE] ERROR: Refusing to save channel_id because configuration has not been successfully loaded from Supabase.");
+    return;
+  }
   try {
     await supabase.from("bot_config").upsert({ key: "channel_id", value: channelId });
   } catch (err) {
@@ -436,74 +446,153 @@ async function saveChannelIdToSupabase(channelId: string) {
 }
 
 async function savePromptsToSupabase(config: PromptsConfig) {
+  if (!isConfigLoaded) {
+    logBot("[SUPABASE] ERROR: Refusing to save prompts_v4 because configuration has not been successfully loaded from Supabase.");
+    return;
+  }
   try {
     const jsonStr = JSON.stringify(config);
-    await supabase.from("bot_config").upsert({ key: "prompts_v3", value: jsonStr });
-    logBot("[SUPABASE] Prompts persisted to database (prompts_v3).");
+    await supabase.from("bot_config").upsert({ key: "prompts_v4", value: jsonStr, updated_at: new Date().toISOString() });
+    logBot("[SUPABASE] Prompts persisted to database (prompts_v4).");
   } catch (err) {
-    logBot(`[SUPABASE] Failed to save prompts_v3: ${err}`);
+    logBot(`[SUPABASE] Failed to save prompts_v4: ${err}`);
   }
 }
 
 async function loadConfigFromSupabase() {
-  try {
-    logBot("[SUPABASE] Loading configuration (v3)...");
-    
-    // 1. Load Channel ID
-    const { data: cidData } = await supabase.from("bot_config").select("value").eq("key", "channel_id").maybeSingle();
-    if (cidData?.value) {
-      const cid = cidData.value.trim();
-      fs.writeFileSync(CHANNEL_ID_FILE_PATH, cid, "utf8");
-      logBot(`[SUPABASE] Channel ID loaded: ${cid}`);
+  let retries = 5;
+  while (retries > 0) {
+    try {
+      logBot(`[SUPABASE] Loading configuration (v4) - Attempt ${6 - retries}...`);
+      
+      // 1. Load Channel ID
+      const { data: cidData, error: cidError } = await supabase.from("bot_config").select("value").eq("key", "channel_id").maybeSingle();
+      if (cidError) throw new Error(`Channel ID fetch failed: ${cidError.message}`);
+      if (cidData?.value) {
+        const cid = cidData.value.trim();
+        fs.writeFileSync(CHANNEL_ID_FILE_PATH, cid, "utf8");
+        logBot(`[SUPABASE] Channel ID loaded: ${cid}`);
+      }
+
+      // 2. Load Prompts (v4 with v3 fallback migration)
+      let promptsDataVal = null;
+      const { data: promptsV4Data, error: promptsV4Error } = await supabase.from("bot_config").select("value").eq("key", "prompts_v4").maybeSingle();
+      if (promptsV4Error) throw new Error(`Prompts v4 fetch failed: ${promptsV4Error.message}`);
+      
+      if (promptsV4Data?.value) {
+        promptsDataVal = promptsV4Data.value;
+        logBot("[SUPABASE] Prompts (v4) successfully found and loaded.");
+      } else {
+        logBot("[SUPABASE] No prompts_v4 found. Attempting to migrate from prompts_v3...");
+        const { data: promptsV3Data, error: promptsV3Error } = await supabase.from("bot_config").select("value").eq("key", "prompts_v3").maybeSingle();
+        if (promptsV3Error) {
+          logBot(`[SUPABASE] Migration warning: prompts_v3 fetch failed: ${promptsV3Error.message}`);
+        } else if (promptsV3Data?.value) {
+          promptsDataVal = promptsV3Data.value;
+          // Persist the migrated value into v4
+          await supabase.from("bot_config").upsert({ key: "prompts_v4", value: promptsV3Data.value, updated_at: new Date().toISOString() });
+          logBot("[SUPABASE] Migrated existing prompts from prompts_v3 to prompts_v4 successfully.");
+        }
+      }
+
+      const localConfig = loadPromptsConfig();
+
+      if (promptsDataVal) {
+        const dbData = JSON.parse(promptsDataVal);
+        
+        // Use smart merge to preserve local developer edits
+        const { merged, changed } = mergeConfigs(localConfig, dbData, DEFAULT_PROMPTS_CONFIG);
+        
+        fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, JSON.stringify(merged, null, 2), "utf8");
+        promptsConfig = loadPromptsConfig();
+        logBot(`[SUPABASE] Prompts merged with local customizations. Keys found: ${Object.keys(merged).length}`);
+        
+        if (changed) {
+          logBot("[SUPABASE] Local prompt/bank edits detected. Syncing merged config back to Supabase...");
+          isConfigLoaded = true; // Set to true temporarily so savePromptsToSupabase is allowed to write
+          await savePromptsToSupabase(merged);
+        }
+      } else {
+        logBot("[SUPABASE] No prompts_v4 or prompts_v3 found in database. Initializing database with local/hardcoded defaults.");
+        fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, JSON.stringify(localConfig, null, 2), "utf8");
+        promptsConfig = localConfig;
+        isConfigLoaded = true; // Set to true temporarily so savePromptsToSupabase is allowed to write
+        await savePromptsToSupabase(localConfig);
+      }
+
+      // 3. Load Auto Campaign (v4 with v3 fallback migration)
+      let campaignDataVal = null;
+      const { data: campaignV4Data, error: campaignV4Error } = await supabase.from("bot_config").select("value").eq("key", "auto_campaign_v4").maybeSingle();
+      if (campaignV4Error) throw new Error(`Auto Campaign v4 fetch failed: ${campaignV4Error.message}`);
+
+      if (campaignV4Data?.value) {
+        campaignDataVal = campaignV4Data.value;
+        logBot("[SUPABASE] Auto Campaign (v4) successfully found and loaded.");
+      } else {
+        logBot("[SUPABASE] No auto_campaign_v4 found. Attempting to migrate from auto_campaign_v3...");
+        const { data: campaignV3Data, error: campaignV3Error } = await supabase.from("bot_config").select("value").eq("key", "auto_campaign_v3").maybeSingle();
+        if (campaignV3Error) {
+          logBot(`[SUPABASE] Migration warning: auto_campaign_v3 fetch failed: ${campaignV3Error.message}`);
+        } else if (campaignV3Data?.value) {
+          campaignDataVal = campaignV3Data.value;
+          await supabase.from("bot_config").upsert({ key: "auto_campaign_v4", value: campaignV3Data.value, updated_at: new Date().toISOString() });
+          logBot("[SUPABASE] Migrated existing campaign settings from auto_campaign_v3 to auto_campaign_v4 successfully.");
+        }
+      }
+
+      if (campaignDataVal) {
+        const data = JSON.parse(campaignDataVal);
+        fs.writeFileSync(AUTO_CAMPAIGN_FILE, JSON.stringify(data, null, 2), "utf8");
+        logBot("[SUPABASE] Auto Campaign loaded to disk.");
+      } else {
+        logBot("[SUPABASE] No auto_campaign_v4 or auto_campaign_v3 found in database. Using local defaults.");
+      }
+
+      // 4. Load Announcements
+      await syncAnnouncementsFromSupabase();
+
+      // 5. Load APP_URL
+      const { data: urlData, error: urlError } = await supabase.from("bot_config").select("value").eq("key", "app_url").maybeSingle();
+      if (urlError) throw new Error(`APP_URL fetch failed: ${urlError.message}`);
+      if (urlData?.value) {
+        globalAppUrl = urlData.value.trim();
+        logBot(`[SUPABASE] APP_URL loaded: ${globalAppUrl}`);
+      }
+
+      isConfigLoaded = true;
+      logBot("[SUPABASE] Configuration (v4) successfully loaded.");
+      return; // Success!
+    } catch (err: any) {
+      retries--;
+      logBot(`[SUPABASE] Attempt failed to load config: ${err.message}. Retries left: ${retries}`);
+      if (retries === 0) {
+        logBot("[SUPABASE] CRITICAL: Failed to load configuration from Supabase after 5 attempts. Falling back to local files without marking database as loaded.");
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
-
-    // 2. Load Prompts
-    const { data: promptsData } = await supabase.from("bot_config").select("value").eq("key", "prompts_v3").maybeSingle();
-    if (promptsData?.value) {
-      const data = JSON.parse(promptsData.value);
-      fs.writeFileSync(PROMPTS_CONFIG_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
-      promptsConfig = loadPromptsConfig();
-      logBot(`[SUPABASE] Prompts (v3) loaded. Keys found: ${Object.keys(data).length}`);
-    } else {
-      logBot("[SUPABASE] No prompts_v3 found in database.");
-    }
-
-    // 3. Load Auto Campaign
-    const { data: campaignData } = await supabase.from("bot_config").select("value").eq("key", "auto_campaign_v3").maybeSingle();
-    if (campaignData?.value) {
-      const data = JSON.parse(campaignData.value);
-      fs.writeFileSync(AUTO_CAMPAIGN_FILE, JSON.stringify(data, null, 2), "utf8");
-      logBot("[SUPABASE] Auto Campaign (v3) loaded.");
-    } else {
-      logBot("[SUPABASE] No auto_campaign_v3 found in database.");
-    }
-
-    // 4. Load Announcements
-    await syncAnnouncementsFromSupabase();
-
-    // 5. Load APP_URL
-    const { data: urlData } = await supabase.from("bot_config").select("value").eq("key", "app_url").maybeSingle();
-    if (urlData?.value) {
-      globalAppUrl = urlData.value.trim();
-      logBot(`[SUPABASE] APP_URL loaded: ${globalAppUrl}`);
-    }
-
-  } catch (err) {
-    logBot(`[SUPABASE] Error loading config: ${err}`);
   }
 }
 
 async function saveAutoCampaignToSupabase(config: any) {
+  if (!isConfigLoaded) {
+    logBot("[SUPABASE] ERROR: Refusing to save auto_campaign_v4 because configuration has not been successfully loaded from Supabase.");
+    return;
+  }
   try {
     const jsonStr = JSON.stringify(config);
-    await supabase.from("bot_config").upsert({ key: "auto_campaign_v3", value: jsonStr });
-    logBot("[SUPABASE] Auto Campaign persisted to database (auto_campaign_v3).");
+    await supabase.from("bot_config").upsert({ key: "auto_campaign_v4", value: jsonStr, updated_at: new Date().toISOString() });
+    logBot("[SUPABASE] Auto Campaign persisted to database (auto_campaign_v4).");
   } catch (err) {
-    logBot(`[SUPABASE] Failed to save auto_campaign_v3: ${err}`);
+    logBot(`[SUPABASE] Failed to save auto_campaign_v4: ${err}`);
   }
 }
 
 async function saveAppUrlToSupabase(url: string) {
+  if (!isConfigLoaded) {
+    logBot("[SUPABASE] ERROR: Refusing to save app_url because configuration has not been successfully loaded from Supabase.");
+    return;
+  }
   try {
     await supabase.from("bot_config").upsert({ key: "app_url", value: url });
     logBot(`[SUPABASE] APP_URL persisted to database: ${url}`);
@@ -541,7 +630,126 @@ function loadPromptsConfig(): PromptsConfig {
   return JSON.parse(JSON.stringify(DEFAULT_PROMPTS_CONFIG));
 }
 
+function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: PromptsConfig): { merged: PromptsConfig, changed: boolean } {
+  const merged = JSON.parse(JSON.stringify(db));
+  let changed = false;
+
+  const isEqual = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
+
+  // 1. Merge primitive/simple keys
+  const simpleKeys = Object.keys(defaults).filter(k => k !== 'banks' && k !== 'custom_commands' && k !== 'welcome_buttons' && k !== 'referral_buttons') as (keyof PromptsConfig)[];
+  for (const key of simpleKeys) {
+    const localVal = local[key];
+    const dbVal = db[key];
+    const defaultVal = defaults[key];
+
+    if (localVal !== undefined && !isEqual(localVal, defaultVal)) {
+      if (!isEqual(localVal, dbVal)) {
+        logBot(`[CONFIG-MERGE] Prompt key '${key}' customized locally. Merging local value.`);
+        (merged as any)[key] = JSON.parse(JSON.stringify(localVal));
+        changed = true;
+      }
+    }
+  }
+
+  // 2. Merge banks bank-by-bank
+  merged.banks = merged.banks || {};
+  const allBankIds = Array.from(new Set([
+    ...Object.keys(local.banks || {}),
+    ...Object.keys(db.banks || {}),
+    ...Object.keys(defaults.banks || {})
+  ]));
+
+  for (const bankId of allBankIds) {
+    const localBank = local.banks?.[bankId];
+    const dbBank = db.banks?.[bankId];
+    const defaultBank = defaults.banks?.[bankId];
+
+    if (localBank === undefined) {
+      // Bank was deleted or not present locally
+      if (dbBank !== undefined && defaultBank !== undefined) {
+        // If it was a default bank, and developer removed it locally, delete from merged
+        logBot(`[CONFIG-MERGE] Default bank '${bankId}' was removed locally. Deleting from DB.`);
+        delete merged.banks[bankId];
+        changed = true;
+      }
+      continue;
+    }
+
+    if (dbBank === undefined) {
+      // New bank added locally
+      logBot(`[CONFIG-MERGE] New bank '${bankId}' added locally. Syncing to DB.`);
+      merged.banks[bankId] = JSON.parse(JSON.stringify(localBank));
+      changed = true;
+      continue;
+    }
+
+    // Bank exists in both, merge properties (name, account, owner_name, withdraw_prompt)
+    const props = ['name', 'account', 'owner_name', 'withdraw_prompt'];
+    for (const prop of props) {
+      const localPropVal = (localBank as any)[prop];
+      const dbPropVal = (dbBank as any)[prop];
+      const defaultPropVal = defaultBank ? (defaultBank as any)[prop] : undefined;
+
+      if (localPropVal !== undefined && !isEqual(localPropVal, defaultPropVal)) {
+        if (!isEqual(localPropVal, dbPropVal)) {
+          logBot(`[CONFIG-MERGE] Bank '${bankId}' prop '${prop}' customized locally. Merging.`);
+          (merged.banks[bankId] as any)[prop] = localPropVal;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // 3. Merge custom_commands command-by-command
+  merged.custom_commands = merged.custom_commands || {};
+  const allCmds = Array.from(new Set([
+    ...Object.keys(local.custom_commands || {}),
+    ...Object.keys(db.custom_commands || {})
+  ]));
+  for (const cmd of allCmds) {
+    const localCmd = local.custom_commands?.[cmd];
+    const dbCmd = db.custom_commands?.[cmd];
+
+    if (localCmd === undefined) continue;
+    if (dbCmd === undefined) {
+      logBot(`[CONFIG-MERGE] New custom command '${cmd}' added locally. Syncing.`);
+      merged.custom_commands[cmd] = JSON.parse(JSON.stringify(localCmd));
+      changed = true;
+      continue;
+    }
+
+    if (!isEqual(localCmd, dbCmd)) {
+      logBot(`[CONFIG-MERGE] Custom command '${cmd}' modified locally. Merging.`);
+      merged.custom_commands[cmd] = JSON.parse(JSON.stringify(localCmd));
+      changed = true;
+    }
+  }
+
+  // 4. Merge buttons
+  const buttonKeys = ['welcome_buttons', 'referral_buttons'] as (keyof PromptsConfig)[];
+  for (const key of buttonKeys) {
+    const localVal = local[key];
+    const dbVal = db[key];
+    const defaultVal = defaults[key];
+
+    if (localVal !== undefined && !isEqual(localVal, defaultVal)) {
+      if (!isEqual(localVal, dbVal)) {
+        logBot(`[CONFIG-MERGE] Button group '${key}' customized locally. Merging.`);
+        (merged as any)[key] = JSON.parse(JSON.stringify(localVal));
+        changed = true;
+      }
+    }
+  }
+
+  return { merged, changed };
+}
+
 function savePromptsConfig(config: PromptsConfig) {
+  if (!isConfigLoaded) {
+    logBot("[CONFIG] ERROR: Cannot save prompts config. Configuration has not been successfully loaded from Supabase. Aborting save to prevent overwriting database with defaults.");
+    return;
+  }
   try {
     // 1. Create a snapshot to ensure we're saving exactly what was requested
     const dataToSave = JSON.parse(JSON.stringify(config));
@@ -1223,6 +1431,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         [
           { text: "🤝 Manage Affiliate", callback_data: "control_manage_affiliate" },
           { text: "📢 Announcements", callback_data: "control_announcements" }
+        ],
+        [
+          { text: "👥 Users Report", callback_data: "control_users_report" },
+          { text: "💰 Financial Report", callback_data: "control_financial_report" }
         ]
       ]
     };
@@ -2736,17 +2948,18 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
       if (cmdName === "setadmin" || cmdName === "control" || cmdName === "reload_config") {
         const isActuallyStartingAdmin = isStartingAdmin(userIdNum);
+        const isAdmin = isAnyAdmin(userIdNum);
         
         if (cmdName === "control") {
-           if (isActuallyStartingAdmin) {
+           if (isAdmin) {
              renderMainControlPanel(chatId);
            } else {
-             // Security Alert for non-primary admins trying to access control
+             // Security Alert for non-admins trying to access control
              const username = msg.from?.username || msg.from?.first_name || "Unknown User";
              const startingAdminId = getPrimaryOwnerId();
-             const alertMsg = `🚨 <b>Security Alert!</b>\n\nAdmin <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
+             const alertMsg = `🚨 <b>Security Alert!</b>\n\nNon-admin user <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
              await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
-             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the Starting Admin/Owner of this bot.`, { parse_mode: "HTML" });
+             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to administrators of this bot.`, { parse_mode: "HTML" });
            }
         } else if (cmdName === "reload_config") {
            if (isAnyAdmin(userId)) {
@@ -3920,22 +4133,27 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       // Notify Admins
-      const adminMsg = `📥 *NEW DEPOSIT REQUEST*\n\n` +
-        `👤 *User:* @${username} (${fullName})\n` +
-        `🆔 *User ID:* \`${userId}\`\n` +
-        `💰 *Amount:* *${amount.toLocaleString()} ETB*\n` +
-        `🏦 *Bank:* *${bank}*\n\n` +
-        `📝 *Receipt SMS text pasted:*\n` +
-        `\`\`\`\n${text}\n\`\`\`\n\n` +
-        `*Request ID:* \`${requestId}\``;
+      const escapedUsername = escapeHTML(username);
+      const escapedFullName = escapeHTML(fullName);
+      const escapedText = escapeHTML(text);
+      const escapedBank = escapeHTML(bank);
+
+      const adminMsg = `📥 <b>NEW DEPOSIT REQUEST</b>\n\n` +
+        `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+        `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+        `💰 <b>Amount:</b> <b>${amount.toLocaleString()} ETB</b>\n` +
+        `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n\n` +
+        `📝 <b>Receipt SMS text pasted:</b>\n` +
+        `<pre>${escapedText}</pre>\n\n` +
+        `<b>Request ID:</b> <code>${requestId}</code>`;
 
       const primaryOwnerId = getPrimaryOwnerId();
       adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
 
-      logBot(`Notifying ${adminChatIds.size} admins of new deposit request ${requestId}`);
+      logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new deposit request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
       adminChatIds.forEach(adminId => {
         bot.sendMessage(adminId, adminMsg, {
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
               [
@@ -3945,7 +4163,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             ]
           }
         }).catch(e => {
-          logBot(`Failed to notify admin ${adminId} of deposit: ${e.message}`);
+          logBot(`[ADMIN-NOTIFY] Failed to notify admin ${adminId} of deposit: ${e.message}`);
           console.error(`Failed to notify admin ${adminId} of deposit:`, e);
         });
       });
@@ -4082,21 +4300,26 @@ const withdrawalCooldowns = new Map<string, number>();
         }
 
         // Notify Admins
-        const adminMsg = `📤 *NEW WITHDRAWAL REQUEST*\n\n` +
-          `👤 *User:* @${username} (${fullName})\n` +
-          `🆔 *User ID:* \`${userId}\`\n` +
-          `💰 *Amount:* *${amount.toLocaleString()} ETB*\n` +
-          `🏦 *Bank:* *${bank}*\n` +
-          `💳 *Account/Phone:* \`${text}\`\n\n` +
-          `*Request ID:* \`${requestId}\``;
+        const escapedUsername = escapeHTML(username);
+        const escapedFullName = escapeHTML(fullName);
+        const escapedBank = escapeHTML(bank);
+        const escapedAccount = escapeHTML(text);
+
+        const adminMsg = `📤 <b>NEW WITHDRAWAL REQUEST</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${amount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `💳 <b>Account/Phone:</b> <code>${escapedAccount}</code>\n\n` +
+          `<b>Request ID:</b> <code>${requestId}</code>`;
 
         const primaryOwnerId = getPrimaryOwnerId();
         adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
 
-        logBot(`Notifying ${adminChatIds.size} admins of new withdrawal request ${requestId}`);
+        logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new withdrawal request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
         adminChatIds.forEach(adminId => {
           bot.sendMessage(adminId, adminMsg, {
-            parse_mode: "Markdown",
+            parse_mode: "HTML",
             reply_markup: {
               inline_keyboard: [
                 [
@@ -4106,7 +4329,7 @@ const withdrawalCooldowns = new Map<string, number>();
               ]
             }
           }).catch(e => {
-            logBot(`Failed to notify admin ${adminId} of withdrawal: ${e.message}`);
+            logBot(`[ADMIN-NOTIFY] Failed to notify admin ${adminId} of withdrawal: ${e.message}`);
             console.error(`Failed to notify admin ${adminId} of withdrawal:`, e);
           });
         });
@@ -4746,6 +4969,53 @@ const withdrawalCooldowns = new Map<string, number>();
       renderSetAdminMenu(bot, chatId);
       return;
     }
+
+    if (data === "control_users_report") {
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true }).catch(() => {});
+        return;
+      }
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      const statusMsg = await bot.sendMessage(chatId, "⏳ <b>Generating Users Report...</b> Please wait a moment.", { parse_mode: "HTML" }).catch(() => null);
+      try {
+        await handleUsersReport(bot, chatId, supabase);
+        if (statusMsg) {
+          await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        }
+        renderMainControlPanel(chatId);
+      } catch (err: any) {
+        console.error("Users report execution error:", err);
+        if (statusMsg) {
+          await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        }
+        await bot.sendMessage(chatId, `❌ Error: ${err.message || err}`).catch(() => {});
+      }
+      return;
+    }
+
+    if (data === "control_financial_report") {
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true }).catch(() => {});
+        return;
+      }
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      const statusMsg = await bot.sendMessage(chatId, "⏳ <b>Generating Audited Financial Report...</b> Please wait a moment.", { parse_mode: "HTML" }).catch(() => null);
+      try {
+        await handleFinancialReport(bot, chatId, supabase);
+        if (statusMsg) {
+          await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        }
+        renderMainControlPanel(chatId);
+      } catch (err: any) {
+        console.error("Financial report execution error:", err);
+        if (statusMsg) {
+          await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        }
+        await bot.sendMessage(chatId, `❌ Error: ${err.message || err}`).catch(() => {});
+      }
+      return;
+    }
+
     if (data === "control_analysis") {
       if (!isAnyAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only", show_alert: true });
@@ -5976,8 +6246,8 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     if (data === "control_back" || data === "control_panel_back") {
-      if (!isStartingAdmin(parseInt(userId, 10))) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Owner Only Access", show_alert: true });
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Admin Access Only", show_alert: true });
         return;
       }
       await bot.answerCallbackQuery(query.id);
