@@ -135,12 +135,12 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
     if (fs.existsSync(fullPath)) {
       logBot(`Sending local photo file: ${fullPath} to ${chatId}`);
       try {
-        await bot.sendPhoto(chatId, photoUrl, activeOptions);
+        await bot.sendPhoto(chatId, fs.createReadStream(fullPath), activeOptions);
         await sendTextMessageIfTooLong();
       } catch (err: any) {
         if (err.message && err.message.includes("caption is too long") && !isCaptionTooLong) {
           logBot(`Fallback: Caption too long error received. Retrying with separate text.`);
-          await bot.sendPhoto(chatId, photoUrl, { ...options, caption: "" });
+          await bot.sendPhoto(chatId, fs.createReadStream(fullPath), { ...options, caption: "" });
           await bot.sendMessage(chatId, captionText, {
             parse_mode: options.parse_mode || "HTML",
             reply_markup: options.reply_markup
@@ -150,13 +150,21 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
         }
       }
     } else {
-      logBot(`Warning: Local photo file does not exist at: ${fullPath}. Falling back to sending message text only.`);
-      const textOptions = {
-        parse_mode: options.parse_mode || "HTML",
-        reply_markup: options.reply_markup
-      };
-      if (captionText) {
-        await bot.sendMessage(chatId, captionText, textOptions);
+      // If it's not a URL and doesn't exist on disk, it's likely a Telegram fileId.
+      // We try sending it directly to Telegram.
+      logBot(`Local file not found at ${fullPath}. Attempting to send as Telegram fileId: ${photoUrl.substring(0, 20)}...`);
+      try {
+        await bot.sendPhoto(chatId, photoUrl, activeOptions);
+        await sendTextMessageIfTooLong();
+      } catch (err: any) {
+        logBot(`Failed to send as fileId: ${err.message}. Falling back to sending message text only.`);
+        const textOptions = {
+          parse_mode: options.parse_mode || "HTML",
+          reply_markup: options.reply_markup
+        };
+        if (captionText) {
+          await bot.sendMessage(chatId, captionText, textOptions);
+        }
       }
     }
     return;
@@ -298,11 +306,21 @@ export async function processAnnouncements(bot: any) {
           const rawUser: any = data[0].users;
           const user = Array.isArray(rawUser) ? rawUser[0] : rawUser;
           const name = (user && (user.username || user.first_name)) ? (user.username || user.first_name) : 'Anonymous';
-          messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
-            `🎉 Congratulations to <b>${name}</b> for withdrawing <b>${data[0].amount.toLocaleString()} ETB</b>!\n\n` +
-            `🚀 Play now, win big, and get paid instantly.\n\n` +
-            `<i>Real winners, real money! See the screenshot proof.</i>`;
-          photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800"; // Receipt photo
+          
+          // Use user's text if provided, otherwise default
+          if (!ann.text || ann.text === "High Withdrawal placeholder") {
+            messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
+              `🎉 Congratulations to <b>${name}</b> for withdrawing <b>${data[0].amount.toLocaleString()} ETB</b>!\n\n` +
+              `🚀 Play now, win big, and get paid instantly.\n\n` +
+              `<i>Real winners, real money! See the screenshot proof.</i>`;
+          } else {
+            messageText = ann.text.replace("{name}", name).replace("{amount}", data[0].amount.toLocaleString());
+          }
+          
+          // Use user's photo if provided, otherwise default
+          if (!ann.photoUrl) {
+            photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800"; // Receipt photo
+          }
         } else {
           // Skip if no real high withdrawal exists yet, to avoid any mock/dummy alerts
           logBot("No actual high withdrawal records found in database. Skipping this announcement cycle.");
@@ -310,18 +328,26 @@ export async function processAnnouncements(bot: any) {
         }
       } else if (ann.type === "high_deposit") {
         // High deposit > 50000
-        messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
-          `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
-          `🏆 Are you ready to challenge them?\n\n` +
-          `<i>Join the action now!</i>`;
-        photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
+        if (!ann.text || ann.text === "High Deposit placeholder") {
+          messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
+            `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
+            `🏆 Are you ready to challenge them?\n\n` +
+            `<i>Join the action now!</i>`;
+        }
+        if (!ann.photoUrl) {
+          photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
+        }
       } else if (ann.type === "weekly_promoter") {
-        messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
-          `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
-          `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
-          `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
-          `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
-        photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
+        if (!ann.text || ann.text === "Weekly Promoter placeholder") {
+          messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
+            `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
+            `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
+            `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
+            `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
+        }
+        if (!ann.photoUrl) {
+          photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
+        }
       } else if (ann.type === "join_play") {
         const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);
         const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50), 50);

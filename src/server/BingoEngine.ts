@@ -161,6 +161,17 @@ export class BingoRoom {
      
      this.state.players[userId] = { userId, username, cards, photoUrl };
      this.broadcastState();
+     
+     // Check if all 400 cards are taken
+     let totalCards = 0;
+     for (const p of Object.values(this.state.players)) {
+       totalCards += p.cards.length;
+     }
+     if (totalCards >= 400 && this.state.status === "lobby" && this.state.timeLeft > 10) {
+       this.state.timeLeft = 10;
+       this.broadcastState();
+     }
+     
      return { success: true };
   }
 

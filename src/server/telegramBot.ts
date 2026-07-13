@@ -3119,15 +3119,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
       let photoUrl = "";
       if (msg.photo && msg.photo.length > 0) {
-        try {
-          await bot.sendMessage(chatId, "⏳ Downloading and saving photo locally on server...");
-          const fileId = msg.photo[msg.photo.length - 1].file_id;
-          photoUrl = await downloadTelegramPhotoLocally(fileId, editState.editingKey);
-        } catch (err: any) {
-          logBot(`Error downloading upload: ${err.message}`);
-          await bot.sendMessage(chatId, `❌ Failed to save photo: ${err.message}`);
-          return;
-        }
+        // Just save the fileId directly. Telegram keeps files for a long time,
+        // and this is much more reliable than local disk storage which gets wiped on restart.
+        photoUrl = msg.photo[msg.photo.length - 1].file_id;
       } else if (text) {
         photoUrl = text.toLowerCase() === "none" ? "" : text;
       } else {
@@ -3227,15 +3221,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       
       let photoUrl = "";
       if (msg.photo && msg.photo.length > 0) {
-        try {
-          await bot.sendMessage(chatId, "⏳ Downloading and saving photo locally on server...");
-          const fileId = msg.photo[msg.photo.length - 1].file_id;
-          photoUrl = await downloadTelegramPhotoLocally(fileId, editState.editingKey);
-        } catch (err: any) {
-          logBot(`Error downloading upload: ${err.message}`);
-          await bot.sendMessage(chatId, `❌ Failed to save photo: ${err.message}`);
-          return;
-        }
+        photoUrl = msg.photo[msg.photo.length - 1].file_id;
       } else if (text) {
         photoUrl = text.toLowerCase() === "none" ? "" : text;
       } else {
@@ -5630,31 +5616,51 @@ const withdrawalCooldowns = new Map<string, number>();
               const rawUser: any = recentWd[0].users;
               const user = Array.isArray(rawUser) ? rawUser[0] : rawUser;
               const name = (user && (user.username || user.first_name)) ? (user.username || user.first_name) : 'Anonymous';
-              messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
-                `🎉 Congratulations to <b>${name}</b> for withdrawing <b>${recentWd[0].amount.toLocaleString()} ETB</b>!\n\n` +
-                `🚀 Play now, win big, and get paid instantly.\n\n` +
-                `<i>Real winners, real money! See the screenshot proof.</i>`;
-              photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
+              
+              if (!ann.text || ann.text === "High Withdrawal placeholder") {
+                messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
+                  `🎉 Congratulations to <b>${name}</b> for withdrawing <b>${recentWd[0].amount.toLocaleString()} ETB</b>!\n\n` +
+                  `🚀 Play now, win big, and get paid instantly.\n\n` +
+                  `<i>Real winners, real money! See the screenshot proof.</i>`;
+              } else {
+                messageText = ann.text.replace("{name}", name).replace("{amount}", recentWd[0].amount.toLocaleString());
+              }
+              
+              if (!ann.photoUrl) {
+                photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
+              }
             } else {
-              messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
-                `🎉 Congratulations to <b>User_***</b> for withdrawing <b>25,000 ETB</b>!\n\n` +
-                `🚀 Play now, win big, and get paid instantly.\n\n` +
-                `<i>Real winners, real money! See the screenshot proof.</i>`;
-              photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
+              if (!ann.text || ann.text === "High Withdrawal placeholder") {
+                messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
+                  `🎉 Congratulations to <b>User_***</b> for withdrawing <b>25,000 ETB</b>!\n\n` +
+                  `🚀 Play now, win big, and get paid instantly.\n\n` +
+                  `<i>Real winners, real money! See the screenshot proof.</i>`;
+              }
+              if (!ann.photoUrl) {
+                photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
+              }
             }
           } else if (ann.type === "high_deposit") {
-            messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
-              `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
-              `🏆 Are you ready to challenge them?\n\n` +
-              `<i>Join the action now!</i>`;
-            photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
+            if (!ann.text || ann.text === "High Deposit placeholder") {
+              messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
+                `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
+                `🏆 Are you ready to challenge them?\n\n` +
+                `<i>Join the action now!</i>`;
+            }
+            if (!ann.photoUrl) {
+              photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
+            }
           } else if (ann.type === "weekly_promoter") {
-            messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
-              `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
-              `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
-              `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
-              `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
-            photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
+            if (!ann.text || ann.text === "Weekly Promoter placeholder") {
+              messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
+                `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
+                `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
+                `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
+                `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
+            }
+            if (!ann.photoUrl) {
+              photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
+            }
           } else if (ann.type === "join_play") {
             const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);
             const miniVipSlots = formatEmojiNumbers(await generateSlotNumbers(50), 50);

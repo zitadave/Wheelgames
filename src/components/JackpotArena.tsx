@@ -858,7 +858,7 @@ export const JackpotArena = React.memo(function JackpotArena({
       )}
 
       {/* Grid coordinates list with scroll support */}
-      <div className={`flex-1 overflow-y-auto px-1 pr-2 pb-6 max-h-[420px] ${tier === 'grand' && gamePhase === 'drawing' ? 'opacity-0' : 'opacity-100'}`}>
+      <div className={`flex-1 overflow-y-auto px-1 pr-2 pb-6 max-h-[420px] ${'opacity-100'}`}>
         
         {/* Progress indicator bar (hidden during active drawing) */}
         {!showTheater && (
@@ -895,7 +895,7 @@ export const JackpotArena = React.memo(function JackpotArena({
 
         {/* Dynamic coordinate tiles (Compact 8x13 and 7x8 structures) */}
         <div 
-          className={`grid gap-1 ${showTheater ? 'opacity-20 pointer-events-none' : 'opacity-100'}`}
+          className={`grid gap-1 ${showTheater ? 'pointer-events-none' : 'opacity-100'}`}
           style={{
             gridTemplateColumns: 'repeat(8, minmax(0, 1fr))'
           }}

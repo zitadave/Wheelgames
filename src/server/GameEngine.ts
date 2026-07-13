@@ -206,10 +206,8 @@ class Room {
               this.state.feed.unshift(`የ${p.username} በዚህ ዙር አልሄድክም`);
             }
               this.io.to(p.userId).emit('refund', refund);
-
               // Update user balance in DB
               txManager.modifyBalance(p.userId, refund, "refund", "Partial Refund / Balance Adjust").then((res) => { if (res.success) { this.io.to(`user_${p.userId}`).emit("syncBalance", res.newBalance); } });
-
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
                 user_id: p.userId,
@@ -223,10 +221,8 @@ class Room {
               p.amount = 0; // effectively removed
               this.state.feed.unshift(`የ${p.username} በዚህ ዙር አልሄድክም`);
               this.io.to(p.userId).emit('refund', refund);
-
               // Update user balance in DB
               txManager.modifyBalance(p.userId, refund, "refund", "Partial Refund / Balance Adjust").then((res) => { if (res.success) { this.io.to(`user_${p.userId}`).emit("syncBalance", res.newBalance); } });
-
               // Log refund to DB for factual reporting
               supabase.from("transactions").insert({
                 user_id: p.userId,
@@ -257,12 +253,12 @@ class Room {
     // Even numbers: 2, 4, 6. Odd numbers: 1, 3, 5
     const evenNumbers = [2, 4, 6];
     const oddNumbers = [1, 3, 5];
+
     this.state.winner = isEvenWinner 
-      ? evenNumbers[Math.floor(Math.random() * evenNumbers.length)] 
-      : oddNumbers[Math.floor(Math.random() * oddNumbers.length)];
+       ? evenNumbers[Math.floor(Math.random() * evenNumbers.length)]
+       : oddNumbers[Math.floor(Math.random() * oddNumbers.length)];
 
     this.broadcastState();
-
     this.timer = setInterval(() => this.tick(), 1000);
   }
 
