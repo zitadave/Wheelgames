@@ -615,6 +615,8 @@ export const JackpotArena = React.memo(function JackpotArena({
     }, 5000);
   };
 
+  const [pendingClaims, setPendingClaims] = useState<Set<number>>(new Set());
+
   const handleClaimSlot = (num: number) => {
     if (gamePhase !== 'lobby') {
       showNotification('Grid coordinates are currently locked for drawing!', 'error');
@@ -624,7 +626,17 @@ export const JackpotArena = React.memo(function JackpotArena({
     if (activeGrid[num]) {
       if (activeGrid[num].isSelf) {
         // Unclaim
+        setPendingClaims(prev => {
+          const next = new Set(prev);
+          next.add(num);
+          return next;
+        });
         socket?.emit('grid_releaseSlot', { room: tier, num, userId }, (res: any) => {
+           setPendingClaims(prev => {
+             const next = new Set(prev);
+             next.delete(num);
+             return next;
+           });
            if (res?.success) {
               // The server handles balance updates and transaction logging
               socket?.emit('syncUser', userId, username, photoUrl);
@@ -643,7 +655,19 @@ export const JackpotArena = React.memo(function JackpotArena({
       return;
     }
 
+    // Optimistic pending state
+    setPendingClaims(prev => {
+      const next = new Set(prev);
+      next.add(num);
+      return next;
+    });
+
     socket?.emit('grid_claimSlot', { room: tier, num, userId, username, photoUrl }, (res: any) => {
+       setPendingClaims(prev => {
+         const next = new Set(prev);
+         next.delete(num);
+         return next;
+       });
        if (res?.success) {
           // The server handles balance updates and transaction logging
           socket?.emit('syncUser', userId, username, photoUrl);
@@ -923,6 +947,7 @@ export const JackpotArena = React.memo(function JackpotArena({
             const item = activeGrid[num];
             const isVaporized = vaporizedSlots.includes(num);
             const isWinner = Object.values(winners).includes(num);
+            const isPending = pendingClaims.has(num);
             
             // Check if blitz is active on this coordinates slot (Dynamic visual trace)
             const isBlitzActive = blitzActiveTile === num;
@@ -938,7 +963,8 @@ export const JackpotArena = React.memo(function JackpotArena({
               );
             }
 
-            if (item) {
+            if (item || isPending) {
+              const isSelf = item?.isSelf || isPending;
               return (
                 <motion.div
                   key={num}
@@ -949,28 +975,32 @@ export const JackpotArena = React.memo(function JackpotArena({
                       ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
                       : isBlitzActive
                       ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
-                      : item.isSelf
-                      ? 'bg-gradient-to-br from-yellow-400 via-amber-500 to-yellow-600 border-yellow-300 text-black shadow-[0_0_20px_rgba(245,158,11,0.6)] ring-2 ring-yellow-400 scale-110 z-30 font-black'
-                      : 'bg-gray-100 dark:bg-gray-950 border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-600 grayscale opacity-80'
+                      : isSelf
+                      ? `bg-gradient-to-br from-yellow-400 via-amber-500 to-yellow-600 border-yellow-300 text-black shadow-[0_0_20px_rgba(245,158,11,0.7)] ring-2 ring-yellow-400 scale-110 z-30 font-black ${isPending ? 'animate-pulse opacity-70' : ''}`
+                      : 'bg-gray-200/50 dark:bg-gray-900/40 border-gray-300 dark:border-gray-800 text-gray-400 dark:text-gray-600 grayscale opacity-60'
                   }`}
                   style={isBlitzActive ? { opacity: 1 } : undefined}
                 >
-                  {item.photoUrl && !isBlitzActive && !isWinner && !item.isSelf ? (
+                  {isSelf && (
+                    <div className="absolute top-0 right-0 bg-black text-yellow-400 text-[5px] px-1 rounded-bl-md font-bold z-20">MINE</div>
+                  )}
+
+                  {item?.photoUrl && !isBlitzActive && !isWinner && !isSelf ? (
                      <div className="absolute inset-0 opacity-20 pointer-events-none">
                        <img src={item.photoUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                      </div>
                   ) : null}
                   
-                  <span className={`text-[10px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-black' : ''}`}>{num}</span>
-                  <div className={`flex items-center gap-0.5 text-[6px] font-semibold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${item.isSelf ? 'text-black' : ''}`}>
-                    {item.isSelf ? (
+                  <span className={`text-[10px] font-black font-mono leading-none z-10 ${isSelf ? 'text-black' : ''}`}>{num}</span>
+                  <div className={`flex items-center gap-0.5 text-[6px] font-semibold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${isSelf ? 'text-black' : ''}`}>
+                    {isSelf ? (
                       <Crown className="w-1.5 h-1.5 shrink-0 text-black" />
-                    ) : item.photoUrl ? (
+                    ) : item?.photoUrl ? (
                       <img src={item.photoUrl} alt="Avatar" className="w-2 h-2 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
                     ) : (
                       <Lock className="w-1.5 h-1.5 shrink-0" />
                     )}
-                    <span className="truncate max-w-[24px]">{item.isSelf ? 'YOU' : item.username}</span>
+                    <span className="truncate max-w-[24px]">{isSelf ? (isPending ? '...' : 'YOU') : (item?.username || '...')}</span>
                   </div>
                 </motion.div>
               );
@@ -980,19 +1010,19 @@ export const JackpotArena = React.memo(function JackpotArena({
               <motion.button
                 key={num}
                 onClick={() => handleClaimSlot(num)}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className={`aspect-square rounded-lg bg-white dark:bg-gray-800/50 border-2 border-blue-500/30 dark:border-blue-400/20 flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all ${
+                whileHover={{ scale: 1.08, zIndex: 10 }}
+                whileTap={{ scale: 0.92 }}
+                className={`aspect-square rounded-lg bg-white dark:bg-gray-800 border-2 border-blue-600/40 dark:border-blue-400/30 flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-600 dark:hover:border-blue-400 hover:shadow-lg hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all relative ${
                   isBlitzActive
                     ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                     : ''
                 }`}
                 style={isBlitzActive ? { opacity: 1 } : undefined}
               >
-                <span className="text-[11px] font-black font-mono text-gray-900 dark:text-gray-100 leading-none">{num}</span>
-                <div className="flex items-center gap-0.5 mt-0.5">
-                  <span className="text-[7px] font-black text-blue-600 dark:text-blue-400 tracking-tighter">2K</span>
-                  <div className="w-1 h-1 rounded-full bg-blue-500 animate-pulse" />
+                <div className="absolute top-0.5 right-0.5 w-1 h-1 rounded-full bg-blue-500/50" />
+                <span className="text-[12px] font-black font-mono text-gray-900 dark:text-white leading-none drop-shadow-sm">{num}</span>
+                <div className="flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-blue-100/50 dark:bg-blue-900/30">
+                  <span className="text-[6px] font-black text-blue-700 dark:text-blue-300 tracking-tighter uppercase">{currentConfig.entry / 1000}K</span>
                 </div>
               </motion.button>
             );

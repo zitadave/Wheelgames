@@ -435,7 +435,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                         ? 'bg-gradient-to-br from-yellow-400 to-amber-600 border-yellow-300 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-110 z-20 active:scale-90 cursor-pointer font-black ring-2 ring-yellow-400'
                         : isTaken
                         ? 'bg-red-600 border-red-500 text-white cursor-not-allowed'
-                        : 'bg-white dark:bg-[#1a1c2e] border-gray-200 dark:border-gray-800/50 text-gray-400 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#252841] active:scale-90 cursor-pointer'
+                        : 'bg-white dark:bg-[#1a1c2e] border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 active:scale-90 cursor-pointer shadow-sm'
                     }`}
                   >
                     <span>{id}</span>
