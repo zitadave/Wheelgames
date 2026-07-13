@@ -878,8 +878,10 @@ export function initGameEngine(io: Server) {
 
     socket.on("grid_join", async (roomName: string) => {
       socket.join(roomName);
-      await syncFromSupabase();
-      if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
+      if (!gridRooms[roomName]) {
+        await syncFromSupabase();
+        if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
+      }
       socket.emit("grid_state", gridRooms[roomName]);
     });
 
@@ -1032,14 +1034,16 @@ export function initGameEngine(io: Server) {
     });
 
     socket.on("grid_nextRound", async (roomName: string) => {
-       await syncFromSupabase();
        const room = gridRooms[roomName];
        if (room) {
-          room.claimedSlots = {};
-          room.roundId += 1;
-          delete room.winners;
-          saveGridState();
-          io.to(roomName).emit("grid_state", room);
+          const maxSlots = roomName === '1-10' ? 10 : roomName === '1-20' ? 20 : roomName === 'mini' ? 50 : 100;
+          if (Object.keys(room.claimedSlots).length >= maxSlots) {
+             room.claimedSlots = {};
+             room.roundId += 1;
+             delete room.winners;
+             saveGridState();
+             io.to(roomName).emit("grid_state", room);
+          }
        }
     });
 

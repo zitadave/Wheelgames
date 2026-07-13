@@ -59,6 +59,9 @@ export const WheelOfChance = React.memo(function WheelOfChance({
 
   // Game flow states
   const [phase, setPhase] = useState<GamePhase>('lobby');
+  const phaseRef = useRef(phase);
+  const isResettingRef = useRef(false);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
   const [countdown, setCountdown] = useState<number>(5);
   const [claimedSlots, setClaimedSlots] = useState<{ [key: number]: { isSelf: boolean; username: string; photoUrl?: string } }>({});
   const serverWinnersRef = useRef<any>(null);
@@ -70,6 +73,13 @@ export const WheelOfChance = React.memo(function WheelOfChance({
     socket.emit('grid_join', activeRoom);
     
     const onGridState = (state: any) => {
+       if (isResettingRef.current) {
+         if (state.roundId && state.roundId < roundIdsRef.current[activeRoom]) {
+            return;
+         }
+         isResettingRef.current = false;
+         setPhase('lobby');
+       }
        if (!state) return;
        
        if (state.history) {
@@ -99,7 +109,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
          serverWinnersRef.current = null;
        }
        
-       if (Object.keys(newClaimed).length === maxSlots && phase === 'lobby') {
+       if (Object.keys(newClaimed).length === maxSlots && phaseRef.current === 'lobby') {
           startCountdown();
        }
     };
@@ -109,7 +119,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
        socket.emit('grid_leave', activeRoom);
        socket.off('grid_state', onGridState);
     };
-  }, [socket, activeRoom, isActive, phase]);
+  }, [socket, activeRoom, isActive]);
   const [activeSectors, setActiveSectors] = useState<number[]>(() => {
     const saved = sessionStorage.getItem(`wheelOfChanceState_${activeRoom}`);
     if (saved) {
@@ -125,10 +135,13 @@ export const WheelOfChance = React.memo(function WheelOfChance({
   const [winners, setWinners] = useState<{ 1?: number; 2?: number; 3?: number }>({});
   const [justDrawnWinner, setJustDrawnWinner] = useState<number | null>(null);
   const [statusFilament, setStatusFilament] = useState<string>('• Room open. Reserve your ticket to start...');
+  const roundIdsRef = useRef({ "1-10": 0, "1-20": 0 });
   const [roundIds, setRoundIds] = useState<{ '1-10': number; '1-20': number }>(() => ({
     '1-10': Math.floor(Math.random() * 9000) + 1000,
     '1-20': Math.floor(Math.random() * 9000) + 1000
   }));
+  useEffect(() => { roundIdsRef.current = roundIds; }, [roundIds]);
+
   const [history, setHistory] = useState<{ '1-10': ChanceHistoryItem[]; '1-20': ChanceHistoryItem[] }>({
     '1-10': [],
     '1-20': []

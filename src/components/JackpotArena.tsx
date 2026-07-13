@@ -72,6 +72,9 @@ export const JackpotArena = React.memo(function JackpotArena({
   // Game phases:
   // 'lobby' -> 'freeze' -> 'drawing' -> 'winner' -> 'vaporizing' -> 'complete'
   const [gamePhase, setGamePhase] = useState<'lobby' | 'freeze' | 'drawing' | 'winner' | 'vaporizing' | 'complete'>('lobby');
+  const gamePhaseRef = useRef(gamePhase);
+  const isResettingRef = useRef(false);
+  useEffect(() => { gamePhaseRef.current = gamePhase; }, [gamePhase]);
   
   // Track currently drawn winners for the 3 slots (1st, 2nd, 3rd)
   const [drawNumber, setDrawNumber] = useState<1 | 2 | 3>(1);
@@ -87,6 +90,15 @@ export const JackpotArena = React.memo(function JackpotArena({
     socket.emit('grid_join', tier);
     
     const onGridState = (state: any) => {
+       if (isResettingRef.current) {
+         // If the state's roundId is less than what we optimistically set, it's the stale grid.
+         // If it's equal or greater, the server has processed a nextRound (ours or someone else's).
+         if (state.roundId && state.roundId < roundIdsRef.current[tier]) {
+            return;
+         }
+         isResettingRef.current = false;
+         setGamePhase('lobby');
+       }
        if (!state) return;
        
        if (state.history) {
@@ -120,7 +132,7 @@ export const JackpotArena = React.memo(function JackpotArena({
          serverWinnersRef.current = null;
        }
        
-       if (Object.keys(newClaimed).length === config[tier].slots && gamePhase === 'lobby') {
+       if (Object.keys(newClaimed).length === config[tier].slots && gamePhaseRef.current === 'lobby') {
           setGamePhase('freeze');
           setFreezeCountdown(10);
        }
@@ -131,14 +143,17 @@ export const JackpotArena = React.memo(function JackpotArena({
        socket.emit('grid_leave', tier);
        socket.off('grid_state', onGridState);
     };
-  }, [socket, tier, isActive, gamePhase]);
+  }, [socket, tier, isActive]);
   const [winners, setWinners] = useState<{ first?: number; second?: number; third?: number }>({});
   const [vaporizedSlots, setVaporizedSlots] = useState<number[]>([]);
 
+  const roundIdsRef = useRef({ mini: 0, grand: 0 });
   const [roundIds, setRoundIds] = useState<{ mini: number; grand: number }>(() => ({
     mini: Math.floor(Math.random() * 9000) + 1000,
     grand: Math.floor(Math.random() * 9000) + 1000
   }));
+  useEffect(() => { roundIdsRef.current = roundIds; }, [roundIds]);
+
   const [history, setHistory] = useState<{ mini: JackpotHistoryItem[]; grand: JackpotHistoryItem[] }>({
     mini: [],
     grand: []
@@ -328,11 +343,14 @@ export const JackpotArena = React.memo(function JackpotArena({
     
     socket?.emit('grid_nextRound', tier);
     
-    setGamePhase('lobby');
+    // setGamePhase('lobby'); // Delayed until empty grid arrives
+    isResettingRef.current = true;
     setDrawNumber(1);
     setWinners({});
     setVaporizedSlots([]);
     setBlitzActiveTile(null);
+    setMiniGrid({});
+    setGrandGrid({});
     setReelHundred('0');
     setReelTen('0');
     setReelOne('0');

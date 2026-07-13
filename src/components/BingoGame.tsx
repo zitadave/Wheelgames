@@ -76,6 +76,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
   }, [roomState?.status, soundEnabled]);
 
   const prevCalledBallsLengthRef = useRef<number>(0);
+  const pendingUpdateRef = useRef(false);
 
   useEffect(() => {
     if (roomState?.status === 'playing') {
@@ -138,7 +139,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
     if (roomState?.players && roomState.players[userId]) {
       setIsJoined(true);
       // Ensure we reflect the exact cards they bought
-      setSelectedCards(roomState.players[userId].cards);
+      if (!pendingUpdateRef.current) setSelectedCards(roomState.players[userId].cards);
     } else {
       setIsJoined(false);
       // If the game started and they never joined, clear their selection so they see "Watching Only"
@@ -170,6 +171,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
     }
     
     setSelectedCards(newSelected);
+    pendingUpdateRef.current = true;
     
     // Auto-join if cards are selected
     if (newSelected.length > 0) {
@@ -193,10 +195,14 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
       cards: cards,
       photoUrl: photoUrl || undefined
     }, (res: any) => {
-      if (res.success) {
+      pendingUpdateRef.current = false;
+        if (res.success) {
         setIsJoined(true);
       } else {
         showNotification(res.message, "error");
+          pendingUpdateRef.current = false;
+          if (roomState?.players[userId]) setSelectedCards(roomState.players[userId].cards);
+          else setSelectedCards([]);
       }
     });
   };
