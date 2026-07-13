@@ -2718,7 +2718,26 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         return;
       }
 
-      if (cmdName === "gridstate") {
+      if (cmdName === "checkadmin") {
+      const isAdmin = isAnyAdmin(userIdNum);
+      const isPrimary = userIdNum === getPrimaryOwnerId();
+      let status = `🔍 <b>Admin Status Check</b>\n\n`;
+      status += `👤 <b>Your User ID:</b> <code>${userIdNum}</code>\n`;
+      status += `👑 <b>Is Admin:</b> ${isAdmin ? "✅ Yes" : "❌ No"}\n`;
+      status += `⭐ <b>Is Primary Owner:</b> ${isPrimary ? "✅ Yes" : "❌ No"}\n\n`;
+      
+      if (isAdmin) {
+        status += `📊 <b>Notification Queue:</b> ${adminChatIds.size} admins listed.\n`;
+        status += `📝 <b>List:</b> <code>${Array.from(adminChatIds).join(', ')}</code>\n\n`;
+        status += `<i>If you are in the list but not receiving messages, ensure you have messaged this bot directly in private!</i>`;
+      } else {
+        status += `⚠️ <b>Note:</b> If you should be an admin, please ensure your User ID is added to <code>TELEGRAM_ADMIN_IDS</code> in the Settings menu.`;
+      }
+      
+      return bot.sendMessage(chatId, status, { parse_mode: "HTML" }).catch(() => {});
+    }
+
+    if (cmdName === "gridstate") {
         if (!isAnyAdmin(userIdNum)) return;
         const { gridRooms } = await import("./gridState.js");
         let status = "🎲 <b>Grid Rooms State:</b>\n\n";
@@ -4151,21 +4170,26 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
 
       logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new deposit request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
-      adminChatIds.forEach(adminId => {
-        bot.sendMessage(adminId, adminMsg, {
-          parse_mode: "HTML",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: "Approve ✅", callback_data: `approve_dep_${requestId}` },
-                { text: "Decline ❌", callback_data: `decline_dep_${requestId}` }
+      adminChatIds.forEach(async (adminId) => {
+        try {
+          await bot.sendMessage(adminId, adminMsg, {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "Approve ✅", callback_data: `approve_dep_${requestId}` },
+                  { text: "Decline ❌", callback_data: `decline_dep_${requestId}` }
+                ]
               ]
-            ]
-          }
-        }).catch(e => {
+            }
+          });
+          logBot(`[ADMIN-NOTIFY] Successfully sent deposit notification to admin ${adminId}`);
+        } catch (e: any) {
           logBot(`[ADMIN-NOTIFY] Failed to notify admin ${adminId} of deposit: ${e.message}`);
-          console.error(`Failed to notify admin ${adminId} of deposit:`, e);
-        });
+          if (e.message.includes('bot was blocked') || e.message.includes('chat not found')) {
+            logBot(`[ADMIN-NOTIFY] CRITICAL: Admin ${adminId} has not started the bot or has blocked it.`);
+          }
+        }
       });
       return;
     }
@@ -4317,21 +4341,26 @@ const withdrawalCooldowns = new Map<string, number>();
         adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
 
         logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new withdrawal request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
-        adminChatIds.forEach(adminId => {
-          bot.sendMessage(adminId, adminMsg, {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "Approve ✅", callback_data: `approve_wd_${requestId}` },
-                  { text: "Decline ❌", callback_data: `decline_wd_${requestId}` }
+        adminChatIds.forEach(async (adminId) => {
+          try {
+            await bot.sendMessage(adminId, adminMsg, {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "Approve ✅", callback_data: `approve_wd_${requestId}` },
+                    { text: "Decline ❌", callback_data: `decline_wd_${requestId}` }
+                  ]
                 ]
-              ]
-            }
-          }).catch(e => {
+              }
+            });
+            logBot(`[ADMIN-NOTIFY] Successfully sent withdrawal notification to admin ${adminId}`);
+          } catch (e: any) {
             logBot(`[ADMIN-NOTIFY] Failed to notify admin ${adminId} of withdrawal: ${e.message}`);
-            console.error(`Failed to notify admin ${adminId} of withdrawal:`, e);
-          });
+            if (e.message.includes('bot was blocked') || e.message.includes('chat not found')) {
+              logBot(`[ADMIN-NOTIFY] CRITICAL: Admin ${adminId} has not started the bot or has blocked it.`);
+            }
+          }
         });
 
       } catch (err) {
@@ -8360,13 +8389,14 @@ const withdrawalCooldowns = new Map<string, number>();
 
         // Unique verification Ref
         const refCode = "DEP_" + generateRef(10);
+        const escapedUsername = escapeHTML(request.username);
 
         // Send confirmation to User
         const successMsg = promptsConfig.deposit_approved_msg
           .replace(/{amount}/g, request.amount.toLocaleString())
           .replace(/{ref}/g, refCode);
         await bot.sendMessage(request.chatId, successMsg, { parse_mode: "Markdown" });
-        await postToChannel(`✅ <b>New Deposit Confirmed!</b>\n\n👤 <b>User:</b> @${request.username}\n💰 <b>Amount:</b> <code>${request.amount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${refCode}</code>`);
+        await postToChannel(`✅ <b>New Deposit Confirmed!</b>\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${request.amount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${refCode}</code>`);
 
         // Update Client App UI Instantly via socket
         io.emit('balanceUpdated', { userId: request.userId, balance: newBalance });
@@ -8376,20 +8406,25 @@ const withdrawalCooldowns = new Map<string, number>();
         savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         // Update Admin inline message
-        const adminUsername = query.from.username || query.from.first_name || "Admin";
-        const updatedAdminMsg = `📥 *DEPOSIT APPROVED (Ref: ${refCode})*\n\n` +
-          `👤 *User:* @${request.username} (${request.fullName})\n` +
-          `🆔 *User ID:* \`${request.userId}\`\n` +
-          `💰 *Amount:* *${request.amount.toLocaleString()} ETB*\n` +
-          `🏦 *Bank:* *${request.bank}*\n` +
-          `📝 *Pasted Receipt SMS:*\n\`\`\`\n${request.receiptText}\n\`\`\`\n\n` +
-          `✅ *Approved by admin:* @${adminUsername}`;
+        const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
+        const adminUsername = escapeHTML(rawAdminUsername);
+        const escapedFullName = escapeHTML(request.fullName);
+        const escapedBank = escapeHTML(request.bank);
+        const escapedReceipt = escapeHTML(request.receiptText || "");
+
+        const updatedAdminMsg = `📥 <b>DEPOSIT APPROVED (Ref: ${refCode})</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `📝 <b>Pasted Receipt SMS:</b>\n<pre>${escapedReceipt}</pre>\n\n` +
+          `✅ <b>Approved by admin:</b> @${adminUsername}`;
 
         if (messageId) {
           bot.editMessageText(updatedAdminMsg, {
             chat_id: chatId,
             message_id: messageId,
-            parse_mode: "Markdown"
+            parse_mode: "HTML"
           }).catch(e => console.error("Admin msg update failed:", e));
         }
 
@@ -8424,20 +8459,26 @@ const withdrawalCooldowns = new Map<string, number>();
         bot.answerCallbackQuery(query.id, { text: "❌ Deposit Declined" });
 
         // Update Admin inline message
-        const adminUsername = query.from.username || query.from.first_name || "Admin";
-        const updatedAdminMsg = `📥 *DEPOSIT DECLINED*\n\n` +
-          `👤 *User:* @${request.username} (${request.fullName})\n` +
-          `🆔 *User ID:* \`${request.userId}\`\n` +
-          `💰 *Amount:* *${request.amount.toLocaleString()} ETB*\n` +
-          `🏦 *Bank:* *${request.bank}*\n` +
-          `📝 *Pasted Receipt SMS:*\n\`\`\`\n${request.receiptText}\n\`\`\`\n\n` +
-          `❌ *Declined by admin:* @${adminUsername}`;
+        const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
+        const adminUsername = escapeHTML(rawAdminUsername);
+        const escapedUsername = escapeHTML(request.username);
+        const escapedFullName = escapeHTML(request.fullName);
+        const escapedBank = escapeHTML(request.bank);
+        const escapedReceipt = escapeHTML(request.receiptText || "");
+
+        const updatedAdminMsg = `📥 <b>DEPOSIT DECLINED</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `📝 <b>Pasted Receipt SMS:</b>\n<pre>${escapedReceipt}</pre>\n\n` +
+          `❌ <b>Declined by admin:</b> @${adminUsername}`;
 
         if (messageId) {
           bot.editMessageText(updatedAdminMsg, {
             chat_id: chatId,
             message_id: messageId,
-            parse_mode: "Markdown"
+            parse_mode: "HTML"
           }).catch(e => console.error("Admin msg update failed:", e));
         }
 
@@ -8469,13 +8510,14 @@ const withdrawalCooldowns = new Map<string, number>();
 
         // Unique Verification Ref
         const refCode = "WD_" + generateRef(10);
+        const escapedUsername = escapeHTML(request.username);
 
         // Send confirmation to User
         const successMsg = promptsConfig.withdraw_approved_msg
           .replace(/{amount}/g, request.amount.toLocaleString())
           .replace(/{ref}/g, refCode);
         await bot.sendMessage(request.chatId, successMsg, { parse_mode: "Markdown" });
-        await postToChannel(`📤 <b>New Withdrawal Processed!</b>\n\n👤 <b>User:</b> @${request.username}\n💰 <b>Amount:</b> <code>${request.amount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${refCode}</code>`);
+        await postToChannel(`📤 <b>New Withdrawal Processed!</b>\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${request.amount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${refCode}</code>`);
 
         // Delete from pending store and sync
         pendingRequests.delete(requestId);
@@ -8484,20 +8526,25 @@ const withdrawalCooldowns = new Map<string, number>();
         bot.answerCallbackQuery(query.id, { text: "✅ Withdrawal Approved!" });
 
         // Update Admin inline message
-        const adminUsername = query.from.username || query.from.first_name || "Admin";
-        const updatedAdminMsg = `📤 *WITHDRAWAL APPROVED (Ref: ${refCode})*\n\n` +
-          `👤 *User:* @${request.username} (${request.fullName})\n` +
-          `🆔 *User ID:* \`${request.userId}\`\n` +
-          `💰 *Amount:* *${request.amount.toLocaleString()} ETB*\n` +
-          `🏦 *Bank:* *${request.bank}*\n` +
-          `💳 *Account/Phone:* \`${request.account}\`\n\n` +
-          `✅ *Approved by admin:* @${adminUsername}`;
+        const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
+        const adminUsername = escapeHTML(rawAdminUsername);
+        const escapedFullName = escapeHTML(request.fullName);
+        const escapedBank = escapeHTML(request.bank);
+        const escapedAccount = escapeHTML(request.account || "");
+
+        const updatedAdminMsg = `📤 <b>WITHDRAWAL APPROVED (Ref: ${refCode})</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `💳 <b>Account/Phone:</b> <code>${escapedAccount}</code>\n\n` +
+          `✅ <b>Approved by admin:</b> @${adminUsername}`;
 
         if (messageId) {
           bot.editMessageText(updatedAdminMsg, {
             chat_id: chatId,
             message_id: messageId,
-            parse_mode: "Markdown"
+            parse_mode: "HTML"
           }).catch(e => console.error("Admin msg update failed:", e));
         }
 
@@ -8550,20 +8597,26 @@ const withdrawalCooldowns = new Map<string, number>();
         bot.answerCallbackQuery(query.id, { text: "❌ Withdrawal Declined" });
 
         // Update Admin inline message
-        const adminUsername = query.from.username || query.from.first_name || "Admin";
-        const updatedAdminMsg = `📤 *WITHDRAWAL DECLINED & REFUNDED*\n\n` +
-          `👤 *User:* @${request.username} (${request.fullName})\n` +
-          `🆔 *User ID:* \`${request.userId}\`\n` +
-          `💰 *Amount:* *${request.amount.toLocaleString()} ETB*\n` +
-          `🏦 *Bank:* *${request.bank}*\n` +
-          `💳 *Account/Phone:* \`${request.account}\`\n\n` +
-          `❌ *Declined by admin:* @${adminUsername}`;
+        const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
+        const adminUsername = escapeHTML(rawAdminUsername);
+        const escapedUsername = escapeHTML(request.username);
+        const escapedFullName = escapeHTML(request.fullName);
+        const escapedBank = escapeHTML(request.bank);
+        const escapedAccount = escapeHTML(request.account || "");
+
+        const updatedAdminMsg = `📤 <b>WITHDRAWAL DECLINED & REFUNDED</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `💳 <b>Account/Phone:</b> <code>${escapedAccount}</code>\n\n` +
+          `❌ <b>Declined by admin:</b> @${adminUsername}`;
 
         if (messageId) {
           bot.editMessageText(updatedAdminMsg, {
             chat_id: chatId,
             message_id: messageId,
-            parse_mode: "Markdown"
+            parse_mode: "HTML"
           }).catch(e => console.error("Admin msg update failed:", e));
         }
 

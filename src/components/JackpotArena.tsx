@@ -118,7 +118,7 @@ export const JackpotArena = React.memo(function JackpotArena({
        const newClaimed: any = {};
        Object.keys(state.claimedSlots).forEach((k) => {
          const slot = state.claimedSlots[k as any];
-         newClaimed[Number(k)] = { ...slot, isSelf: slot.userId === userId };
+         newClaimed[Number(k)] = { ...slot, isSelf: slot.userId?.toString() === userId?.toString() };
        });
        if (tier === 'mini') {
          setMiniGrid(newClaimed);
@@ -143,7 +143,7 @@ export const JackpotArena = React.memo(function JackpotArena({
        socket.emit('grid_leave', tier);
        socket.off('grid_state', onGridState);
     };
-  }, [socket, tier, isActive]);
+  }, [socket, tier, isActive, userId]);
   const [winners, setWinners] = useState<{ first?: number; second?: number; third?: number }>({});
   const [vaporizedSlots, setVaporizedSlots] = useState<number[]>([]);
 
@@ -950,25 +950,27 @@ export const JackpotArena = React.memo(function JackpotArena({
                       : isBlitzActive
                       ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                       : item.isSelf
-                      ? 'bg-gradient-to-b from-blue-600 to-indigo-700 border-blue-400 text-white shadow-xs'
-                      : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-300'
+                      ? 'bg-gradient-to-br from-yellow-400 via-amber-500 to-yellow-600 border-yellow-300 text-black shadow-[0_0_20px_rgba(245,158,11,0.6)] ring-2 ring-yellow-400 scale-110 z-30 font-black'
+                      : 'bg-gray-100 dark:bg-gray-950 border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-600 grayscale opacity-80'
                   }`}
                   style={isBlitzActive ? { opacity: 1 } : undefined}
                 >
-                  {item.photoUrl && !isBlitzActive && !isWinner ? (
+                  {item.photoUrl && !isBlitzActive && !isWinner && !item.isSelf ? (
                      <div className="absolute inset-0 opacity-20 pointer-events-none">
                        <img src={item.photoUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                      </div>
                   ) : null}
                   
-                  <span className="text-[10px] font-black font-mono leading-none z-10">{num}</span>
-                  <div className="flex items-center gap-0.5 text-[6px] font-semibold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10">
-                    {item.photoUrl ? (
+                  <span className={`text-[10px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-black' : ''}`}>{num}</span>
+                  <div className={`flex items-center gap-0.5 text-[6px] font-semibold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${item.isSelf ? 'text-black' : ''}`}>
+                    {item.isSelf ? (
+                      <Crown className="w-1.5 h-1.5 shrink-0 text-black" />
+                    ) : item.photoUrl ? (
                       <img src={item.photoUrl} alt="Avatar" className="w-2 h-2 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
                     ) : (
                       <Lock className="w-1.5 h-1.5 shrink-0" />
                     )}
-                    <span className="truncate max-w-[24px]">{item.isSelf ? 'You' : item.username}</span>
+                    <span className="truncate max-w-[24px]">{item.isSelf ? 'YOU' : item.username}</span>
                   </div>
                 </motion.div>
               );
@@ -978,17 +980,20 @@ export const JackpotArena = React.memo(function JackpotArena({
               <motion.button
                 key={num}
                 onClick={() => handleClaimSlot(num)}
-                whileHover={{ scale: 1.02 }}
+                whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className={`aspect-square rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-0.5 shadow-xs hover:border-blue-400 transition-all ${
+                className={`aspect-square rounded-lg bg-white dark:bg-gray-800/50 border-2 border-blue-500/30 dark:border-blue-400/20 flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all ${
                   isBlitzActive
                     ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                     : ''
                 }`}
                 style={isBlitzActive ? { opacity: 1 } : undefined}
               >
-                <span className="text-[10px] font-black font-mono text-gray-900 dark:text-gray-100 leading-none">{num}</span>
-                <span className="text-[7px] font-black text-blue-600 dark:text-blue-400 tracking-tighter mt-0.5">2K</span>
+                <span className="text-[11px] font-black font-mono text-gray-900 dark:text-gray-100 leading-none">{num}</span>
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  <span className="text-[7px] font-black text-blue-600 dark:text-blue-400 tracking-tighter">2K</span>
+                  <div className="w-1 h-1 rounded-full bg-blue-500 animate-pulse" />
+                </div>
               </motion.button>
             );
           })}

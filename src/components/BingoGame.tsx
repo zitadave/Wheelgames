@@ -432,7 +432,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                     }}
                     className={`h-9 rounded-md font-medium text-[10px] transition-all border flex items-center justify-center shadow-sm ${
                       isSelectedByMe
-                        ? 'bg-green-600 border-green-500 text-white shadow-green-500/30 scale-105 z-10 active:scale-90 cursor-pointer'
+                        ? 'bg-gradient-to-br from-yellow-400 to-amber-600 border-yellow-300 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-110 z-20 active:scale-90 cursor-pointer font-black ring-2 ring-yellow-400'
                         : isTaken
                         ? 'bg-red-600 border-red-500 text-white cursor-not-allowed'
                         : 'bg-white dark:bg-[#1a1c2e] border-gray-200 dark:border-gray-800/50 text-gray-400 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#252841] active:scale-90 cursor-pointer'
