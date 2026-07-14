@@ -99,7 +99,12 @@ export const WheelOfChance = React.memo(function WheelOfChance({
        const newClaimed: any = {};
        Object.keys(state.claimedSlots).forEach((k) => {
          const slot = state.claimedSlots[k as any];
-         newClaimed[Number(k)] = { ...slot, isSelf: slot.userId === userId };
+         const isSelf = !!(
+           slot.isSelf ||
+           (slot.userId !== undefined && slot.userId !== null && userId !== undefined && userId !== null && slot.userId.toString().trim() === userId.toString().trim()) ||
+           (slot.username && username && slot.username.toLowerCase().trim() === username.toLowerCase().trim())
+         );
+         newClaimed[Number(k)] = { ...slot, isSelf };
        });
        setClaimedSlots(newClaimed);
        
@@ -119,7 +124,7 @@ export const WheelOfChance = React.memo(function WheelOfChance({
        socket.emit('grid_leave', activeRoom);
        socket.off('grid_state', onGridState);
     };
-  }, [socket, activeRoom, isActive]);
+  }, [socket, activeRoom, isActive, userId, username]);
   const [activeSectors, setActiveSectors] = useState<number[]>(() => {
     const saved = sessionStorage.getItem(`wheelOfChanceState_${activeRoom}`);
     if (saved) {

@@ -120,7 +120,12 @@ export const JackpotArena = React.memo(function JackpotArena({
        const newClaimed: any = {};
        Object.keys(state.claimedSlots).forEach((k) => {
          const slot = state.claimedSlots[k as any];
-         newClaimed[Number(k)] = { ...slot, isSelf: slot.userId?.toString() === userId?.toString() };
+         const isSelf = !!(
+           slot.isSelf ||
+           (slot.userId !== undefined && slot.userId !== null && userId !== undefined && userId !== null && slot.userId.toString().trim() === userId.toString().trim()) ||
+           (slot.username && username && slot.username.toLowerCase().trim() === username.toLowerCase().trim())
+         );
+         newClaimed[Number(k)] = { ...slot, isSelf };
        });
        if (tier === 'mini') {
          setMiniGrid(newClaimed);
@@ -145,7 +150,7 @@ export const JackpotArena = React.memo(function JackpotArena({
        socket.emit('grid_leave', tier);
        socket.off('grid_state', onGridState);
     };
-  }, [socket, tier, isActive, userId]);
+  }, [socket, tier, isActive, userId, username]);
   const [winners, setWinners] = useState<{ first?: number; second?: number; third?: number }>({});
   const [vaporizedSlots, setVaporizedSlots] = useState<number[]>([]);
 
@@ -226,7 +231,11 @@ export const JackpotArena = React.memo(function JackpotArena({
 
   const getIsSelf = (item: Participant | undefined) => {
     if (!item) return false;
-    return !!(item.isSelf || (item.userId !== undefined && item.userId !== null && item.userId.toString() === userId?.toString()));
+    return !!(
+      item.isSelf ||
+      (item.userId !== undefined && item.userId !== null && userId !== undefined && userId !== null && item.userId.toString().trim() === userId.toString().trim()) ||
+      (item.username && username && item.username.toLowerCase().trim() === username.toLowerCase().trim())
+    );
   };
 
   // Sync theater mode status up to parent
