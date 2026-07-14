@@ -938,11 +938,11 @@ export const JackpotArena = React.memo(function JackpotArena({
                       ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
                       : item.isSelf
                       ? 'bg-blue-500 dark:bg-[#4a85f6] border-blue-400 dark:border-[#5b8bf7] text-white shadow-sm scale-110 z-30'
-                      : 'bg-transparent border-transparent text-gray-400 dark:text-gray-600 opacity-60'
+                      : 'bg-gray-50 dark:bg-[#161b28] border-gray-200 dark:border-[#232a3b]'
                   }`}
                 >
-                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-white' : 'text-gray-500'}`}>{num}</span>
-                  <div className={`flex items-center justify-center mt-0.5 z-10 ${item.isSelf ? '' : 'opacity-60'}`}>
+                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-white' : 'text-gray-500 dark:text-gray-500'}`}>{num}</span>
+                  <div className={`flex items-center justify-center mt-0.5 z-10`}>
                     {item.isSelf ? (
                       <div className="flex items-center gap-0.5 bg-blue-600/20 px-0.5 py-0.5 rounded">
                         <div className="w-2 h-2 rounded-full bg-[#87e1e1] flex items-center justify-center shrink-0">
@@ -951,7 +951,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                         <span className="text-[6px] font-black text-white leading-none tracking-tighter">You</span>
                       </div>
                     ) : (
-                      <Lock className="w-2 h-2 shrink-0 text-gray-500" />
+                      <Lock className="w-2 h-2 shrink-0 text-gray-500 dark:text-gray-500" />
                     )}
                   </div>
                 </motion.div>
