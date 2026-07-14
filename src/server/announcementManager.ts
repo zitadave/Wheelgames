@@ -170,6 +170,19 @@ export async function downloadAndSendPhoto(bot: any, chatId: string | number, ph
       }
     } else {
       // If it's not a URL and doesn't exist on disk, it's likely a Telegram fileId.
+      // However, if it starts with 'uploads/' and doesn't exist, it's a dead local file.
+      if (photoUrl.startsWith("uploads/")) {
+        logBot(`Local file not found at ${fullPath}. Skipping photo since it was a local upload.`);
+        const textOptions = {
+          parse_mode: options.parse_mode || "HTML",
+          reply_markup: options.reply_markup
+        };
+        if (captionText) {
+          await bot.sendMessage(chatId, captionText, textOptions);
+        }
+        return;
+      }
+
       // We try sending it directly to Telegram.
       logBot(`Local file not found at ${fullPath}. Attempting to send as Telegram fileId: ${photoUrl.substring(0, 20)}...`);
       try {
