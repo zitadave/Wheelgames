@@ -927,17 +927,6 @@ export const JackpotArena = React.memo(function JackpotArena({
             // Check if blitz is active on this coordinates slot (Dynamic visual trace)
             const isBlitzActive = blitzActiveTile === num;
 
-            if (isVaporized) {
-              return (
-                <div 
-                  key={num} 
-                  className="aspect-square bg-gray-100 dark:bg-gray-950/60 rounded-lg border border-dashed border-gray-200 dark:border-gray-800/30 flex flex-col items-center justify-center text-gray-400 dark:text-gray-700/20 text-[10px] font-black select-none"
-                >
-                  💨
-                </div>
-              );
-            }
-
             if (item) {
               return (
                 <motion.div
@@ -949,8 +938,9 @@ export const JackpotArena = React.memo(function JackpotArena({
                       ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
                       : item.isSelf
                       ? 'bg-blue-500 dark:bg-[#4a85f6] border-blue-400 dark:border-[#5b8bf7] text-white shadow-sm scale-110 z-30'
-                      : 'bg-transparent border-transparent text-gray-400 dark:text-gray-600 opacity-60'
+                      : 'bg-transparent border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-500 opacity-70 grayscale backdrop-blur-sm'
                   }`}
+                  style={isBlitzActive ? { opacity: 1 } : undefined}
                 >
                   <span className={`text-[11px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-white' : 'text-gray-500'}`}>{num}</span>
                   <div className={`flex items-center justify-center mt-0.5 z-10 ${item.isSelf ? '' : 'opacity-60'}`}>
@@ -968,7 +958,6 @@ export const JackpotArena = React.memo(function JackpotArena({
                 </motion.div>
               );
             }
-
             return (
               <motion.button
                 key={num}
@@ -976,6 +965,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className="aspect-square rounded-lg bg-gray-50 dark:bg-[#161b28] border border-gray-200 dark:border-[#232a3b] flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-[#1c2438] transition-all"
+                style={isBlitzActive ? { opacity: 1 } : undefined}
               >
                 <span className="text-[11px] font-black font-mono text-gray-800 dark:text-white leading-none">{num}</span>
                 <div className="flex items-center mt-0.5">
