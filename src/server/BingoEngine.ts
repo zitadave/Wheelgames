@@ -187,18 +187,35 @@ export class BingoRoom {
 
      // Check each card
      let won = false;
+     let isExpired = false;
      let winType = "";
      let winningCardId = player.cards[0];
      
      for (const cardId of player.cards) {
         const cardNumbers = getDeterministicCard(cardId);
         const checkResult = checkBingo(cardNumbers, this.state.calledBalls);
+        
         if (checkResult.won) {
+           // Missed Call Rule: Check if the Bingo was already achieved before the last ball was called.
+           // If it was already a win before the last ball, they missed their chance for this specific card.
+           if (this.state.calledBalls.length > 1) {
+              const prevBalls = this.state.calledBalls.slice(0, -1);
+              const prevCheck = checkBingo(cardNumbers, prevBalls);
+              if (prevCheck.won) {
+                 isExpired = true;
+                 continue; // They might have another card that just achieved a fresh Bingo
+              }
+           }
+           
            won = true;
            winType = checkResult.type;
            winningCardId = cardId;
            break;
         }
+     }
+
+     if (!won && isExpired) {
+        return { success: false, message: "አልፎአል (Expired)", code: "EXPIRED" };
      }
 
      if (won) {

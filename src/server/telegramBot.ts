@@ -284,6 +284,7 @@ interface PromptsConfig {
   deposit_success_msg: string;
   deposit_approved_msg: string;
   deposit_declined_msg: string;
+  deposit_payment_instructions_msg: string;
   support_text: string;
 
   withdraw_start_msg: string;
@@ -324,6 +325,7 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
   deposit_success_msg: "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
   deposit_approved_msg: "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
   deposit_declined_msg: "❌ *Your deposit of {amount} ETB is Declined.*",
+  deposit_payment_instructions_msg: "1. ከታች ባለው የ*{bank_name}* አካውንት *{amount} ብር* ያስገቡ\n    *Account/Phone:* `{account}`\n    *Name:* `{owner_name}`\n\n2. የከፈሉበትን አጭር የጹሁፍ መልዕክት(message) copy በማድረግ እዚ ላይ Past አድረገው ያስገቡና ይላኩት👇👇👇\n\n_(Please copy and paste the SMS transaction receipt text as response)_",
   support_text: "ሚያጋጥማቹ የክፍያ ችግር:\n@wheelgamessupport\n@wheelgamesupport1 ላይ ፃፉልን።",
 
   withdraw_start_msg: "💰 *ማውጣት የሚፈልጉትን የገንዘብ መጠን ያስገቡ ?*\n\n💳 *የእርስዎ ባላንስ:* `{balance} ETB`\n\n_(Please type the amount you want to withdraw):_",
@@ -3628,6 +3630,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             sectionTitle = "📥 Deposit Flow Prompts";
             sectionButtons = [
               [{ text: "💰 Start Message", callback_data: "edit_key_deposit_start_msg" }],
+              [{ text: "💳 Payment Instructions", callback_data: "edit_key_deposit_payment_instructions_msg" }],
               [{ text: "📞 Support Username/Text", callback_data: "edit_key_support_text" }],
               [{ text: "✅ Success Message", callback_data: "edit_key_deposit_success_msg" }],
               [{ text: "🎉 Approved Message", callback_data: "edit_key_deposit_approved_msg" }],
@@ -8330,12 +8333,24 @@ const withdrawalCooldowns = new Map<string, number>();
       const bankConfig = promptsConfig.banks[bank] || { name: bank, account: "N/A", owner_name: "N/A" };
       const supportTxt = promptsConfig.support_text;
 
-      const paymentInstructions = `${supportTxt}\n\n` +
-        `1. ከታች ባለው የ*${bankConfig.name || bank}* አካውንት *${amount.toLocaleString()} ብር* ያስገቡ\n` +
-        `    *Account/Phone:* \`${bankConfig.account}\`\n` +
-        `    *Name:* \`${bankConfig.owner_name}\`\n\n` +
+      let paymentInstructions = promptsConfig.deposit_payment_instructions_msg || 
+        `1. ከታች ባለው የ*{bank_name}* አካውንት *{amount} ብር* ያስገቡ\n` +
+        `    *Account/Phone:* \`{account}\`\n` +
+        `    *Name:* \`{owner_name}\`\n\n` +
         `2. የከፈሉበትን አጭር የጹሁፍ መልዕክት(message) copy በማድረግ እዚ ላይ Past አድረገው ያስገቡና ይላኩት👇👇👇\n\n` +
         `_(Please copy and paste the SMS transaction receipt text as response)_`;
+
+      paymentInstructions = paymentInstructions
+        .replace(/{bank_name}/g, bankConfig.name || bank)
+        .replace(/{amount}/g, amount.toLocaleString())
+        .replace(/{account}/g, bankConfig.account)
+        .replace(/{owner_name}/g, bankConfig.owner_name)
+        .replace(/{support_text}/g, supportTxt);
+
+      // Prepend support text if it's not explicitly in the instructions
+      if (supportTxt && !paymentInstructions.includes(supportTxt)) {
+        paymentInstructions = `${supportTxt}\n\n${paymentInstructions}`;
+      }
 
       return bot.sendMessage(chatId, paymentInstructions, { parse_mode: "Markdown" });
     }

@@ -222,7 +222,11 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
       if (res.success) {
         showNotification(`BINGO! You won ${res.winAmount} ETB`, "success");
       } else {
-        showNotification(res.message, "error");
+        if (res.code === 'EXPIRED') {
+           showNotification("አልፎአል", "info");
+        } else {
+           showNotification(res.message, "error");
+        }
       }
     });
   };
