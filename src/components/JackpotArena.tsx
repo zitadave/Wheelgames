@@ -96,6 +96,7 @@ export const JackpotArena = React.memo(function JackpotArena({
     joinAndSync();
     
     const onGridState = (state: any) => {
+       console.log(`[JackpotArena] Received grid_state for ${tier}:`, state);
        if (isResettingRef.current) {
          // If the state's roundId is less than what we optimistically set, it's the stale grid.
          // If it's equal or greater, the server has processed a nextRound (ours or someone else's).
@@ -122,8 +123,8 @@ export const JackpotArena = React.memo(function JackpotArena({
        }
        
        const newClaimed: any = {};
-       Object.keys(state.claimedSlots).forEach((k) => {
-         const slot = state.claimedSlots[k as any];
+       Object.keys(state.claimedSlots || {}).forEach((k) => {
+         const slot = (state.claimedSlots || {})[k as any] || {};
          const isSelf = !!(
            slot.isSelf ||
            (slot.userId !== undefined && slot.userId !== null && userId !== undefined && userId !== null && slot.userId.toString().trim() === userId.toString().trim()) ||
@@ -132,9 +133,9 @@ export const JackpotArena = React.memo(function JackpotArena({
          newClaimed[Number(k)] = { ...slot, isSelf };
        });
        if (tier === 'mini') {
-         setMiniGrid(newClaimed);
+         setMiniGrid(newClaimed); console.log("[JackpotArena] Set miniGrid:", newClaimed);
        } else {
-         setGrandGrid(newClaimed);
+         setGrandGrid(newClaimed); console.log("[JackpotArena] Set grandGrid:", newClaimed);
        }
        
        if (state.winners) {
@@ -314,11 +315,6 @@ export const JackpotArena = React.memo(function JackpotArena({
         setDrawNumber(state.drawNumber);
         setWinners(state.winners);
         setVaporizedSlots(state.vaporizedSlots);
-        if (state.tier === 'mini') {
-          setMiniGrid(state.grid);
-        } else {
-          setGrandGrid(state.grid);
-        }
         setTier(state.tier);
         if (state.serverWinners) {
           serverWinnersRef.current = state.serverWinners;
@@ -354,11 +350,10 @@ export const JackpotArena = React.memo(function JackpotArena({
       drawNumber,
       winners,
       vaporizedSlots,
-      grid: activeGrid,
       tier,
       serverWinners: serverWinnersRef.current
     }));
-  }, [gamePhase, drawNumber, winners, vaporizedSlots, activeGrid, tier]);
+  }, [gamePhase, drawNumber, winners, vaporizedSlots, tier]);
 
   const resetLobby = () => {
     sessionStorage.removeItem('odometerStartTime');
@@ -934,6 +929,37 @@ export const JackpotArena = React.memo(function JackpotArena({
           </div>
         )}
 
+        {/* Dynamic Claim Progress Bar & Status Legend */}
+        <div className="mb-4 bg-white dark:bg-[#111622] rounded-xl p-3 border border-gray-100 dark:border-[#1e2638] shadow-sm">
+          <div className="flex justify-between items-center mb-1.5 text-xs">
+            <span className="font-semibold text-gray-600 dark:text-gray-400">Claims Progress:</span>
+            <span className="font-mono font-black text-blue-500 dark:text-blue-400">
+              {Object.keys(activeGrid).length} / {currentConfig.slots} Spots Secured
+            </span>
+          </div>
+          <div className="w-full bg-gray-100 dark:bg-[#1e2638] h-2 rounded-full overflow-hidden">
+            <div 
+              className="bg-blue-500 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${Math.min(100, (Object.keys(activeGrid).length / currentConfig.slots) * 100)}%` }}
+            />
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2 mt-3 pt-2 text-[10px] font-black uppercase tracking-wider text-center border-t border-gray-100 dark:border-[#1e2638]">
+            <div className="flex items-center justify-center gap-1.5 text-gray-700 dark:text-gray-300">
+              <span className="w-3 h-3 rounded bg-gray-50 dark:bg-[#161b28] border border-gray-300 dark:border-gray-700 block shrink-0" />
+              <span>FREE</span>
+            </div>
+            <div className="flex items-center justify-center gap-1.5 text-blue-600 dark:text-blue-400">
+              <span className="w-3 h-3 rounded bg-blue-600 border border-blue-400 block shrink-0 animate-pulse" />
+              <span>MINE</span>
+            </div>
+            <div className="flex items-center justify-center gap-1.5 text-rose-500 dark:text-rose-400">
+              <span className="w-3 h-3 rounded bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-900 block shrink-0" />
+              <span>TAKEN</span>
+            </div>
+          </div>
+        </div>
+
         {/* Dynamic coordinate tiles (Compact 8x13 and 7x8 structures) */}
         <div 
           className={`grid gap-1 ${showTheater ? 'pointer-events-none' : 'opacity-100'}`}
@@ -973,7 +999,7 @@ export const JackpotArena = React.memo(function JackpotArena({
                     onClick={() => handleClaimSlot(num)}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
-                    className="aspect-square rounded-lg bg-blue-600 dark:bg-blue-600 border border-blue-500 dark:border-blue-500 text-white shadow-sm flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all z-30"
+                    className="aspect-square rounded-lg bg-blue-600 dark:bg-blue-600 border border-blue-500 dark:border-blue-400 text-white shadow-sm flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all z-30"
                   >
                     <span className="text-[11px] font-black font-mono leading-none z-10 text-white">{num}</span>
                     <div className="flex items-center justify-center mt-0.5 z-10">
@@ -988,15 +1014,16 @@ export const JackpotArena = React.memo(function JackpotArena({
                 );
               }
 
-              // Claimed by others: disabled/inactive, has a lock symbol, retains its original slot color, no click or hover effects
+              // Claimed by others: visually highlighted in bright/rose red so they know it is TAKEN immediately
               return (
                 <div
                   key={num}
-                  className="aspect-square rounded-lg bg-gray-50 dark:bg-[#161b28] border border-gray-200 dark:border-[#232a3b] flex flex-col items-center justify-center p-0.5 shadow-sm cursor-not-allowed select-none"
+                  className="aspect-square rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 flex flex-col items-center justify-center p-0.5 shadow-sm cursor-not-allowed select-none transition-all"
                 >
-                  <span className="text-[11px] font-black font-mono text-gray-400 dark:text-gray-500 leading-none">{num}</span>
-                  <div className="flex items-center mt-0.5">
-                    <Lock className="w-2.5 h-2.5 shrink-0 text-gray-400 dark:text-gray-500" />
+                  <span className="text-[11px] font-black font-mono text-rose-700 dark:text-rose-400 leading-none">{num}</span>
+                  <div className="flex items-center mt-0.5 gap-0.5 bg-rose-100 dark:bg-rose-950/60 px-0.5 rounded">
+                    <Lock className="w-2 h-2 shrink-0 text-rose-600 dark:text-rose-400" />
+                    <span className="text-[5px] font-black text-rose-700 dark:text-rose-400 leading-none uppercase tracking-tighter">TAKEN</span>
                   </div>
                 </div>
               );

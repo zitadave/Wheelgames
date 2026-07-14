@@ -955,13 +955,29 @@ export const WheelOfChance = React.memo(function WheelOfChance({
               </div>
               
               {/* Real-time progress bar for Wheel of Chance */}
-              <div className="w-full h-1.5 bg-gray-150 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner mb-4">
+              <div className="w-full h-1.5 bg-gray-150 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner mb-2">
                 <motion.div 
                   className="h-full bg-indigo-600 rounded-full"
                   initial={{ width: 0 }}
                   animate={{ width: `${(Object.keys(claimedSlots).length / maxSlots) * 100}%` }}
                   transition={{ duration: 0.3 }}
                 />
+              </div>
+
+              {/* Quick Legend for Wheel of Chance */}
+              <div className="grid grid-cols-3 gap-2 mb-4 text-[9px] font-black uppercase tracking-wider text-center">
+                <div className="flex items-center justify-center gap-1.5 text-gray-500 dark:text-zinc-400">
+                  <span className="w-2.5 h-2.5 rounded bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/5 block shrink-0" />
+                  <span>FREE</span>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 text-blue-500 dark:text-blue-400">
+                  <span className="w-2.5 h-2.5 rounded bg-blue-600 border border-blue-400 block shrink-0 animate-pulse" />
+                  <span>MINE</span>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 text-rose-500 dark:text-rose-400">
+                  <span className="w-2.5 h-2.5 rounded bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-900 block shrink-0" />
+                  <span>TAKEN</span>
+                </div>
               </div>
 
               <div className="grid grid-cols-5 gap-1.5">
@@ -989,20 +1005,20 @@ export const WheelOfChance = React.memo(function WheelOfChance({
                         <motion.div
                           key={num}
                           initial={{ scale: 0.95, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 0.8 }}
-                          className="aspect-square rounded-xl bg-gray-200 dark:bg-zinc-900 border border-gray-300 dark:border-zinc-800/60 flex flex-col items-center justify-center text-gray-600 dark:text-zinc-500 pointer-events-none relative overflow-hidden"
+                          animate={{ scale: 1, opacity: 1 }}
+                          className="aspect-square rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 flex flex-col items-center justify-center text-rose-700 dark:text-rose-400 pointer-events-none relative overflow-hidden shadow-sm"
                         >
                           {claim.photoUrl ? (
-                             <div className="absolute inset-0 opacity-20">
+                             <div className="absolute inset-0 opacity-10">
                                <img src={claim.photoUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                              </div>
                           ) : null}
                           {claim.photoUrl ? (
-                             <img src={claim.photoUrl} alt="Avatar" className="w-4 h-4 rounded-full mb-0.5 object-cover z-10 shadow-sm" referrerPolicy="no-referrer" />
+                             <img src={claim.photoUrl} alt="Avatar" className="w-3.5 h-3.5 rounded-full mb-0.5 object-cover z-10 border border-rose-200/50 shadow-sm" referrerPolicy="no-referrer" />
                           ) : (
-                             <Lock className="w-3 h-3 text-gray-500 dark:text-zinc-600 z-10" />
+                             <Lock className="w-2.5 h-2.5 text-rose-400 dark:text-rose-600 z-10" />
                           )}
-                          <span className="text-[8px] font-semibold mt-0.5 truncate max-w-[38px] leading-none z-10">{claim.username}</span>
+                          <span className="text-[7px] font-black tracking-tighter truncate max-w-[34px] leading-none z-10 uppercase mt-0.5">{claim.username || "TAKEN"}</span>
                         </motion.div>
                       );
                     }
