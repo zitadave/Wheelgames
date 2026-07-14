@@ -1018,15 +1018,15 @@ export const JackpotArena = React.memo(function JackpotArena({
                 onClick={() => handleClaimSlot(num)}
                 whileHover={{ scale: 1.05, zIndex: 10 }}
                 whileTap={{ scale: 0.92 }}
-                className={`aspect-square rounded-lg bg-[#0f172a] border border-[#1e293b] flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500/50 transition-all relative ${
+                className={`aspect-square rounded-lg bg-transparent border-2 border-dashed border-gray-300 dark:border-gray-800 flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500/50 hover:bg-blue-500/5 dark:hover:bg-blue-500/10 transition-all relative ${
                   isBlitzActive
-                    ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
+                    ? 'bg-amber-500 border-solid border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                     : ''
                 }`}
                 style={isBlitzActive ? { opacity: 1 } : undefined}
               >
-                <span className="text-[12px] font-black font-mono text-white/90 leading-none">{num}</span>
-                <span className="text-[7px] font-black text-blue-400/80 tracking-tighter mt-0.5 uppercase">{currentConfig.entry / 1000}K</span>
+                <span className="text-[14px] font-black font-mono text-gray-400 dark:text-gray-600 leading-none">{num}</span>
+                <span className="text-[7px] font-black text-gray-400 dark:text-gray-600 tracking-tighter mt-0.5 uppercase">{currentConfig.entry / 1000}K</span>
               </motion.button>
             );
           })}
