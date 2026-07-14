@@ -882,7 +882,11 @@ export function initGameEngine(io: Server) {
         await syncFromSupabase();
         if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
       }
-      socket.emit("grid_state", gridRooms[roomName]);
+      socket.emit("grid_state", { ...gridRooms[roomName], roomName });
+    });
+
+    socket.on("grid_leave", (roomName: string) => {
+      socket.leave(roomName);
     });
 
     socket.on("grid_gameResult", async (data: { room: string, roundId: number, winners: any }) => {
@@ -956,7 +960,7 @@ export function initGameEngine(io: Server) {
             }
             
             // Broadcast the updated history
-            io.to(data.room).emit("grid_state", room);
+            io.to(data.room).emit("grid_state", { ...room, roomName: data.room });
             
             // Increment roundId for next game
             room.roundId += 1;
@@ -995,7 +999,7 @@ export function initGameEngine(io: Server) {
              room.winners = generateWinnersForRoom(data.room, maxSlots);
            }
 
-           io.to(data.room).emit("grid_state", room);
+           io.to(data.room).emit("grid_state", { ...room, roomName: data.room });
            if (callback) callback({ success: true });
         } else {
            if (callback) callback({ success: false, message: "Slot already taken" });
@@ -1028,7 +1032,7 @@ export function initGameEngine(io: Server) {
          delete room.claimedSlots[data.num];
          delete room.winners;
          saveGridState();
-         io.to(data.room).emit("grid_state", room);
+         io.to(data.room).emit("grid_state", { ...room, roomName: data.room });
          if (callback) callback({ success: true });
       }
     });
@@ -1042,7 +1046,7 @@ export function initGameEngine(io: Server) {
              room.roundId += 1;
              delete room.winners;
              saveGridState();
-             io.to(roomName).emit("grid_state", room);
+             io.to(roomName).emit("grid_state", { ...room, roomName });
           }
        }
     });

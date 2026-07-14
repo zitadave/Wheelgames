@@ -97,6 +97,11 @@ export const JackpotArena = React.memo(function JackpotArena({
     
     const onGridState = (state: any) => {
        console.log(`[JackpotArena] Received grid_state for ${tier}:`, state);
+       if (!state) return;
+       if (state.roomName && state.roomName !== tier) {
+          console.log(`[JackpotArena] Ignoring grid_state from room ${state.roomName} since current tier is ${tier}`);
+          return;
+       }
        if (isResettingRef.current) {
          // If the state's roundId is less than what we optimistically set, it's the stale grid.
          // If it's equal or greater, the server has processed a nextRound (ours or someone else's).
@@ -164,8 +169,8 @@ export const JackpotArena = React.memo(function JackpotArena({
 
   const roundIdsRef = useRef({ mini: 0, grand: 0 });
   const [roundIds, setRoundIds] = useState<{ mini: number; grand: number }>(() => ({
-    mini: Math.floor(Math.random() * 9000) + 1000,
-    grand: Math.floor(Math.random() * 9000) + 1000
+    mini: 0,
+    grand: 0
   }));
   useEffect(() => { roundIdsRef.current = roundIds; }, [roundIds]);
 
@@ -319,6 +324,9 @@ export const JackpotArena = React.memo(function JackpotArena({
         if (state.serverWinners) {
           serverWinnersRef.current = state.serverWinners;
         }
+        if (state.roundIds) {
+          setRoundIds(state.roundIds);
+        }
 
         // Safely recover active draw phase on mount
         if (state.gamePhase !== 'lobby') {
@@ -351,9 +359,10 @@ export const JackpotArena = React.memo(function JackpotArena({
       winners,
       vaporizedSlots,
       tier,
+      roundIds,
       serverWinners: serverWinnersRef.current
     }));
-  }, [gamePhase, drawNumber, winners, vaporizedSlots, tier]);
+  }, [gamePhase, drawNumber, winners, vaporizedSlots, tier, roundIds]);
 
   const resetLobby = () => {
     sessionStorage.removeItem('odometerStartTime');
