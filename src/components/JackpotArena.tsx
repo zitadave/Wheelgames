@@ -936,33 +936,53 @@ export const JackpotArena = React.memo(function JackpotArena({
 
             if (item) {
               const isSelf = getIsSelf(item);
-              return (
-                <motion.div
-                  key={num}
-                  onClick={() => handleClaimSlot(num)}
-                  whileTap={{ scale: 0.95 }}
-                  className={`aspect-square rounded-lg border flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all relative overflow-hidden ${
-                    isWinner 
-                      ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
-                      : isSelf
-                      ? 'bg-blue-600 dark:bg-blue-600 border-blue-500 dark:border-blue-500 text-white shadow-sm z-30'
-                      : 'bg-gray-50 dark:bg-[#161b28] border-gray-200 dark:border-[#232a3b]'
-                  }`}
-                >
-                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${isSelf ? 'text-white' : 'text-gray-800 dark:text-white'}`}>{num}</span>
-                  <div className={`flex items-center justify-center mt-0.5 z-10`}>
-                    {isSelf ? (
-                      <div className="flex items-center gap-0.5 bg-white/20 px-0.5 py-0.5 rounded">
-                        <div className="w-2 h-2 rounded-full bg-blue-200 flex items-center justify-center shrink-0">
+              if (isWinner) {
+                return (
+                  <div
+                    key={num}
+                    className="aspect-square rounded-lg bg-gradient-to-b from-green-500 to-green-600 border border-green-400 text-white shadow-lg scale-105 z-10 flex flex-col items-center justify-center p-0.5 relative overflow-hidden"
+                  >
+                    <span className="text-[11px] font-black font-mono leading-none z-10 text-white">{num}</span>
+                    <div className="flex items-center justify-center mt-0.5 z-10">
+                      <span className="text-[6px] font-black text-white bg-black/20 px-1 py-0.5 rounded leading-none">WIN</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (isSelf) {
+                return (
+                  <motion.button
+                    key={num}
+                    onClick={() => handleClaimSlot(num)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="aspect-square rounded-lg bg-blue-600 dark:bg-blue-600 border border-blue-500 dark:border-blue-500 text-white shadow-sm flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all z-30"
+                  >
+                    <span className="text-[11px] font-black font-mono leading-none z-10 text-white">{num}</span>
+                    <div className="flex items-center justify-center mt-0.5 z-10">
+                      <div className="flex items-center gap-0.5 bg-white/20 px-1 py-0.5 rounded-md">
+                        <div className="w-2.5 h-2.5 rounded-full bg-blue-200 flex items-center justify-center shrink-0">
                           <span className="text-[5px] font-black text-blue-900 leading-none">{item.username ? item.username.charAt(0).toUpperCase() : 'D'}</span>
                         </div>
                         <span className="text-[6px] font-black text-white leading-none tracking-tighter">You</span>
                       </div>
-                    ) : (
-                      <Lock className="w-2 h-2 shrink-0 text-gray-500 dark:text-gray-500" />
-                    )}
+                    </div>
+                  </motion.button>
+                );
+              }
+
+              // Claimed by others: disabled/inactive, has a lock symbol, retains its original slot color, no click or hover effects
+              return (
+                <div
+                  key={num}
+                  className="aspect-square rounded-lg bg-gray-50 dark:bg-[#161b28] border border-gray-200 dark:border-[#232a3b] flex flex-col items-center justify-center p-0.5 shadow-sm cursor-not-allowed select-none"
+                >
+                  <span className="text-[11px] font-black font-mono text-gray-400 dark:text-gray-500 leading-none">{num}</span>
+                  <div className="flex items-center mt-0.5">
+                    <Lock className="w-2.5 h-2.5 shrink-0 text-gray-400 dark:text-gray-500" />
                   </div>
-                </motion.div>
+                </div>
               );
             }
             return (
