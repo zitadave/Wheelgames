@@ -27,7 +27,9 @@ interface JackpotHistoryItem {
 
 interface Participant {
   username: string;
-  isSelf: boolean; photoUrl?: string | null;
+  isSelf: boolean;
+  userId?: string | number;
+  photoUrl?: string | null;
 }
 
 export const JackpotArena = React.memo(function JackpotArena({
@@ -221,6 +223,11 @@ export const JackpotArena = React.memo(function JackpotArena({
   // Active grid alias
   const activeGrid = tier === 'mini' ? miniGrid : grandGrid;
   const setTargetGrid = tier === 'mini' ? setMiniGrid : setGrandGrid;
+
+  const getIsSelf = (item: Participant | undefined) => {
+    if (!item) return false;
+    return !!(item.isSelf || (item.userId !== undefined && item.userId !== null && item.userId.toString() === userId?.toString()));
+  };
 
   // Sync theater mode status up to parent
   const lastTheaterModeRef = useRef<boolean>(false);
@@ -529,9 +536,9 @@ export const JackpotArena = React.memo(function JackpotArena({
     playWinnerAudio();
 
     // Handle user payouts
-    const isSelfWin = activeGrid[winnerNum]?.isSelf;
+    const isSelfWin = getIsSelf(activeGrid[winnerNum]);
     const choiceStr = Object.entries(activeGrid)
-      .filter(([_, value]: [any, any]) => value.isSelf)
+      .filter(([_, value]: [any, any]) => getIsSelf(value))
       .map(([key, _]) => `#${key}`)
       .join(', ');
     const winNumStr = `#${winnerNum}`;
@@ -569,7 +576,7 @@ export const JackpotArena = React.memo(function JackpotArena({
       ]);
       showNotification(`🎉 Congratulations! You won the Jackpot ${drawIndex === 1 ? '1st' : drawIndex === 2 ? '2nd' : '3rd'} Place Prize of ${prize.toLocaleString()} ETB!`, 'success');
     } else {
-      const selfClaimed = Object.values(activeGrid).some((c: any) => c.isSelf);
+      const selfClaimed = Object.values(activeGrid).some((c: any) => getIsSelf(c));
       if (selfClaimed && drawIndex === 3) { // Only log miss on the 3rd draw for jackpot
            socket?.emit('logGamePlay', { userId, gameType: gameTypeWithDetails, result: 'Miss', winAmount: 0, newBalance: balance });
            setGameHistory(prev => [
@@ -622,7 +629,7 @@ export const JackpotArena = React.memo(function JackpotArena({
     }
     
     if (activeGrid[num]) {
-      if (activeGrid[num].isSelf) {
+      if (getIsSelf(activeGrid[num])) {
         // Unclaim
         socket?.emit('grid_releaseSlot', { room: tier, num, userId }, (res: any) => {
            if (res?.success) {
@@ -928,6 +935,7 @@ export const JackpotArena = React.memo(function JackpotArena({
             const isBlitzActive = blitzActiveTile === num;
 
             if (item) {
+              const isSelf = getIsSelf(item);
               return (
                 <motion.div
                   key={num}
@@ -936,16 +944,16 @@ export const JackpotArena = React.memo(function JackpotArena({
                   className={`aspect-square rounded-lg border flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all relative overflow-hidden ${
                     isWinner 
                       ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
-                      : item.isSelf
-                      ? 'bg-[#4a85f6] dark:bg-[#4a85f6] border-[#5b8bf7] dark:border-[#5b8bf7] text-white shadow-sm z-30'
+                      : isSelf
+                      ? 'bg-blue-600 dark:bg-blue-600 border-blue-500 dark:border-blue-500 text-white shadow-sm z-30'
                       : 'bg-gray-50 dark:bg-[#161b28] border-gray-200 dark:border-[#232a3b]'
                   }`}
                 >
-                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-white' : 'text-gray-800 dark:text-white'}`}>{num}</span>
+                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${isSelf ? 'text-white' : 'text-gray-800 dark:text-white'}`}>{num}</span>
                   <div className={`flex items-center justify-center mt-0.5 z-10`}>
-                    {item.isSelf ? (
+                    {isSelf ? (
                       <div className="flex items-center gap-0.5 bg-white/20 px-0.5 py-0.5 rounded">
-                        <div className="w-2 h-2 rounded-full bg-[#87e1e1] flex items-center justify-center shrink-0">
+                        <div className="w-2 h-2 rounded-full bg-blue-200 flex items-center justify-center shrink-0">
                           <span className="text-[5px] font-black text-blue-900 leading-none">{item.username ? item.username.charAt(0).toUpperCase() : 'D'}</span>
                         </div>
                         <span className="text-[6px] font-black text-white leading-none tracking-tighter">You</span>
