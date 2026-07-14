@@ -977,30 +977,36 @@ export const JackpotArena = React.memo(function JackpotArena({
                       ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
                       : isSelf
                       ? `bg-blue-600 border-blue-400 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-300 scale-110 z-30 font-black ${isPending ? 'animate-pulse opacity-70' : ''}`
-                      : 'bg-green-600 border-green-500 text-white shadow-sm opacity-90'
+                      : 'bg-blue-900/60 border-blue-700/50 text-blue-100 shadow-sm'
                   }`}
                   style={isBlitzActive ? { opacity: 1 } : undefined}
                 >
                   {isSelf && (
-                    <div className="absolute top-0 right-0 bg-white/20 text-white text-[5px] px-1 rounded-bl-md font-bold z-20 backdrop-blur-sm">YOU</div>
+                    <div className="absolute top-0 right-0 bg-blue-400 text-white text-[5px] px-1 rounded-bl-md font-bold z-20 shadow-sm">YOU</div>
+                  )}
+
+                  {!isSelf && item?.username && (
+                    <div className="absolute top-0 right-0 bg-blue-950/40 text-[4px] px-0.5 rounded-bl-sm font-medium z-20 text-blue-200/70">
+                      ID: {item.userId?.toString().slice(-3)}
+                    </div>
                   )}
 
                   {item?.photoUrl && !isBlitzActive && !isWinner && !isSelf ? (
-                     <div className="absolute inset-0 opacity-10 pointer-events-none">
+                     <div className="absolute inset-0 opacity-20 pointer-events-none">
                        <img src={item.photoUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                      </div>
                   ) : null}
                   
-                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${isSelf ? 'text-white' : 'text-white'}`}>{num}</span>
-                  <div className={`flex items-center gap-0.5 text-[6px] font-semibold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${isSelf ? 'text-blue-100' : 'text-green-100'}`}>
+                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${isSelf ? 'text-white' : 'text-blue-50'}`}>{num}</span>
+                  <div className={`flex items-center gap-0.5 text-[6px] font-bold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${isSelf ? 'text-blue-100' : 'text-blue-300'}`}>
                     {isSelf ? (
                       <div className="w-2 h-2 rounded-full bg-white/30 flex items-center justify-center text-[5px] font-bold">D</div>
                     ) : item?.photoUrl ? (
-                      <img src={item.photoUrl} alt="Avatar" className="w-2 h-2 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
+                      <img src={item.photoUrl} alt="Avatar" className="w-2 h-2 rounded-full object-cover shrink-0 border-[0.5px] border-blue-400/30" referrerPolicy="no-referrer" />
                     ) : (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400/40" />
                     )}
-                    <span className="truncate max-w-[24px] uppercase">{isSelf ? (isPending ? '...' : 'You') : (item?.username?.substring(0, 4) || '...')}</span>
+                    <span className="truncate max-w-[32px] uppercase">{isSelf ? (isPending ? '...' : 'You') : (item?.username || 'Player')}</span>
                   </div>
                 </motion.div>
               );
