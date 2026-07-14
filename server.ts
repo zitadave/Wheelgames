@@ -13,6 +13,8 @@ import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { generateToken, setShareToken, getShareToken, setPendingReferral } from "./src/server/redisClient.js";
+import { supabase } from "./src/server/supabase.js";
+import { txManager } from "./src/server/transactionManager.js";
 
 dotenv.config();
 
@@ -153,6 +155,282 @@ async function startServer() {
         res.status(500).json({ error: "Failed to trigger bot flow. Check if bot is active." });
       }
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/config/banks", async (req, res) => {
+    try {
+      const { getPromptsConfig } = await import("./src/server/telegramBot.js");
+      const config = await getPromptsConfig();
+      res.json({ success: true, banks: config.banks });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/deposit-request", async (req, res) => {
+    const { userId, amount, bank, receiptText } = req.body;
+    if (!userId || !amount || !bank || !receiptText) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    try {
+      // 1. Fetch user to confirm they exist
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('username, first_name, last_name, balance')
+        .eq('id', userId.toString())
+        .maybeSingle();
+
+      if (userError || !user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const username = user.username || "no_username";
+      const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || "Player";
+
+      // 2. Try Automatic Parsing & Verification
+      const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
+      const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
+
+      if (txId && parsedAmount && parsedAmount === Number(amount)) {
+        // Double-check duplicates in DB
+        const { data: duplicateTxs, error: dupError } = await supabase
+          .from('transactions')
+          .select('id')
+          .ilike('description', `%${txId}%`)
+          .limit(1);
+
+        if (!dupError && duplicateTxs && duplicateTxs.length > 0) {
+          return res.status(400).json({ error: "❌ This transaction ID has already been verified and claimed." });
+        }
+
+        // Auto approve!
+        const result = await txManager.modifyBalance(
+          userId.toString(),
+          parsedAmount,
+          'reward',
+          `Deposit Auto-Approved (Ref: ${txId})`
+        );
+
+        if (result.success) {
+          // Send notification to channel if configured
+          const { postToChannel, escapeHTML, getBotInstance, getPrimaryOwnerId, adminChatIds } = await import("./src/server/telegramBot.js");
+          const escapedUsername = escapeHTML(username);
+          
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${parsedAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
+
+          // Notify admins
+          const bot = getBotInstance();
+          if (bot) {
+            const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
+              `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
+              `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+              `💰 <b>Amount:</b> <b>${parsedAmount.toLocaleString()} ETB</b>\n` +
+              `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
+              `🧾 <b>Ref ID:</b> <code>${txId}</code>\n\n` +
+              `🟢 <i>Credited instantly to user's wallet!</i>`;
+
+            const primaryId = getPrimaryOwnerId();
+            adminChatIds.add(primaryId);
+            adminChatIds.forEach(async (adminId) => {
+              try {
+                await bot.sendMessage(adminId, adminMsg, { parse_mode: "HTML" });
+              } catch (e) {}
+            });
+          }
+
+          // Emit real-time balance update
+          io.emit('balanceUpdated', { userId: userId.toString(), balance: result.newBalance });
+
+          return res.json({
+            success: true,
+            autoApproved: true,
+            newBalance: result.newBalance,
+            message: `🎉 Automatic verification successful! ${parsedAmount} ETB has been instantly credited to your wallet.`
+          });
+        }
+      }
+
+      // 3. Fallback to manual admin approval
+      const { pendingRequests, savePendingRequestsToDB, generateRef, escapeHTML, getBotInstance, getPrimaryOwnerId, adminChatIds } = await import("./src/server/telegramBot.js");
+      const requestId = "DEP_" + generateRef(8);
+
+      const requestPayload = {
+        id: requestId,
+        type: 'deposit',
+        userId: userId.toString(),
+        username,
+        fullName,
+        amount: Number(amount),
+        bank,
+        receiptText,
+        chatId: Number(userId)
+      };
+
+      pendingRequests.set(requestId, requestPayload);
+      await savePendingRequestsToDB();
+
+      // Notify Admins for manual approval
+      const bot = getBotInstance();
+      if (bot) {
+        const escapedUsername = escapeHTML(username);
+        const escapedFullName = escapeHTML(fullName);
+        const escapedText = escapeHTML(receiptText);
+        const escapedBank = escapeHTML(bank);
+
+        const adminMsg = `📥 <b>NEW DEPOSIT REQUEST (Manual Review)</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${Number(amount).toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n\n` +
+          `📝 <b>Receipt SMS text:</b>\n` +
+          `<pre>${escapedText}</pre>\n\n` +
+          `<b>Request ID:</b> <code>${requestId}</code>`;
+
+        const primaryId = getPrimaryOwnerId();
+        adminChatIds.add(primaryId);
+        adminChatIds.forEach(async (adminId) => {
+          try {
+            await bot.sendMessage(adminId, adminMsg, {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "Approve ✅", callback_data: `approve_dep_${requestId}` },
+                    { text: "Decline ❌", callback_data: `decline_dep_${requestId}` }
+                  ]
+                ]
+              }
+            });
+          } catch (e) {}
+        });
+      }
+
+      return res.json({
+        success: true,
+        autoApproved: false,
+        message: "📥 Your request has been sent to our verification agents. It will be approved within 1 minute!"
+      });
+
+    } catch (err: any) {
+      console.error("Deposit request API error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/withdraw-request", async (req, res) => {
+    const { userId, amount, bank, account } = req.body;
+    if (!userId || !amount || !bank || !account) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const numAmount = Math.floor(Math.abs(parseFloat(amount)));
+    if (isNaN(numAmount) || numAmount < 100) {
+      return res.status(400).json({ error: "Minimum withdrawal is 100 ETB." });
+    }
+
+    try {
+      // 1. Fetch user to verify balance
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('username, first_name, last_name, balance')
+        .eq('id', userId.toString())
+        .maybeSingle();
+
+      if (userError || !user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const currentBalance = Number(user.balance);
+      if (numAmount > currentBalance) {
+        return res.status(400).json({ error: "Insufficient balance." });
+      }
+
+      const username = user.username || "no_username";
+      const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || "Player";
+
+      // 2. Generate unique request code
+      const { pendingRequests, savePendingRequestsToDB, generateRef, escapeHTML, getBotInstance, getPrimaryOwnerId, adminChatIds } = await import("./src/server/telegramBot.js");
+      const requestId = "WD_" + generateRef(8);
+
+      // 3. Deduct balance instantly
+      const result = await txManager.modifyBalance(
+        userId.toString(),
+        -numAmount,
+        'bet',
+        `Withdrawal Pending (Ref: ${requestId})`
+      );
+
+      if (!result.success) {
+        return res.status(400).json({ error: result.error || "Failed to deduct balance." });
+      }
+
+      const newBalance = result.newBalance;
+
+      // 4. Register pending request
+      const requestPayload = {
+        id: requestId,
+        type: 'withdraw',
+        userId: userId.toString(),
+        username,
+        fullName,
+        amount: numAmount,
+        bank,
+        account: account.toString(),
+        chatId: Number(userId)
+      };
+
+      pendingRequests.set(requestId, requestPayload);
+      await savePendingRequestsToDB();
+
+      // Emit real-time balance update to socket clients instantly
+      io.emit('balanceUpdated', { userId: userId.toString(), balance: newBalance });
+
+      // 5. Notify Admins
+      const bot = getBotInstance();
+      if (bot) {
+        const escapedUsername = escapeHTML(username);
+        const escapedFullName = escapeHTML(fullName);
+        const escapedBank = escapeHTML(bank);
+        const escapedAccount = escapeHTML(account.toString());
+
+        const adminMsg = `📤 <b>NEW WITHDRAWAL REQUEST (Web Portal)</b>\n\n` +
+          `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
+          `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+          `💰 <b>Amount:</b> <b>${numAmount.toLocaleString()} ETB</b>\n` +
+          `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
+          `💳 <b>Account/Phone:</b> <code>${escapedAccount}</code>\n\n` +
+          `<b>Request ID:</b> <code>${requestId}</code>`;
+
+        const primaryId = getPrimaryOwnerId();
+        adminChatIds.add(primaryId);
+        adminChatIds.forEach(async (adminId) => {
+          try {
+            await bot.sendMessage(adminId, adminMsg, {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "Approve ✅", callback_data: `approve_wd_${requestId}` },
+                    { text: "Decline ❌", callback_data: `decline_wd_${requestId}` }
+                  ]
+                ]
+              }
+            });
+          } catch (e) {}
+        });
+      }
+
+      return res.json({
+        success: true,
+        newBalance,
+        message: `📤 Withdrawal request of ${numAmount} ETB submitted successfully! Admin will transfer the funds shortly.`
+      });
+
+    } catch (err: any) {
+      console.error("Withdrawal request API error:", err);
       res.status(500).json({ error: err.message });
     }
   });

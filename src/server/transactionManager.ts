@@ -69,3 +69,80 @@ class TransactionManager {
 }
 
 export const txManager = new TransactionManager();
+
+export function parseReceiptSMS(text: string): { txId: string | null; amount: number | null } {
+  if (!text) return { txId: null, amount: null };
+  
+  // Clean text and remove zero width spaces or carriage returns
+  const cleanText = text.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+
+  // 1. Try to find a transaction ID.
+  const txIdPatterns = [
+    /\b(MT[A-Z0-9.]{8,22})\b/i,
+    /\b(FT[A-Z0-9.]{8,22})\b/i,
+    /\b(TXN[A-Z0-9.]{8,22})\b/i,
+    /(?:ref|reference|transaction\s*id|Ref\s*No|የማመሳከሪያ\s*ቁጥር|መለያ)[:\s#]+([A-Z0-9.]{8,22})/i,
+    /\b([A-Z0-9]{10,22})\b/
+  ];
+
+  let txId: string | null = null;
+  for (const pattern of txIdPatterns) {
+    const match = cleanText.match(pattern);
+    if (match && match[1]) {
+      const candidate = match[1].toUpperCase().trim();
+      // Exclude some common non-ref uppercase strings in SMS
+      if (!["CUSTOMER", "TELEBIRR", "PAYMENT", "ACCOUNT", "MERCHANT", "TRANSFER"].includes(candidate)) {
+        txId = candidate;
+        break;
+      }
+    }
+  }
+
+  // 2. Try to find monetary amount.
+  const amountPatterns = [
+    // CBE: credited with Birr 500.00
+    /(?:credited\s*with|transferred|sent|received|deposited)\s*(?:birr|etb|br|ብር)?\s*([0-9,]+(?:\.[0-9]{2})?)/i,
+    // CBE/Telebirr Amharic: ብር 500.00 ገቢ ሆኗል
+    /(?:ብር|ብር\s* መጠን)\s*([0-9,]+(?:\.[0-9]{2})?)/i,
+    // Telebirr: You have received 500.00 Birr
+    /([0-9,]+(?:\.[0-9]{2})?)\s*(?:birr|etb|br|ብር)/i,
+    // CBE/Awash fallback: Ref... ETB 500.00
+    /(?:etb|birr|br|ብር)[:\s]*([0-9,]+(?:\.[0-9]{2})?)/i,
+    // Amharic fallback: ገቢ 500.00
+    /(?:ገቢ|ተሞልቷል|ገባ)\s*(?:ብር)?\s*([0-9,]+(?:\.[0-9]{2})?)/i
+  ];
+
+  let amount: number | null = null;
+  for (const pattern of amountPatterns) {
+    const match = cleanText.match(pattern);
+    if (match && match[1]) {
+      const cleanAmt = match[1].replace(/,/g, '');
+      const parsed = parseFloat(cleanAmt);
+      if (!isNaN(parsed) && parsed > 0) {
+        amount = Math.floor(parsed);
+        break;
+      }
+    }
+  }
+
+  // If amount is still null, try general regex to find the first numeric value preceding or succeeding Birr/ETB
+  if (!amount) {
+    const fallbackPatterns = [
+      /([0-9,]+(?:\.[0-9]{2})?)\s*(?:birr|etb|br|ብር)/i,
+      /(?:birr|etb|br|ብር)\s*([0-9,]+(?:\.[0-9]{2})?)/i
+    ];
+    for (const pattern of fallbackPatterns) {
+      const match = cleanText.match(pattern);
+      if (match && match[1]) {
+        const cleanAmt = match[1].replace(/,/g, '');
+        const parsed = parseFloat(cleanAmt);
+        if (!isNaN(parsed) && parsed > 0) {
+          amount = Math.floor(parsed);
+          break;
+        }
+      }
+    }
+  }
+
+  return { txId, amount };
+}

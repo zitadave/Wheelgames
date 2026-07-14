@@ -905,69 +905,24 @@ export const JackpotArena = React.memo(function JackpotArena({
       {/* Grid coordinates list with scroll support */}
       <div className={`flex-1 overflow-y-auto px-1 pr-2 pb-6 max-h-[420px] ${'opacity-100'}`}>
         
-        {/* Progress indicator bar (hidden during active drawing) */}
+        {/* Simplified Header (hidden during active drawing) */}
         {!showTheater && (
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-2 px-1 gap-1.5">
-              <span className="text-sm font-black uppercase text-blue-600 dark:text-blue-400 tracking-wider flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse inline-block shadow-sm" />
-                {Object.keys(activeGrid).length}/{currentConfig.slots} Claimed
-              </span>
-              <div className="flex items-center gap-1.5">
-                <div className="text-[10px] font-black uppercase text-blue-500 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full tracking-widest font-mono">
-                  Round #{currentRoundId}
-                </div>
-                <button
-                  onClick={() => setIsInfoOpen(true)}
-                  className="w-5 h-5 rounded-full bg-blue-600 hover:bg-blue-700 text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-md shadow-blue-500/20"
-                  title="የጨዋታ መረጃ"
-                >
-                  <span className="font-serif font-black italic text-xs leading-none select-none">i</span>
-                </button>
+          <div className="mb-3 flex justify-between items-center px-1">
+            <span className="text-xs font-black uppercase text-gray-400 dark:text-zinc-400 tracking-wider">Choose Coordinates</span>
+            <div className="flex items-center gap-1.5">
+              <div className="text-[10px] font-black uppercase text-blue-500 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full tracking-widest font-mono">
+                Round #{currentRoundId}
               </div>
-            </div>
-            {/* Visual real-time indicator bar */}
-            <div className="w-full h-1.5 bg-gray-150 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">
-              <motion.div 
-                className="h-full bg-blue-600 rounded-full"
-                initial={{ width: 0 }}
-                animate={{ width: `${(Object.keys(activeGrid).length / currentConfig.slots) * 100}%` }}
-                transition={{ duration: 0.3 }}
-              />
+              <button
+                onClick={() => setIsInfoOpen(true)}
+                className="w-5 h-5 rounded-full bg-blue-600 hover:bg-blue-700 text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-md shadow-blue-500/20"
+                title="የጨዋታ መረጃ"
+              >
+                <span className="font-serif font-black italic text-xs leading-none select-none">i</span>
+              </button>
             </div>
           </div>
         )}
-
-        {/* Dynamic Claim Progress Bar & Status Legend */}
-        <div className="mb-4 bg-white dark:bg-[#111622] rounded-xl p-3 border border-gray-100 dark:border-[#1e2638] shadow-sm">
-          <div className="flex justify-between items-center mb-1.5 text-xs">
-            <span className="font-semibold text-gray-600 dark:text-gray-400">Claims Progress:</span>
-            <span className="font-mono font-black text-blue-500 dark:text-blue-400">
-              {Object.keys(activeGrid).length} / {currentConfig.slots} Spots Secured
-            </span>
-          </div>
-          <div className="w-full bg-gray-100 dark:bg-[#1e2638] h-2 rounded-full overflow-hidden">
-            <div 
-              className="bg-blue-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${Math.min(100, (Object.keys(activeGrid).length / currentConfig.slots) * 100)}%` }}
-            />
-          </div>
-          
-          <div className="grid grid-cols-3 gap-2 mt-3 pt-2 text-[10px] font-black uppercase tracking-wider text-center border-t border-gray-100 dark:border-[#1e2638]">
-            <div className="flex items-center justify-center gap-1.5 text-gray-700 dark:text-gray-300">
-              <span className="w-3 h-3 rounded bg-gray-50 dark:bg-[#161b28] border border-gray-300 dark:border-gray-700 block shrink-0" />
-              <span>FREE</span>
-            </div>
-            <div className="flex items-center justify-center gap-1.5 text-blue-600 dark:text-blue-400">
-              <span className="w-3 h-3 rounded bg-blue-600 border border-blue-400 block shrink-0 animate-pulse" />
-              <span>MINE</span>
-            </div>
-            <div className="flex items-center justify-center gap-1.5 text-rose-500 dark:text-rose-400">
-              <span className="w-3 h-3 rounded bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-900 block shrink-0" />
-              <span>TAKEN</span>
-            </div>
-          </div>
-        </div>
 
         {/* Dynamic coordinate tiles (Compact 8x13 and 7x8 structures) */}
         <div 

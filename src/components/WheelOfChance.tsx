@@ -932,14 +932,8 @@ export const WheelOfChance = React.memo(function WheelOfChance({
         {phase === 'lobby' && (
           <div className="space-y-4 mb-4">
             <div>
-              <div className="flex justify-between items-center mb-2 px-1 gap-1.5">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-400 tracking-wider">CHOOSE SPOT (Entry: {entryFee} ETB)</span>
-                  <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse inline-block shadow-sm" />
-                    {Object.keys(claimedSlots).length}/{maxSlots} Spots Claimed
-                  </span>
-                </div>
+              <div className="flex justify-between items-center mb-3 px-1 gap-1.5">
+                <span className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-400 tracking-wider">CHOOSE SPOT (Entry: {entryFee} ETB)</span>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="text-[10px] font-black text-blue-500 tracking-widest bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full uppercase font-mono">
                     Round #{currentRoundId}
@@ -952,16 +946,6 @@ export const WheelOfChance = React.memo(function WheelOfChance({
                     <span className="font-serif font-black italic text-xs leading-none select-none">i</span>
                   </button>
                 </div>
-              </div>
-              
-              {/* Real-time progress bar for Wheel of Chance */}
-              <div className="w-full h-1.5 bg-gray-150 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner mb-2">
-                <motion.div 
-                  className="h-full bg-indigo-600 rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(Object.keys(claimedSlots).length / maxSlots) * 100}%` }}
-                  transition={{ duration: 0.3 }}
-                />
               </div>
 
               {/* Quick Legend for Wheel of Chance */}

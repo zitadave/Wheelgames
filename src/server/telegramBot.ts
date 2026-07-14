@@ -62,7 +62,7 @@ export async function postToChannel(message: string, options?: any) {
   }
 }
 
-function escapeHTML(str: string) {
+export function escapeHTML(str: string) {
   if (!str) return "";
   return str
     .replace(/&/g, "&amp;")
@@ -790,9 +790,9 @@ interface PendingRequest {
 const processedMessages = new Set<string>();
 const processedCallbacks = new Set<string>();
 
-const pendingRequests = new Map<string, PendingRequest>();
+export const pendingRequests = new Map<string, PendingRequest>();
 
-async function savePendingRequestsToDB() {
+export async function savePendingRequestsToDB() {
   try {
     const list = Array.from(pendingRequests.values());
     const jsonStr = JSON.stringify(list);
@@ -838,6 +838,10 @@ async function loadPendingRequestsFromDB() {
 // Dynamic Owner configurations to prevent Access Denied for testers
 const OWNER_IDS = new Set<number>([336997351]);
 
+export async function getPromptsConfig(): Promise<PromptsConfig> {
+  return promptsConfig;
+}
+
 function isOwner(userId: number | undefined): boolean {
   if (!userId) return false;
   return OWNER_IDS.has(userId);
@@ -848,7 +852,7 @@ function isStartingAdmin(userId: number | undefined): boolean {
   return userId === getPrimaryOwnerId();
 }
 
-function getPrimaryOwnerId(): number {
+export function getPrimaryOwnerId(): number {
   const envId = process.env.ADMIN_ID || process.env.TELEGRAM_ADMIN_IDS?.split(',')[0];
   if (envId) {
     const parsed = parseInt(envId, 10);
@@ -857,7 +861,7 @@ function getPrimaryOwnerId(): number {
   return 336997351; // Fallback
 }
 
-function isAnyAdmin(userId: number | string | undefined): boolean {
+export function isAnyAdmin(userId: number | string | undefined): boolean {
   if (!userId) return false;
   const uid = typeof userId === 'string' ? parseInt(userId, 10) : userId;
   if (isNaN(uid)) return false;
@@ -865,7 +869,7 @@ function isAnyAdmin(userId: number | string | undefined): boolean {
 }
 
 // Admin Chat IDs (Initialized with all owners/starting admins)
-const adminChatIds = new Set<number>(OWNER_IDS);
+export const adminChatIds = new Set<number>(OWNER_IDS);
 adminChatIds.add(getPrimaryOwnerId());
 
 // Initialize Admin IDs from environment variables if present
@@ -947,13 +951,17 @@ async function syncBlockedUsersFromDB() {
 }
 
 // Generate unique Ref Codes (e.g., C8OM3PUXUX, OTY2A7PFR2)
-function generateRef(length = 10): string {
+export function generateRef(length = 10): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let result = "";
   for (let i = 0; i < length; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+export function getBotInstance() {
+  return botInstance;
 }
 
 let isBotInitializing = false;
@@ -4079,6 +4087,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 1. DEPOSIT: AMOUNT ENTRY
     if (state.step === 'deposit_amount') {
+      await bot.sendChatAction(chatId, 'typing').catch(() => {});
       const cleanText = text.replace(/,/g, '');
       const amount = Math.floor(Math.abs(parseFloat(cleanText)));
       if (isNaN(amount) || amount < 10) {
@@ -4118,6 +4127,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 2. DEPOSIT: SMS RECEIPT COPY PASTE
     if (state.step === 'deposit_msg') {
+      await bot.sendChatAction(chatId, 'typing').catch(() => {});
       const amount = state.amount || 10;
       const bank = state.bank || "Telebirr";
       const username = msg.from?.username || "no_username";
@@ -4196,6 +4206,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
     // 3. WITHDRAWAL: AMOUNT ENTRY
     if (state.step === 'withdraw_amount') {
+      await bot.sendChatAction(chatId, 'typing').catch(() => {});
       const cleanText = text.replace(/,/g, '');
       const amount = Math.floor(Math.abs(parseFloat(cleanText)));
       if (isNaN(amount) || amount <= 0) {
@@ -4265,6 +4276,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
     // 4. WITHDRAWAL: ACCOUNT / PHONE ENTRY
     if (state.step === 'withdraw_account') {
+      await bot.sendChatAction(chatId, 'typing').catch(() => {});
       const lastWithdraw = withdrawalCooldowns.get(userId) || 0;
       if (Date.now() - lastWithdraw < 10000) {
         return bot.sendMessage(chatId, "⚠️ *እባክዎን ትንሽ ይጠብቁ!* በየ 10 ሴኮንዱ አንድ ጊዜ ብቻ ማውጣት ይችላሉ።\n\n_(Please wait 10 seconds between requests)_", { parse_mode: "Markdown" });
@@ -4899,7 +4911,7 @@ const withdrawalCooldowns = new Map<string, number>();
     const ownerOnlyPrefixes = ['edit_section_', 'edit_bank', 'edit_key_', 'setadmin_'];
     const generalAdminPrefixes = ['analysis_', 'broadcast_'];
 
-    if (ownerOnlyPrefixes.some(p => data?.startsWith(p)) && !isStartingAdmin(parseInt(userId, 10))) {
+    if (ownerOnlyPrefixes.some(p => data?.startsWith(p)) && !isAnyAdmin(userId)) {
       try {
         await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only Access", show_alert: true });
       } catch (e) {}
@@ -4919,11 +4931,11 @@ const withdrawalCooldowns = new Map<string, number>();
     // Answer immediately to stop button spinner for better UX
     try {
       // Provide immediate "Processing..." toast for sensitive interactions
-      const sensitiveActions = ['withdraw', 'deposit', 'confirm', 'exec', 'save', 'delete', 'update', 'edit', 'analysis', 'broadcast', 'admin'];
+      const sensitiveActions = ['withdraw', 'deposit', 'confirm', 'exec', 'save', 'delete', 'update', 'edit', 'analysis', 'broadcast', 'admin', 'approve', 'decline'];
       const isSensitive = sensitiveActions.some(action => data?.toLowerCase().includes(action));
       
       if (isSensitive) {
-        await bot.answerCallbackQuery(query.id, { text: "⏳ Processing...", show_alert: false });
+        await bot.answerCallbackQuery(query.id, { text: "⏳ Processing... Please wait", show_alert: false });
       } else {
         await bot.answerCallbackQuery(query.id);
       }

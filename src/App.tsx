@@ -6,11 +6,18 @@ import { JackpotArena } from './components/JackpotArena';
 import { WheelOfChance } from './components/WheelOfChance';
 import { Leaderboard } from './components/Leaderboard';
 import { BingoGame } from './components/BingoGame';
-import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Settings, X, HelpCircle, Search, Trophy, Gamepad2, TrendingUp, Wallet, User, Plus, ArrowUpRight, ArrowDownLeft, Copy, Check, ChevronRight, Dices, Binary, RefreshCw, Info, Award, Grid3X3, Volume2, VolumeX } from 'lucide-react';
+import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Settings, X, HelpCircle, Search, Trophy, Gamepad2, TrendingUp, Wallet, User, Plus, ArrowUpRight, ArrowDownLeft, Copy, Check, ChevronRight, Dices, Binary, RefreshCw, Info, Award, Grid3X3, Volume2, VolumeX, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playWin, playLoss, suspendAudio, resumeAudio } from './utils/sound';
 import { triggerHaptic } from './utils/haptic';
 import './utils/BingoVoiceEngine';
+
+const BANK_DETAILS: Record<string, { name: string; account: string; owner: string }> = {
+  "Telebirr": { name: "Telebirr (📱)", account: "0931503559", owner: "Tadese" },
+  "CBE": { name: "CBE (🏦 የኢትዮጵያ ንግድ ባንክ)", account: "1000123456789", owner: "Tadese" },
+  "Abyssinia": { name: "Abyssinia Bank (🏦)", account: "987654321", owner: "Tadese" },
+  "Dashen": { name: "Dashen Bank (🏦)", account: "555444332", owner: "Tadese" }
+};
 
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || window.location.origin;
 const SOCKET_URL = BACKEND_URL;
@@ -35,6 +42,30 @@ const getTelegramUser = () => {
 export default function App() {
   const [tgUser] = useState(getTelegramUser);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const openWallet = () => {
+    setIsWalletOpen(true);
+    // Refresh bank details whenever wallet is opened to ensure fresh data
+    if (BACKEND_URL) {
+      fetch(`${BACKEND_URL}/api/config/banks`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.banks) {
+            const formatted: any = {};
+            Object.entries(data.banks).forEach(([id, b]: [string, any]) => {
+              formatted[id] = {
+                name: b.name || id,
+                account: b.account || "",
+                owner: b.owner_name || ""
+              };
+            });
+            if (Object.keys(formatted).length > 0) {
+              setDynamicBanks(formatted);
+            }
+          }
+        })
+        .catch(err => console.error("Error refreshing banks config:", err));
+    }
+  };
   
   const [userId] = useState(() => tgUser?.id ? tgUser.id.toString() : 'user_' + Math.floor(Math.random() * 100000));
   const [roomState, setRoomState] = useState<RoomState | null>(() => {
@@ -137,6 +168,108 @@ export default function App() {
         window.open(`https://t.me/${tgUsername}?start=${type}`, '_blank');
         showNotification("Opening Telegram Bot...", "success");
       }
+    }
+  };
+
+  const handleInlineDeposit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmittingDeposit) return;
+    const amountNum = parseFloat(depositAmount);
+    if (isNaN(amountNum) || amountNum < 10) {
+      showNotification("Please enter a valid amount of at least 10 ETB.", "error");
+      return;
+    }
+    if (!depositReceiptText.trim()) {
+      showNotification("Please paste your SMS receipt or confirmation text.", "error");
+      return;
+    }
+
+    setIsSubmittingDeposit(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/deposit-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          amount: amountNum,
+          bank: depositBank,
+          receiptText: depositReceiptText
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWalletSuccessMessage(data.message || (data.autoApproved ? "Deposit auto-approved instantly!" : "Deposit request submitted!"));
+        setWalletSuccessStep(true);
+        if (data.newBalance !== undefined) {
+          setBalance(data.newBalance);
+        }
+        setDepositAmount('');
+        setDepositReceiptText('');
+        
+        // Auto-close success screen after 5 seconds
+        setTimeout(() => setWalletSuccessStep(false), 5000);
+      } else {
+        showNotification(data.error || "Failed to submit deposit. Please try again.", "error");
+      }
+    } catch (err: any) {
+      console.error("Error submitting deposit:", err);
+      showNotification("Network error submitting deposit. Try again.", "error");
+    } finally {
+      setIsSubmittingDeposit(false);
+    }
+  };
+
+  const handleInlineWithdraw = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmittingWithdraw) return;
+    const amountNum = parseFloat(withdrawAmount);
+    if (isNaN(amountNum) || amountNum < 100) {
+      showNotification("Minimum withdrawal is 100 ETB.", "error");
+      return;
+    }
+    if (!withdrawAccount.trim()) {
+      showNotification("Please enter your account number or phone number.", "error");
+      return;
+    }
+    if (balance !== null && amountNum > balance) {
+      showNotification("Insufficient balance for this withdrawal.", "error");
+      return;
+    }
+
+    setIsSubmittingWithdraw(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/withdraw-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          amount: amountNum,
+          bank: withdrawBank,
+          account: withdrawAccount
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWalletSuccessMessage(data.message || "Withdrawal request submitted successfully!");
+        setWalletSuccessStep(true);
+        if (data.newBalance !== undefined) {
+          setBalance(data.newBalance);
+        }
+        setWithdrawAmount('');
+        setWithdrawAccount('');
+
+        // Auto-close success screen after 5 seconds
+        setTimeout(() => setWalletSuccessStep(false), 5000);
+      } else {
+        showNotification(data.error || "Failed to submit withdrawal request.", "error");
+      }
+    } catch (err: any) {
+      console.error("Error submitting withdrawal:", err);
+      showNotification("Network error submitting withdrawal. Try again.", "error");
+    } finally {
+      setIsSubmittingWithdraw(false);
     }
   };
 
@@ -267,6 +400,18 @@ export default function App() {
   }, [userId]);
 
   const [isWalletOpen, setIsWalletOpen] = useState<boolean>(false);
+  const [walletTab, setWalletTab] = useState<'deposit' | 'withdraw' | 'history'>('deposit');
+  const [walletSuccessStep, setWalletSuccessStep] = useState<boolean>(false);
+  const [walletSuccessMessage, setWalletSuccessMessage] = useState<string>("");
+  const [dynamicBanks, setDynamicBanks] = useState<Record<string, { name: string; account: string; owner: string }>>(BANK_DETAILS);
+  const [depositAmount, setDepositAmount] = useState<string>('');
+  const [depositBank, setDepositBank] = useState<string>('Telebirr');
+  const [depositReceiptText, setDepositReceiptText] = useState<string>('');
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState<boolean>(false);
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('');
+  const [withdrawBank, setWithdrawBank] = useState<string>('Telebirr');
+  const [withdrawAccount, setWithdrawAccount] = useState<string>('');
+  const [isSubmittingWithdraw, setIsSubmittingWithdraw] = useState<boolean>(false);
   const [ledgerTab, setLedgerTab] = useState<'play' | 'transactions'>('play');
   const [isJackpotTheaterMode, setIsJackpotTheaterMode] = useState<boolean>(false);
   const [isPlayersDrawerOpen, setIsPlayersDrawerOpen] = useState<boolean>(false);
@@ -302,6 +447,35 @@ export default function App() {
       });
       
     return () => clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!BACKEND_URL) return;
+    fetch(`${BACKEND_URL}/api/config/banks`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.banks) {
+          // Convert bank config from bot format to App.tsx format
+          const formatted: any = {};
+          Object.entries(data.banks).forEach(([id, b]: [string, any]) => {
+            formatted[id] = {
+              name: b.name || id,
+              account: b.account || "",
+              owner: b.owner_name || ""
+            };
+          });
+          if (Object.keys(formatted).length > 0) {
+            setDynamicBanks(formatted);
+            // Also set default deposit bank if available
+            const firstId = Object.keys(formatted)[0];
+            setDepositBank(firstId);
+            setWithdrawBank(firstId);
+          }
+        }
+      })
+      .catch(err => {
+        console.error("Error fetching banks config:", err);
+      });
   }, []);
 
   const [leaderboardStats, setLeaderboardStats] = useState<{
@@ -826,7 +1000,7 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => setIsWalletOpen(true)}
+                  onClick={openWallet}
                   className="flex items-center gap-1 bg-yellow-500/10 hover:bg-yellow-500/20 dark:bg-yellow-500/5 dark:hover:bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-1.5 py-1 rounded-full text-[11px] font-bold transition-all active:scale-95 cursor-pointer shrink-0"
                 >
                   <Coins className="w-3 h-3 text-yellow-500 shrink-0" />
@@ -860,7 +1034,7 @@ export default function App() {
               <>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setIsWalletOpen(true)}
+                    onClick={openWallet}
                     className="flex items-center gap-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 dark:bg-yellow-500/5 dark:hover:bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer shrink-0"
                   >
                     <Coins className="w-3.5 h-3.5 text-yellow-500" />
@@ -1309,7 +1483,7 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => setIsWalletOpen(true)}
+                      onClick={openWallet}
                       className="bg-white/15 hover:bg-white/25 active:scale-95 transition-all text-white text-xs font-black py-2.5 px-4 rounded-2xl border border-white/10 flex items-center gap-1.5 cursor-pointer shadow-sm"
                     >
                       <span>Manage Wallet</span>
@@ -1543,378 +1717,619 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Scrollable Content */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-12">
-                {/* Deposit and Withdrawal Bot Redirect Panels */}
-                <div className="bg-gray-50 dark:bg-gray-950 rounded-2xl p-4 border border-gray-200 dark:border-gray-800 transition-colors shadow-xs space-y-4 text-center">
-                  <div className="p-2">
-                    <h3 className="text-sm font-black text-gray-900 dark:text-white mb-1">Deposit & Withdrawal</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                      All financial transactions are handled securely through our official Telegram Bot. Your balance will update instantly upon approval.
-                    </p>
-                    <div className="flex gap-2 justify-center">
-                      <button
-                        onClick={() => handleTriggerFlow('deposit')}
-                        disabled={isTriggeringFlow}
-                        className={`flex-1 bg-green-600 hover:bg-green-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${isTriggeringFlow ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {isTriggeringFlow ? 'Triggering...' : <><ArrowDownLeft className="w-4 h-4" /> Deposit via Bot</>}
-                      </button>
-                      <button
-                        onClick={() => handleTriggerFlow('withdraw')}
-                        disabled={isTriggeringFlow}
-                        className={`flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black px-4 py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${isTriggeringFlow ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {isTriggeringFlow ? 'Triggering...' : <><ArrowUpRight className="w-4 h-4" /> Withdraw via Bot</>}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+              {/* Segmented Control for Wallet Operations */}
+              <div className="mx-4 mt-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl flex gap-1 shadow-inner shrink-0">
+                <button
+                  onClick={() => setWalletTab('deposit')}
+                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                    walletTab === 'deposit' 
+                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  📥 Deposit (ገቢ)
+                </button>
+                <button
+                  onClick={() => setWalletTab('withdraw')}
+                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                    walletTab === 'withdraw' 
+                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  📤 Withdraw (ወጪ)
+                </button>
+                <button
+                  onClick={() => setWalletTab('history')}
+                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                    walletTab === 'history' 
+                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  📋 History (ታሪክ)
+                </button>
+              </div>
 
-                {/* Ledger Tabs Segmented Control */}
-                <div className="bg-gray-100 dark:bg-gray-800 p-1 rounded-xl flex gap-1 mb-4 shadow-inner">
-                  <button
-                    onClick={() => setLedgerTab('play')}
-                    className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
-                      ledgerTab === 'play' 
-                        ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' 
-                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer'
-                    }`}
-                  >
-                    Play History
-                  </button>
-                  <button
-                    onClick={() => setLedgerTab('transactions')}
-                    className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
-                      ledgerTab === 'transactions' 
-                        ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' 
-                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer'
-                    }`}
-                  >
-                    Transactions
-                  </button>
-                </div>
+              {/* Scrollable Body Content */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-12 relative">
+                <AnimatePresence>
+                  {walletSuccessStep && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className="absolute inset-0 z-50 bg-white/95 dark:bg-gray-900/95 flex flex-col items-center justify-center p-6 text-center"
+                    >
+                      <motion.div
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ type: 'spring', damping: 12, stiffness: 200, delay: 0.1 }}
+                        className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-green-500/20"
+                      >
+                        <Check className="w-10 h-10 text-white stroke-[3px]" />
+                      </motion.div>
+                      <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">Request Successful!</h2>
+                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400 max-w-[240px] leading-relaxed">
+                        {walletSuccessMessage}
+                      </p>
+                      <button
+                        onClick={() => setWalletSuccessStep(false)}
+                        className="mt-8 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white font-black py-3 px-8 rounded-2xl text-xs transition-all active:scale-95 cursor-pointer"
+                      >
+                        Back to Wallet
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-                {ledgerTab === 'transactions' ? (
-                  <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-200 dark:border-gray-800 transition-colors shadow-xs">
-                    <h3 className="text-xs font-black uppercase text-gray-400 tracking-wider mb-2 flex items-center gap-1.5 flex">
-                      <History className="w-4 h-4 mr-1" /> Transaction History
-                    </h3>
-                    <div className="space-y-2 divide-y divide-gray-100 dark:divide-gray-800/40">
-                      {transactions.map((tx, index) => (
-                        <div key={`${tx.id}-${index}`} className="flex justify-between items-center pt-2.5 first:pt-0">
-                          <div>
-                            <div className="text-xs font-bold text-gray-800 dark:text-gray-200">{tx.desc}</div>
-                            <div className="text-[10px] text-gray-400 font-medium mt-0.5">{tx.date}</div>
+                {walletTab === 'deposit' && (
+                  <div className="space-y-4">
+                    {/* Step 1: Transfer Details */}
+                    <div className="bg-blue-50/50 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl p-4">
+                      <h3 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 mb-2 flex items-center gap-1.5">
+                        <ArrowDownLeft className="w-4 h-4" /> Step 1: Send Money to Bank
+                      </h3>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                        Please transfer the amount you wish to deposit to any of our official accounts below.
+                      </p>
+                      
+                      <div className="space-y-2.5">
+                        {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([key, details]) => (
+                          <div key={key} className="bg-white dark:bg-gray-900 rounded-xl p-3 border border-gray-150 dark:border-gray-800 flex justify-between items-center">
+                            <div className="space-y-0.5 text-left">
+                              <span className="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase">{details.name}</span>
+                              <div className="text-xs font-mono font-bold text-gray-500 dark:text-gray-400 select-all">
+                                Acc: <span className="text-gray-950 dark:text-white">{details.account}</span>
+                              </div>
+                              <div className="text-[10px] text-gray-400">Name: {details.owner}</div>
+                            </div>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(details.account);
+                                showNotification(`Copied account: ${details.account}`, 'success');
+                              }}
+                              className="bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-black uppercase text-gray-700 dark:text-gray-300 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 transition-colors active:scale-95 cursor-pointer"
+                            >
+                              📋 Copy Acc
+                            </button>
                           </div>
-                          <span className={`text-xs font-black font-mono ${tx.positive ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                            {tx.positive ? '+' : ''}{tx.amount.toLocaleString()}
-                          </span>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : (() => {
-                  interface GroupedGameLog {
-                    id: string;
-                    type: string;
-                    date: string;
-                    status: string;
-                    totalChange: number;
-                    bet: number;
-                    choices: string[];
-                    winningNums: string;
-                    outcomes: Array<{
-                      result: string;
-                      change: number;
-                      numbers: string;
-                    }>;
-                  }
 
-                  const getGameBadgeName = (type: string): string => {
-                    const t = type.toLowerCase();
-                    if (t === 'even/odd' || t.includes('even/odd')) return 'ሞላ/ጎደለ';
-                    if (t === 'chance 1-10' || t.includes('1-10')) return 'ፈጣን 10 ሰው';
-                    if (t === 'chance 1-20' || t.includes('1-20')) return 'ፈጣን 20 ሰው';
-                    if (t === 'jackpot mini' || (t.includes('jackpot') && t.includes('mini'))) return 'ዕድል (1-50)';
-                    if (t === 'jackpot grand' || (t.includes('jackpot') && t.includes('grand'))) return 'ዕድል (1-100)';
-                    return type;
-                  };
-
-                  const getBadgeStyles = (type: string): string => {
-                    const t = type.toLowerCase();
-                    if (t.includes('even/odd')) {
-                      return 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200/40 dark:border-emerald-900/20';
-                    }
-                    if (t.includes('1-10')) {
-                      return 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 border-indigo-200/40 dark:border-indigo-900/20';
-                    }
-                    if (t.includes('1-20')) {
-                      return 'bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-400 border-purple-200/40 dark:border-purple-900/20';
-                    }
-                    if (t.includes('mini')) {
-                      return 'bg-cyan-50 dark:bg-cyan-950/30 text-cyan-600 dark:text-cyan-400 border-cyan-200/40 dark:border-cyan-900/20';
-                    }
-                    if (t.includes('grand')) {
-                      return 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border-amber-200/40 dark:border-amber-900/20';
-                    }
-                    return 'bg-gray-50 dark:bg-gray-950/30 text-gray-600 dark:text-gray-400 border-gray-200/40 dark:border-gray-900/20';
-                  };
-
-                  const groups: { [key: string]: GroupedGameLog } = {};
-                  const sortedLogs = [...gameHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                  sortedLogs.forEach(log => {
-                    const key = `${log.id}_${log.type}`;
-                    if (!groups[key]) {
-                      groups[key] = {
-                        id: log.id,
-                        type: log.type,
-                        date: log.date,
-                        status: log.status || 'Completed',
-                        totalChange: 0,
-                        bet: 0,
-                        choices: [],
-                        winningNums: log.winningNums || '-',
-                        outcomes: []
-                      };
-                    }
-                    
-                    groups[key].totalChange += log.change;
-                    if (log.bet && log.bet > 0) {
-                      groups[key].bet += log.bet;
-                    }
-                    if (log.numbers && log.numbers !== '-') {
-                      const incomingChoices = log.numbers.split(',').map(n => n.trim()).filter(Boolean);
-                      incomingChoices.forEach(choice => {
-                        if (!groups[key].choices.includes(choice)) {
-                          groups[key].choices.push(choice);
-                        }
-                      });
-                    }
-                    if (log.winningNums && log.winningNums !== '-') {
-                      if (groups[key].winningNums === '-') {
-                        groups[key].winningNums = log.winningNums;
-                      } else {
-                        const existing = groups[key].winningNums.split(',').map(n => n.trim()).filter(Boolean);
-                        const incoming = log.winningNums.split(',').map(n => n.trim()).filter(Boolean);
-                        const combined = Array.from(new Set([...existing, ...incoming]));
-                        groups[key].winningNums = combined.join(', ');
-                      }
-                    }
-                    
-                    const exists = groups[key].outcomes.some(o => o.result === log.result && o.change === log.change && o.numbers === log.numbers);
-                    if (!exists) {
-                      groups[key].outcomes.push({
-                        result: log.result,
-                        change: log.change,
-                        numbers: log.numbers
-                      });
-                    }
-                  });
-
-                  const groupedList = Object.values(groups).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                  const filteredGroups = groupedList.filter(group => {
-                    if (historyFilter === 'all') return true;
-                    const typeLower = group.type.toLowerCase();
-                    if (historyFilter === 'even_odd') {
-                      return typeLower === 'even/odd' || typeLower.includes('even/odd');
-                    }
-                    if (historyFilter === 'wheel_1_10') {
-                      return typeLower === 'chance 1-10' || typeLower.includes('1-10');
-                    }
-                    if (historyFilter === 'wheel_1_20') {
-                      return typeLower === 'chance 1-20' || typeLower.includes('1-20');
-                    }
-                    if (historyFilter === 'jackpot_mini') {
-                      return typeLower === 'jackpot mini' || (typeLower.includes('jackpot') && typeLower.includes('mini'));
-                    }
-                    if (historyFilter === 'jackpot_grand') {
-                      return typeLower === 'jackpot grand' || (typeLower.includes('jackpot') && typeLower.includes('grand'));
-                    }
-                    return true;
-                  });
-
-                  return (
-                    <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-200 dark:border-gray-800 transition-colors shadow-xs">
-                      <div className="flex justify-between items-center mb-4 flex-wrap gap-2 border-b border-gray-100 dark:border-gray-800 pb-3">
-                        <h3 className="text-xs font-black uppercase text-gray-400 tracking-wider flex items-center gap-1.5">
-                          <TrendingUp className="w-4 h-4 mr-1 text-blue-500" /> Play History
-                        </h3>
-                        
-                        <div className="relative">
+                    {/* Step 2: Instant Auto-Verification Form */}
+                    <form onSubmit={handleInlineDeposit} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-4">
+                      <h3 className="text-xs font-black uppercase text-green-600 dark:text-green-400 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-green-500" /> Step 2: Instant Receipt Verification
+                      </h3>
+                      
+                      <div className="grid grid-cols-2 gap-3 text-left">
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Select Bank</label>
                           <select
-                            value={historyFilter}
-                            onChange={(e) => setHistoryFilter(e.target.value)}
-                            className="text-[11px] font-black bg-gray-50 dark:bg-gray-950 text-gray-700 dark:text-gray-300 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-800 outline-none cursor-pointer focus:ring-1 focus:ring-blue-500 transition-all"
+                            value={depositBank}
+                            onChange={(e) => setDepositBank(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none cursor-pointer"
                           >
-                            <option value="all">ሁሉም ጨዋታዎች (All Games)</option>
-                            <option value="even_odd">🟢 ሞላ/ጎደለ (Even/Odd)</option>
-                            <option value="wheel_1_10">🎡 ፈጣን 10 ሰው</option>
-                            <option value="wheel_1_20">🎡 ፈጣን 20 ሰው</option>
-                            <option value="jackpot_mini">🏆 ዕድል (1-50)</option>
-                            <option value="jackpot_grand">🏆 ዕድል (1-100)</option>
+                            {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([id, b]) => (
+                              <option key={id} value={id}>{b.name}</option>
+                            ))}
                           </select>
                         </div>
+                        
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Amount (ETB)</label>
+                          <input
+                            type="number"
+                            placeholder="Min: 10 ETB"
+                            value={depositAmount}
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
+                            required
+                            min="10"
+                          />
+                        </div>
                       </div>
 
-                      <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                        {filteredGroups.length === 0 ? (
-                           <div className="text-center py-8 text-xs text-gray-400 font-medium">
-                             No play logs found for this filter.
-                           </div>
-                        ) : (
-                          filteredGroups.map((log, index) => {
-                            const isWin = log.outcomes.some(o => o.result.toLowerCase().includes('win'));
-
-                            const gameIcon = () => {
-                              const t = log.type.toLowerCase();
-                              if (t.includes('even/odd')) return <Coins className="w-5 h-5 text-emerald-500" />;
-                              if (t.includes('chance')) return <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin-slow" />;
-                              return <Trophy className="w-5 h-5 text-amber-500" />;
-                            };
-
-                            return (
-                              <div 
-                                key={`${log.id}-${index}`} 
-                                className={`group relative overflow-hidden bg-gray-50/40 dark:bg-zinc-950/20 border border-gray-150/60 dark:border-zinc-800/40 rounded-xl p-3 md:p-4 transition-all hover:border-blue-500/20 hover:shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 border-l-[5px] ${
-                                  isWin 
-                                    ? 'border-l-emerald-500 dark:border-l-emerald-500/80' 
-                                    : 'border-l-zinc-300 dark:border-l-zinc-700/80'
-                                }`}
-                              >
-                                {/* Left section: Game badge, round, and time */}
-                                <div className="flex items-center gap-3 shrink-0">
-                                  <div className={`p-2 rounded-lg border shrink-0 shadow-3xs ${
-                                    log.type.toLowerCase().includes('even/odd')
-                                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
-                                      : log.type.toLowerCase().includes('chance')
-                                      ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-500'
-                                      : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
-                                  }`}>
-                                    {gameIcon()}
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${getBadgeStyles(log.type)}`}>
-                                        {getGameBadgeName(log.type)}
-                                      </span>
-                                      <span className="text-[9px] text-gray-500 dark:text-zinc-400 font-mono font-black bg-white dark:bg-zinc-900 border border-gray-150 dark:border-zinc-800 px-1.5 py-0.5 rounded shadow-2xs">
-                                        {log.id}
-                                      </span>
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold flex items-center gap-1">
-                                      <Clock className="w-3.5 h-3.5 text-gray-300 dark:text-zinc-600" />
-                                      {log.date}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Responsive Two-Column Grid for Choice & Winning Numbers on Mobile, Side-By-Side Flex on Desktop */}
-                                <div className="grid grid-cols-2 md:flex md:flex-row flex-1 gap-3 md:gap-6 justify-between items-start md:items-center">
-                                  {/* Middle section: Player's Choice */}
-                                  <div className="flex flex-col gap-1 md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5">
-                                    <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase flex items-center gap-1">
-                                      <Dices className="w-3.5 h-3.5 text-blue-500/80" /> የአንተ ምርጫ • YOUR CHOICE
-                                    </span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {log.choices.length > 0 ? (
-                                        log.choices.flatMap(c => c.split(',').map(s => s.trim())).map((choice, cIdx) => {
-                                          const cleanChoice = choice.trim();
-                                          const cleanWinNums = (log.winningNums || '').split(',').map(s => s.trim());
-                                          const isMatch = cleanWinNums.includes(cleanChoice);
-                                          return (
-                                            <span 
-                                              key={cIdx} 
-                                              className={`inline-flex items-center text-[10px] font-mono font-black px-2 py-0.5 rounded-full border transition-all ${
-                                                isMatch 
-                                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 dark:border-emerald-500/20 shadow-xs animate-pulse' 
-                                                : 'bg-blue-50/70 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-100/30 dark:border-blue-900/10'
-                                              }`}
-                                            >
-                                              {isMatch && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />}
-                                              {choice}
-                                            </span>
-                                          );
-                                        })
-                                      ) : (
-                                        <span className="text-xs text-gray-400 dark:text-zinc-500 font-mono">-</span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Right section: Winning Numbers */}
-                                  <div className="flex flex-col gap-1 md:items-end md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5 md:text-right">
-                                    <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase flex items-center gap-1 md:justify-end">
-                                      <Trophy className="w-3.5 h-3.5 text-amber-500/80" /> አሸናፊ ቁጥር • WINNING NUMBERS
-                                    </span>
-                                    <div className="flex items-center gap-2 flex-wrap md:justify-end">
-                                      <div className="flex flex-wrap gap-1 md:justify-end">
-                                        {(log.winningNums || '-').split(',').map((wn, wnIdx) => {
-                                          const cleanWn = wn.trim();
-                                          if (!cleanWn) return null;
-                                          const userHadThis = log.choices.flatMap(c => c.split(',').map(s => s.trim())).includes(cleanWn);
-                                          
-                                          // Format with 1st, 2nd, 3rd prefix labels for multiple draws
-                                          const typeLower = log.type.toLowerCase();
-                                          const showLabel = typeLower.includes('chance') || typeLower.includes('jackpot');
-                                          const label = showLabel 
-                                            ? (wnIdx === 0 ? '1st - ' : wnIdx === 1 ? '2nd - ' : wnIdx === 2 ? '3rd - ' : `${wnIdx + 1}th - `)
-                                            : '';
-
-                                          return (
-                                            <span 
-                                              key={wnIdx} 
-                                              className={`inline-flex items-center font-mono font-black text-[10px] px-2 py-0.5 rounded-md border ${
-                                                userHadThis 
-                                                  ? 'bg-emerald-500/10 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800/40 shadow-xs' 
-                                                  : 'bg-zinc-100 dark:bg-zinc-900/60 text-gray-700 dark:text-zinc-400 border-gray-200/80 dark:border-zinc-800/50'
-                                              }`}
-                                            >
-                                              {label}<span className={userHadThis ? 'text-emerald-500 font-black' : ''}>{cleanWn}</span>
-                                            </span>
-                                          );
-                                        })}
-                                      </div>
-                                      
-                                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shrink-0 flex items-center gap-1 ${
-                                        isWin 
-                                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
-                                          : 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20'
-                                      }`}>
-                                        {isWin ? '🏆 WIN' : '❌ MISS'}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Right-most column: Beautiful, Precise Payout Outcomes */}
-                                  <div className="flex flex-col md:items-end justify-center shrink-0 border-t border-gray-100 dark:border-zinc-800/40 pt-2.5 md:pt-0 md:border-t-0 md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5 min-w-[95px]">
-                                    <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase">
-                                      የክፍያ ሁኔታ • PAYOUT
-                                    </span>
-                                    <div className="flex md:flex-col items-center md:items-end gap-2 md:gap-0.5 mt-0.5">
-                                      <span className={`text-xs font-mono font-black ${
-                                        isWin 
-                                          ? 'text-emerald-500 dark:text-emerald-400' 
-                                          : 'text-zinc-500 dark:text-zinc-400'
-                                      }`}>
-                                        {isWin ? `+${log.totalChange.toLocaleString()}` : '0'} ETB
-                                      </span>
-                                      <span className="text-[9px] font-mono text-gray-400 dark:text-zinc-500 font-bold">
-                                        Bet: {log.bet?.toLocaleString() || '0'} ETB
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
+                      <div className="text-left">
+                        <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 flex justify-between items-center">
+                          <span>Receipt Confirmation Message (Paste SMS)</span>
+                          <span className="text-green-500 font-bold lowercase">⭐ Auto-verified instantly</span>
+                        </label>
+                        <textarea
+                          rows={3}
+                          placeholder="Paste the full SMS confirmation receipt here. E.g. 'MT210712... You have received Birr 500.00...'"
+                          value={depositReceiptText}
+                          onChange={(e) => setDepositReceiptText(e.target.value)}
+                          className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-medium text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none font-mono resize-none"
+                          required
+                        />
                       </div>
+
+                      <div className="p-3 bg-green-50/50 dark:bg-green-950/10 rounded-xl border border-green-100/50 dark:border-green-900/10 flex gap-2 items-start text-left">
+                        <div className="p-1 bg-green-500 text-white rounded-full text-[10px] uppercase font-black tracking-tight mt-0.5 shrink-0">AI</div>
+                        <p className="text-[10px] font-medium text-green-700 dark:text-green-400 leading-snug">
+                          <b>Auto-Approval Active:</b> Our system extracts the transaction ID and amount directly from the text to fund your account <b>instantly (0 seconds wait)</b>. Duplicate receipts are strictly rejected.
+                        </p>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSubmittingDeposit}
+                        className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-400 text-white font-black py-3 px-4 rounded-xl text-xs transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-1.5 shadow-md shadow-green-600/10"
+                      >
+                        {isSubmittingDeposit ? "Verifying Transaction..." : <><Zap className="w-4 h-4" /> Submit & Verify Deposit</>}
+                      </button>
+                    </form>
+
+                    {/* Fallback Option */}
+                    <div className="bg-gray-50 dark:bg-gray-950/40 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 flex justify-between items-center gap-3">
+                      <div className="space-y-0.5 text-left">
+                        <span className="text-xs font-black text-gray-800 dark:text-gray-200">Alternative Verification</span>
+                        <p className="text-[10px] text-gray-500 leading-tight">Can't copy your SMS receipt? Use our quick Telegram bot verification flow instead.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleTriggerFlow('deposit')}
+                        disabled={isTriggeringFlow}
+                        className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-2 rounded-lg cursor-pointer transition-all active:scale-95"
+                      >
+                        {isTriggeringFlow ? "Loading..." : "Open Bot 🤖"}
+                      </button>
                     </div>
-                  );
-                })()}
+                  </div>
+                )}
+
+                {walletTab === 'withdraw' && (
+                  <div className="space-y-4">
+                    <form onSubmit={handleInlineWithdraw} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-4">
+                      <h3 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                        <ArrowUpRight className="w-4 h-4" /> Express Cashout Request
+                      </h3>
+                      
+                      <p className="text-xs text-gray-600 dark:text-gray-400 text-left">
+                        Funds will be securely sent directly to your registered bank account or phone number.
+                      </p>
+
+                      <div className="text-left">
+                        <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Select Receiving Bank</label>
+                        <select
+                          value={withdrawBank}
+                          onChange={(e) => setWithdrawBank(e.target.value)}
+                          className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none cursor-pointer"
+                        >
+                          {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([id, b]) => (
+                            <option key={id} value={id}>{b.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-left">
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Amount to Cashout</label>
+                          <input
+                            type="number"
+                            placeholder="Min: 100 ETB"
+                            value={withdrawAmount}
+                            onChange={(e) => setWithdrawAmount(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
+                            required
+                            min="100"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Account / Phone No</label>
+                          <input
+                            type="text"
+                            placeholder="09... / 1000..."
+                            value={withdrawAccount}
+                            onChange={(e) => setWithdrawAccount(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-mono font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-amber-50/50 dark:bg-amber-950/10 rounded-xl border border-amber-100/50 dark:border-amber-900/10 flex gap-2 items-start text-left">
+                        <Clock className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                        <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 leading-snug">
+                          <b>Double-check details:</b> Payouts are made instantly by administrators upon review (typically less than 1 minute). Ensure the account or phone matches your registered name.
+                        </p>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSubmittingWithdraw}
+                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-400 text-white font-black py-3 px-4 rounded-xl text-xs transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-1.5 shadow-md shadow-blue-600/10"
+                      >
+                        {isSubmittingWithdraw ? "Submitting Request..." : <><ArrowUpRight className="w-4 h-4" /> Request Express Withdrawal</>}
+                      </button>
+                    </form>
+
+                    {/* Fallback Option */}
+                    <div className="bg-gray-50 dark:bg-gray-950/40 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 flex justify-between items-center gap-3">
+                      <div className="space-y-0.5 text-left">
+                        <span className="text-xs font-black text-gray-800 dark:text-gray-200">Alternative Verification</span>
+                        <p className="text-[10px] text-gray-500 leading-tight">Prefer using our secure chatbot? Start the Telegram withdrawal flow instantly.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleTriggerFlow('withdraw')}
+                        disabled={isTriggeringFlow}
+                        className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-2 rounded-lg cursor-pointer transition-all active:scale-95"
+                      >
+                        {isTriggeringFlow ? "Loading..." : "Open Bot 🤖"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {walletTab === 'history' && (
+                  <div className="space-y-4">
+                    {/* Ledger Tabs Segmented Control */}
+                    <div className="bg-gray-100 dark:bg-gray-800 p-1 rounded-xl flex gap-1 mb-4 shadow-inner">
+                      <button
+                        onClick={() => setLedgerTab('play')}
+                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                          ledgerTab === 'play' 
+                            ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                        }`}
+                      >
+                        Play History
+                      </button>
+                      <button
+                        onClick={() => setLedgerTab('transactions')}
+                        className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                          ledgerTab === 'transactions' 
+                            ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                        }`}
+                      >
+                        Transactions
+                      </button>
+                    </div>
+
+                    {ledgerTab === 'transactions' ? (
+                      <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-200 dark:border-gray-800 transition-colors shadow-xs">
+                        <h3 className="text-xs font-black uppercase text-gray-400 tracking-wider mb-2 flex items-center gap-1.5 flex">
+                          <History className="w-4 h-4 mr-1" /> Transaction History
+                        </h3>
+                        <div className="space-y-2 divide-y divide-gray-100 dark:divide-gray-800/40">
+                          {transactions.map((tx, index) => (
+                            <div key={`${tx.id}-${index}`} className="flex justify-between items-center pt-2.5 first:pt-0">
+                              <div className="text-left">
+                                <div className="text-xs font-bold text-gray-800 dark:text-gray-200">{tx.desc}</div>
+                                <div className="text-[10px] text-gray-400 font-medium mt-0.5">{tx.date}</div>
+                              </div>
+                              <span className={`text-xs font-black font-mono ${tx.positive ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                                {tx.positive ? '+' : ''}{tx.amount.toLocaleString()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (() => {
+                      interface GroupedGameLog {
+                        id: string;
+                        type: string;
+                        date: string;
+                        status: string;
+                        totalChange: number;
+                        bet: number;
+                        choices: string[];
+                        winningNums: string;
+                        outcomes: Array<{
+                          result: string;
+                          change: number;
+                          numbers: string;
+                        }>;
+                      }
+
+                      const getGameBadgeName = (type: string): string => {
+                        const t = type.toLowerCase();
+                        if (t === 'even/odd' || t.includes('even/odd')) return 'ሞላ/ጎደለ';
+                        if (t === 'chance 1-10' || t.includes('1-10')) return 'ፈጣን 10 ሰው';
+                        if (t === 'chance 1-20' || t.includes('1-20')) return 'ፈጣን 20 ሰው';
+                        if (t === 'jackpot mini' || (t.includes('jackpot') && t.includes('mini'))) return 'ዕድል (1-50)';
+                        if (t === 'jackpot grand' || (t.includes('jackpot') && t.includes('grand'))) return 'ዕድል (1-100)';
+                        return type;
+                      };
+
+                      const getBadgeStyles = (type: string): string => {
+                        const t = type.toLowerCase();
+                        if (t.includes('even/odd')) {
+                          return 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200/40 dark:border-emerald-900/20';
+                        }
+                        if (t.includes('1-10')) {
+                          return 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 border-indigo-200/40 dark:border-indigo-900/20';
+                        }
+                        if (t.includes('1-20')) {
+                          return 'bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-400 border-purple-200/40 dark:border-purple-900/20';
+                        }
+                        if (t.includes('mini')) {
+                          return 'bg-cyan-50 dark:bg-cyan-950/30 text-cyan-600 dark:text-cyan-400 border-cyan-200/40 dark:border-cyan-900/20';
+                        }
+                        if (t.includes('grand')) {
+                          return 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border-amber-200/40 dark:border-amber-900/20';
+                        }
+                        return 'bg-gray-50 dark:bg-gray-950/30 text-gray-600 dark:text-gray-400 border-gray-200/40 dark:border-gray-900/20';
+                      };
+
+                      const groups: { [key: string]: GroupedGameLog } = {};
+                      const sortedLogs = [...gameHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                      sortedLogs.forEach(log => {
+                        const key = `${log.id}_${log.type}`;
+                        if (!groups[key]) {
+                          groups[key] = {
+                            id: log.id,
+                            type: log.type,
+                            date: log.date,
+                            status: log.status || 'Completed',
+                            totalChange: 0,
+                            bet: 0,
+                            choices: [],
+                            winningNums: log.winningNums || '-',
+                            outcomes: []
+                          };
+                        }
+                        
+                        groups[key].totalChange += log.change;
+                        if (log.bet && log.bet > 0) {
+                          groups[key].bet += log.bet;
+                        }
+                        if (log.numbers && log.numbers !== '-') {
+                          const incomingChoices = log.numbers.split(',').map(n => n.trim()).filter(Boolean);
+                          incomingChoices.forEach(choice => {
+                            if (!groups[key].choices.includes(choice)) {
+                              groups[key].choices.push(choice);
+                            }
+                          });
+                        }
+                        if (log.winningNums && log.winningNums !== '-') {
+                          if (groups[key].winningNums === '-') {
+                            groups[key].winningNums = log.winningNums;
+                          } else {
+                            const existing = groups[key].winningNums.split(',').map(n => n.trim()).filter(Boolean);
+                            const incoming = log.winningNums.split(',').map(n => n.trim()).filter(Boolean);
+                            const combined = Array.from(new Set([...existing, ...incoming]));
+                            groups[key].winningNums = combined.join(', ');
+                          }
+                        }
+                        
+                        const exists = groups[key].outcomes.some(o => o.result === log.result && o.change === log.change && o.numbers === log.numbers);
+                        if (!exists) {
+                          groups[key].outcomes.push({
+                            result: log.result,
+                            change: log.change,
+                            numbers: log.numbers
+                          });
+                        }
+                      });
+
+                      const groupedList = Object.values(groups).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                      const filteredGroups = groupedList.filter(group => {
+                        if (historyFilter === 'all') return true;
+                        const typeLower = group.type.toLowerCase();
+                        if (historyFilter === 'even_odd') {
+                          return typeLower === 'even/odd' || typeLower.includes('even/odd');
+                        }
+                        if (historyFilter === 'wheel_1_10') {
+                          return typeLower === 'chance 1-10' || typeLower.includes('1-10');
+                        }
+                        if (historyFilter === 'wheel_1_20') {
+                          return typeLower === 'chance 1-20' || typeLower.includes('1-20');
+                        }
+                        if (historyFilter === 'jackpot_mini') {
+                          return typeLower === 'jackpot mini' || (typeLower.includes('jackpot') && typeLower.includes('mini'));
+                        }
+                        if (historyFilter === 'jackpot_grand') {
+                          return typeLower === 'jackpot grand' || (typeLower.includes('jackpot') && typeLower.includes('grand'));
+                        }
+                        return true;
+                      });
+
+                      return (
+                        <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-200 dark:border-gray-800 transition-colors shadow-xs">
+                          <div className="flex justify-between items-center mb-4 flex-wrap gap-2 border-b border-gray-100 dark:border-gray-800 pb-3">
+                            <h3 className="text-xs font-black uppercase text-gray-400 tracking-wider flex items-center gap-1.5">
+                              <TrendingUp className="w-4 h-4 mr-1 text-blue-500" /> Play History
+                            </h3>
+                            
+                            <div className="relative">
+                              <select
+                                value={historyFilter}
+                                onChange={(e) => setHistoryFilter(e.target.value)}
+                                className="text-[11px] font-black bg-gray-50 dark:bg-gray-950 text-gray-700 dark:text-gray-300 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-800 outline-none cursor-pointer focus:ring-1 focus:ring-blue-500 transition-all"
+                              >
+                                <option value="all">ሁሉም ጨዋታዎች (All Games)</option>
+                                <option value="even_odd">🟢 ሞላ/ጎደለ (Even/Odd)</option>
+                                <option value="wheel_1_10">🎡 ፈጣን 10 ሰው</option>
+                                <option value="wheel_1_20">🎡 ፈጣን 20 ሰው</option>
+                                <option value="jackpot_mini">🏆 ዕድል (1-50)</option>
+                                <option value="jackpot_grand">🏆 ዕድል (1-100)</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                            {filteredGroups.length === 0 ? (
+                               <div className="text-center py-8 text-xs text-gray-400 font-medium">
+                                 No play logs found for this filter.
+                               </div>
+                            ) : (
+                              filteredGroups.map((log, index) => {
+                                const isWin = log.outcomes.some(o => o.result.toLowerCase().includes('win'));
+
+                                const gameIcon = () => {
+                                  const t = log.type.toLowerCase();
+                                  if (t.includes('even/odd')) return <Coins className="w-5 h-5 text-emerald-500" />;
+                                  if (t.includes('chance')) return <RefreshCw className="w-5 h-5 text-indigo-500" />;
+                                  return <Trophy className="w-5 h-5 text-amber-500" />;
+                                };
+
+                                return (
+                                  <div 
+                                    key={`${log.id}-${index}`} 
+                                    className={`group relative overflow-hidden bg-gray-50/40 dark:bg-zinc-950/20 border border-gray-150/60 dark:border-zinc-800/40 rounded-xl p-3 md:p-4 transition-all hover:border-blue-500/20 hover:shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 border-l-[5px] ${
+                                      isWin 
+                                        ? 'border-l-emerald-500 dark:border-l-emerald-500/80' 
+                                        : 'border-l-zinc-300 dark:border-l-zinc-700/80'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 shrink-0 text-left">
+                                      <div className={`p-2 rounded-lg border shrink-0 shadow-3xs ${
+                                        log.type.toLowerCase().includes('even/odd')
+                                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                                          : log.type.toLowerCase().includes('chance')
+                                          ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-500'
+                                          : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+                                      }`}>
+                                        {gameIcon()}
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${getBadgeStyles(log.type)}`}>
+                                            {getGameBadgeName(log.type)}
+                                          </span>
+                                          <span className="text-[9px] text-gray-500 dark:text-zinc-400 font-mono font-black bg-white dark:bg-zinc-900 border border-gray-150 dark:border-zinc-800 px-1.5 py-0.5 rounded shadow-2xs">
+                                            {log.id}
+                                          </span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold flex items-center gap-1">
+                                          <Clock className="w-3.5 h-3.5 text-gray-300 dark:text-zinc-600" />
+                                          {log.date}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 md:flex md:flex-row flex-1 gap-3 md:gap-6 justify-between items-start md:items-center text-left">
+                                      <div className="flex flex-col gap-1 md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5">
+                                        <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase flex items-center gap-1">
+                                          <Dices className="w-3.5 h-3.5 text-blue-500/80" /> YOUR CHOICE
+                                        </span>
+                                        <div className="flex flex-wrap gap-1">
+                                          {log.choices.length > 0 ? (
+                                            log.choices.flatMap(c => c.split(',').map(s => s.trim())).map((choice, cIdx) => {
+                                              const cleanChoice = choice.trim();
+                                              const cleanWinNums = (log.winningNums || '').split(',').map(s => s.trim());
+                                              const isMatch = cleanWinNums.includes(cleanChoice);
+                                              return (
+                                                <span 
+                                                  key={cIdx} 
+                                                  className={`inline-flex items-center text-[10px] font-mono font-black px-2 py-0.5 rounded-full border transition-all ${
+                                                    isMatch 
+                                                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 dark:border-emerald-500/20 shadow-xs animate-pulse' 
+                                                    : 'bg-blue-50/70 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-100/30 dark:border-blue-900/10'
+                                                  }`}
+                                                >
+                                                  {isMatch && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />}
+                                                  {choice}
+                                                </span>
+                                              );
+                                            })
+                                          ) : (
+                                            <span className="text-xs text-gray-400 dark:text-zinc-500 font-mono">-</span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-col gap-1 md:items-end md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5 md:text-right">
+                                        <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase flex items-center gap-1 md:justify-end">
+                                          <Trophy className="w-3.5 h-3.5 text-amber-500/80" /> WINNING NUMBERS
+                                        </span>
+                                        <div className="flex items-center gap-2 flex-wrap md:justify-end">
+                                          <div className="flex flex-wrap gap-1 md:justify-end">
+                                            {(log.winningNums || '-').split(',').map((wn, wnIdx) => {
+                                              const cleanWn = wn.trim();
+                                              if (!cleanWn) return null;
+                                              const userHadThis = log.choices.flatMap(c => c.split(',').map(s => s.trim())).includes(cleanWn);
+                                              
+                                              const typeLower = log.type.toLowerCase();
+                                              const showLabel = typeLower.includes('chance') || typeLower.includes('jackpot');
+                                              const label = showLabel 
+                                                ? (wnIdx === 0 ? '1st - ' : wnIdx === 1 ? '2nd - ' : wnIdx === 2 ? '3rd - ' : `${wnIdx + 1}th - `)
+                                                : '';
+
+                                              return (
+                                                <span 
+                                                  key={wnIdx} 
+                                                  className={`inline-flex items-center font-mono font-black text-[10px] px-2 py-0.5 rounded-md border ${
+                                                    userHadThis 
+                                                      ? 'bg-emerald-500/10 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800/40 shadow-xs' 
+                                                      : 'bg-zinc-100 dark:bg-zinc-900/60 text-gray-700 dark:text-zinc-400 border-gray-200/80 dark:border-zinc-800/50'
+                                                  }`}
+                                                >
+                                                  {label}<span className={userHadThis ? 'text-emerald-500 font-black' : ''}>{cleanWn}</span>
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                          
+                                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shrink-0 flex items-center gap-1 ${
+                                            isWin 
+                                              ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+                                              : 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20'
+                                          }`}>
+                                            {isWin ? '🏆 WIN' : '❌ MISS'}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-col md:items-end justify-center shrink-0 border-t border-gray-100 dark:border-zinc-800/40 pt-2.5 md:pt-0 md:border-t-0 md:border-l md:border-gray-150 md:dark:border-zinc-800/60 md:pl-5 min-w-[95px] md:text-right">
+                                        <span className="text-[8.5px] font-black tracking-wider text-gray-400 dark:text-zinc-500 uppercase">
+                                          PAYOUT
+                                        </span>
+                                        <div className="flex md:flex-col items-center md:items-end gap-2 md:gap-0.5 mt-0.5">
+                                          <span className={`text-xs font-mono font-black ${
+                                            isWin 
+                                              ? 'text-emerald-500 dark:text-emerald-400' 
+                                              : 'text-zinc-500 dark:text-zinc-400'
+                                          }`}>
+                                            {isWin ? `+${log.totalChange.toLocaleString()}` : '0'} ETB
+                                          </span>
+                                          <span className="text-[9px] font-mono text-gray-400 dark:text-zinc-500 font-bold">
+                                            Bet: {log.bet?.toLocaleString() || '0'} ETB
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </motion.div>
           </>
