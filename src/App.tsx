@@ -426,10 +426,12 @@ export default function App() {
 
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
-      transports: ['websocket'],
-      upgrade: false,
-      reconnectionAttempts: 10,
-      timeout: 5000
+      transports: ['polling', 'websocket'],
+      upgrade: true,
+      reconnectionAttempts: 25,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000
     });
     setSocket(newSocket);
 

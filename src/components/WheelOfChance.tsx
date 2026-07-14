@@ -70,7 +70,11 @@ export const WheelOfChance = React.memo(function WheelOfChance({
   useEffect(() => {
     if (!socket || !isActive) return;
     
-    socket.emit('grid_join', activeRoom);
+    const joinAndSync = () => {
+       socket.emit('grid_join', activeRoom);
+    };
+
+    joinAndSync();
     
     const onGridState = (state: any) => {
        if (isResettingRef.current) {
@@ -120,9 +124,12 @@ export const WheelOfChance = React.memo(function WheelOfChance({
     };
     
     socket.on('grid_state', onGridState);
+    socket.on('connect', joinAndSync);
+
     return () => {
        socket.emit('grid_leave', activeRoom);
        socket.off('grid_state', onGridState);
+       socket.off('connect', joinAndSync);
     };
   }, [socket, activeRoom, isActive, userId, username]);
   const [activeSectors, setActiveSectors] = useState<number[]>(() => {

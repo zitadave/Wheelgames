@@ -89,7 +89,11 @@ export const JackpotArena = React.memo(function JackpotArena({
   useEffect(() => {
     if (!socket || !isActive) return;
     
-    socket.emit('grid_join', tier);
+    const joinAndSync = () => {
+       socket.emit('grid_join', tier);
+    };
+
+    joinAndSync();
     
     const onGridState = (state: any) => {
        if (isResettingRef.current) {
@@ -146,9 +150,12 @@ export const JackpotArena = React.memo(function JackpotArena({
     };
     
     socket.on('grid_state', onGridState);
+    socket.on('connect', joinAndSync);
+
     return () => {
        socket.emit('grid_leave', tier);
        socket.off('grid_state', onGridState);
+       socket.off('connect', joinAndSync);
     };
   }, [socket, tier, isActive, userId, username]);
   const [winners, setWinners] = useState<{ first?: number; second?: number; third?: number }>({});
