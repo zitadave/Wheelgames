@@ -615,8 +615,6 @@ export const JackpotArena = React.memo(function JackpotArena({
     }, 5000);
   };
 
-  const [pendingClaims, setPendingClaims] = useState<Set<number>>(new Set());
-
   const handleClaimSlot = (num: number) => {
     if (gamePhase !== 'lobby') {
       showNotification('Grid coordinates are currently locked for drawing!', 'error');
@@ -626,17 +624,7 @@ export const JackpotArena = React.memo(function JackpotArena({
     if (activeGrid[num]) {
       if (activeGrid[num].isSelf) {
         // Unclaim
-        setPendingClaims(prev => {
-          const next = new Set(prev);
-          next.add(num);
-          return next;
-        });
         socket?.emit('grid_releaseSlot', { room: tier, num, userId }, (res: any) => {
-           setPendingClaims(prev => {
-             const next = new Set(prev);
-             next.delete(num);
-             return next;
-           });
            if (res?.success) {
               // The server handles balance updates and transaction logging
               socket?.emit('syncUser', userId, username, photoUrl);
@@ -655,19 +643,7 @@ export const JackpotArena = React.memo(function JackpotArena({
       return;
     }
 
-    // Optimistic pending state
-    setPendingClaims(prev => {
-      const next = new Set(prev);
-      next.add(num);
-      return next;
-    });
-
     socket?.emit('grid_claimSlot', { room: tier, num, userId, username, photoUrl }, (res: any) => {
-       setPendingClaims(prev => {
-         const next = new Set(prev);
-         next.delete(num);
-         return next;
-       });
        if (res?.success) {
           // The server handles balance updates and transaction logging
           socket?.emit('syncUser', userId, username, photoUrl);
@@ -947,7 +923,6 @@ export const JackpotArena = React.memo(function JackpotArena({
             const item = activeGrid[num];
             const isVaporized = vaporizedSlots.includes(num);
             const isWinner = Object.values(winners).includes(num);
-            const isPending = pendingClaims.has(num);
             
             // Check if blitz is active on this coordinates slot (Dynamic visual trace)
             const isBlitzActive = blitzActiveTile === num;
@@ -963,8 +938,7 @@ export const JackpotArena = React.memo(function JackpotArena({
               );
             }
 
-            if (item || isPending) {
-              const isSelf = item?.isSelf || isPending;
+            if (item) {
               return (
                 <motion.div
                   key={num}
@@ -973,40 +947,23 @@ export const JackpotArena = React.memo(function JackpotArena({
                   className={`aspect-square rounded-lg border flex flex-col items-center justify-center p-0.5 cursor-pointer transition-all relative overflow-hidden ${
                     isWinner 
                       ? 'bg-gradient-to-b from-green-500 to-green-600 border-green-400 text-white shadow-lg scale-105 z-10'
-                      : isBlitzActive
-                      ? 'bg-amber-500 border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
-                      : isSelf
-                      ? `bg-blue-600 border-blue-400 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-300 scale-110 z-30 font-black ${isPending ? 'animate-pulse opacity-70' : ''}`
-                      : 'bg-[#22c55e] border-[#16a34a] text-white shadow-sm'
+                      : item.isSelf
+                      ? 'bg-blue-500 dark:bg-[#4a85f6] border-blue-400 dark:border-[#5b8bf7] text-white shadow-sm scale-110 z-30'
+                      : 'bg-transparent border-transparent text-gray-400 dark:text-gray-600 opacity-60'
                   }`}
-                  style={isBlitzActive ? { opacity: 1 } : undefined}
                 >
-                  {isSelf && (
-                    <div className="absolute top-0 right-0 bg-white/20 text-white text-[5px] px-1 rounded-bl-md font-bold z-20 shadow-sm backdrop-blur-sm">YOU</div>
-                  )}
-
-                  {!isSelf && item?.username && (
-                    <div className="absolute top-0 right-0 bg-black/20 text-[5px] px-1 rounded-bl-md font-bold z-20 text-white/90 backdrop-blur-sm">
-                      {item.username.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-
-                  {item?.photoUrl && !isBlitzActive && !isWinner && !isSelf ? (
-                     <div className="absolute inset-0 opacity-20 pointer-events-none">
-                       <img src={item.photoUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                     </div>
-                  ) : null}
-                  
-                  <span className={`text-[11px] font-black font-mono leading-none z-10 text-white drop-shadow-sm`}>{num}</span>
-                  <div className={`flex items-center gap-0.5 text-[6px] font-bold tracking-tighter mt-0.5 truncate max-w-full leading-none z-10 ${isSelf ? 'text-blue-100' : 'text-green-50'}`}>
-                    {isSelf ? (
-                      <div className="w-2 h-2 rounded-full bg-white/30 flex items-center justify-center text-[5px] font-bold">You</div>
-                    ) : item?.photoUrl ? (
-                      <img src={item.photoUrl} alt="Avatar" className="w-2 h-2 rounded-full object-cover shrink-0 border-[0.5px] border-white/30" referrerPolicy="no-referrer" />
+                  <span className={`text-[11px] font-black font-mono leading-none z-10 ${item.isSelf ? 'text-white' : 'text-gray-500'}`}>{num}</span>
+                  <div className={`flex items-center justify-center mt-0.5 z-10 ${item.isSelf ? '' : 'opacity-60'}`}>
+                    {item.isSelf ? (
+                      <div className="flex items-center gap-0.5 bg-blue-600/20 px-0.5 py-0.5 rounded">
+                        <div className="w-2 h-2 rounded-full bg-[#87e1e1] flex items-center justify-center shrink-0">
+                          <span className="text-[5px] font-black text-blue-900 leading-none">{item.username ? item.username.charAt(0).toUpperCase() : 'D'}</span>
+                        </div>
+                        <span className="text-[6px] font-black text-white leading-none tracking-tighter">You</span>
+                      </div>
                     ) : (
-                      <div className="w-2 h-2 rounded-full bg-white/20 flex items-center justify-center text-[5px] font-bold">{item?.username?.charAt(0).toUpperCase() || 'P'}</div>
+                      <Lock className="w-2 h-2 shrink-0 text-gray-500" />
                     )}
-                    <span className="truncate max-w-[32px] uppercase">{isSelf ? (isPending ? '...' : 'You') : (item?.username?.substring(0, 4) || 'Play')}</span>
                   </div>
                 </motion.div>
               );
@@ -1016,17 +973,14 @@ export const JackpotArena = React.memo(function JackpotArena({
               <motion.button
                 key={num}
                 onClick={() => handleClaimSlot(num)}
-                whileHover={{ scale: 1.05, zIndex: 10 }}
-                whileTap={{ scale: 0.92 }}
-                className={`aspect-square rounded-lg bg-transparent border-2 border-dashed border-gray-300 dark:border-gray-800 flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500/50 hover:bg-blue-500/5 dark:hover:bg-blue-500/10 transition-all relative ${
-                  isBlitzActive
-                    ? 'bg-amber-500 border-solid border-amber-300 text-white scale-110 z-20 shadow-[0_0_15px_#f59e0b] ring-2 ring-amber-400 animate-pulse !opacity-100'
-                    : ''
-                }`}
-                style={isBlitzActive ? { opacity: 1 } : undefined}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="aspect-square rounded-lg bg-gray-50 dark:bg-[#161b28] border border-gray-200 dark:border-[#232a3b] flex flex-col items-center justify-center p-0.5 shadow-sm hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-[#1c2438] transition-all"
               >
-                <span className="text-[14px] font-black font-mono text-gray-400 dark:text-gray-600 leading-none">{num}</span>
-                <span className="text-[7px] font-black text-gray-400 dark:text-gray-600 tracking-tighter mt-0.5 uppercase">{currentConfig.entry / 1000}K</span>
+                <span className="text-[11px] font-black font-mono text-gray-800 dark:text-white leading-none">{num}</span>
+                <div className="flex items-center mt-0.5">
+                  <span className="text-[8px] font-black text-blue-500 dark:text-[#4da1f7] tracking-tighter">2K</span>
+                </div>
               </motion.button>
             );
           })}
