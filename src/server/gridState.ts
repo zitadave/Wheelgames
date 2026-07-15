@@ -17,7 +17,14 @@ const defaultRooms = {
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
-      return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      // Filter out non-object rooms
+      Object.keys(state).forEach(key => {
+        if (!state[key] || typeof state[key] !== 'object' || Array.isArray(state[key])) {
+          delete state[key];
+        }
+      });
+      return state;
     }
   } catch (e) {
     logBot(`[GridState] Error loading state file: ${e}`);
@@ -70,6 +77,8 @@ export async function syncFromSupabase() {
       if (current) {
         Object.keys(dbState).forEach(key => {
           const room = dbState[key];
+          if (!room || typeof room !== 'object' || Array.isArray(room)) return;
+          
           if (room && room.claimedSlots) {
             // Purge mock players
             Object.keys(room.claimedSlots).forEach(slot => {
@@ -107,7 +116,7 @@ if (!(globalThis as any)[GLOBAL_GRID_KEY]) {
   const current = (globalThis as any)[GLOBAL_GRID_KEY];
   Object.keys(current).forEach(key => {
     const room = current[key];
-    if (room && room.claimedSlots) {
+    if (room && typeof room === 'object' && !Array.isArray(room) && room.claimedSlots) {
       Object.keys(room.claimedSlots).forEach(slot => {
         if (room.claimedSlots[slot].userId === 'test' || room.claimedSlots[slot].userId === 'mock') {
           delete room.claimedSlots[slot];

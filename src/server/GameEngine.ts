@@ -422,14 +422,17 @@ export function initGameEngine(io: Server) {
               .limit(10);
             
             if (historyData) {
-                gridRooms[roomName].history = historyData.map(r => ({
-                    roundId: r.round_number,
-                    winners: { 
-                        1: r.winner,
-                        2: r.pools_even !== null && r.pools_even !== undefined && Number(r.pools_even) !== 0 ? Number(r.pools_even) : undefined,
-                        3: r.pools_odd !== null && r.pools_odd !== undefined && Number(r.pools_odd) !== 0 ? Number(r.pools_odd) : undefined
-                    }
-                }));
+                const room = gridRooms[roomName];
+                if (room && typeof room === 'object' && !Array.isArray(room)) {
+                    room.history = historyData.map(r => ({
+                        roundId: r.round_number,
+                        winners: { 
+                            1: r.winner,
+                            2: r.pools_even !== null && r.pools_even !== undefined && Number(r.pools_even) !== 0 ? Number(r.pools_even) : undefined,
+                            3: r.pools_odd !== null && r.pools_odd !== undefined && Number(r.pools_odd) !== 0 ? Number(r.pools_odd) : undefined
+                        }
+                    }));
+                }
             }
         }
       } catch (err) {
@@ -932,9 +935,11 @@ export function initGameEngine(io: Server) {
 
     socket.on("grid_join", async (roomName: string) => {
       socket.join(roomName);
-      if (!gridRooms[roomName]) {
+      if (!gridRooms[roomName] || typeof gridRooms[roomName] !== 'object' || Array.isArray(gridRooms[roomName])) {
         await syncFromSupabase();
-        if (!gridRooms[roomName]) gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
+        if (!gridRooms[roomName] || typeof gridRooms[roomName] !== 'object' || Array.isArray(gridRooms[roomName])) {
+          gridRooms[roomName] = { claimedSlots: {}, roundId: 1, history: [] };
+        }
       }
       socket.emit("grid_state", { ...gridRooms[roomName], roomName });
     });

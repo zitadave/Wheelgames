@@ -10,6 +10,8 @@ import { initBingoEngine } from "./src/server/BingoEngine.js";
 import { initTelegramBot, getBotUsername, triggerBotFlow } from "./src/server/telegramBot.js";
 import { getBotLogs } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
+import crypto from "crypto";
+import { parseBankSMS } from "./src/server/smsParser.js";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { generateToken, setShareToken, getShareToken, setPendingReferral } from "./src/server/redisClient.js";
@@ -51,6 +53,64 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // SMS Webhook for Automated Deposit Verification
+  app.post("/api/webhook/sms", async (req, res) => {
+    const signature = req.headers['x-signature'] as string;
+    const secret = process.env.SMS_WEBHOOK_SECRET;
+
+    if (secret && signature) {
+      try {
+        const bodyStr = JSON.stringify(req.body);
+        const hmac = crypto.createHmac('sha256', secret);
+        const digest = hmac.update(bodyStr).digest('hex');
+        if (signature.toLowerCase() !== digest.toLowerCase()) {
+          console.warn("⚠️ [SMS Webhook] Invalid Signature detected.");
+          return res.status(401).json({ error: "Invalid signature" });
+        }
+      } catch (err) {
+        console.error("Error verifying SMS signature:", err);
+        return res.status(401).json({ error: "Signature verification failed" });
+      }
+    }
+
+    const { from, text } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Missing SMS text" });
+    }
+
+    const sender = from || "Unknown";
+    console.log(`📩 [SMS Received] From: ${sender} | Text: ${text}`);
+
+    try {
+      const parsed = parseBankSMS(text, sender);
+      if (parsed) {
+        const { amount, transactionId, bankName } = parsed;
+        console.log(`✅ [SMS Parsed] Ref: ${transactionId} | Amount: ${amount} ETB | Bank: ${bankName}`);
+        
+        // Save to DB (Table: bank_messages)
+        // Note: We ignore duplicate Ref IDs (unique constraint) to handle retries from the app
+        const { error } = await supabase.from('bank_messages').insert({
+          ref_id: transactionId,
+          amount: amount,
+          bank_name: bankName,
+          sender: sender,
+          raw_text: text
+        });
+
+        if (error && error.code !== '23505') { 
+           console.error("❌ Error saving bank message to DB:", error);
+        } else if (!error) {
+           console.log(`💾 [SMS Stored] Transaction ${transactionId} ready for verification.`);
+        }
+      }
+      
+      res.json({ success: true });
+    } catch (err) {
+      console.error("❌ Error processing SMS webhook:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   // Rate limiter for Mini App Initialization Endpoint (max 10 per minute per user/IP)
@@ -255,6 +315,28 @@ async function startServer() {
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
 
+      let isVerifiedBySMS = false;
+
+      if (txId && parsedAmount) {
+        // Check if we have received this transaction via SMS Webhook
+        const { data: smsRecord, error: smsError } = await supabase
+          .from('bank_messages')
+          .select('*')
+          .eq('ref_id', txId)
+          .eq('is_claimed', false)
+          .maybeSingle();
+
+        if (smsRecord && Number(smsRecord.amount) === parsedAmount) {
+          isVerifiedBySMS = true;
+          // Mark as claimed
+          await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('ref_id', txId);
+        }
+      }
+
+      // If not verified by real SMS, we fallback to parsing the user's text (less secure)
+      // but only if the user hasn't explicitly disabled manual verification.
+      // For now, we'll allow it but prioritize the SMS Gateway if it matches.
+
       if (txId && parsedAmount && parsedAmount === Number(amount)) {
         // Double-check duplicates in DB
         const { data: duplicateTxs, error: dupError } = await supabase
@@ -280,17 +362,20 @@ async function startServer() {
           const { postToChannel, escapeHTML, getBotInstance, getPrimaryOwnerId, adminChatIds } = await import("./src/server/telegramBot.js");
           const escapedUsername = escapeHTML(username);
           
-          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${parsedAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
+          const gatewayBadge = isVerifiedBySMS ? " [Gateway ✅]" : "";
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${parsedAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
 
           // Notify admins
           const bot = getBotInstance();
           if (bot) {
+            const verificationBadge = isVerifiedBySMS ? "🛡️ <b>VERIFIED BY SMS GATEWAY</b>" : "🔍 <i>Parsed from user text</i>";
             const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
               `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
               `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
               `💰 <b>Amount:</b> <b>${parsedAmount.toLocaleString()} ETB</b>\n` +
               `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
-              `🧾 <b>Ref ID:</b> <code>${txId}</code>\n\n` +
+              `🧾 <b>Ref ID:</b> <code>${txId}</code>\n` +
+              `${verificationBadge}\n\n` +
               `🟢 <i>Credited instantly to user's wallet!</i>`;
 
             const primaryId = getPrimaryOwnerId();

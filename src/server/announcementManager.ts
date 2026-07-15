@@ -127,128 +127,116 @@ export function formatEmojiNumbers(nums: number[] | undefined | null, maxSlots: 
   return formatted;
 }
 
-export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any) {
+export async function downloadAndSendPhoto(bot: any, chatId: string | number, photoUrl: string, options: any): Promise<boolean> {
   if (!photoUrl) {
-    return;
+    return false;
   }
 
   const captionText = options.caption || "";
   const isCaptionTooLong = captionText.length > 1000;
+  const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800"; // Generic gaming fallback
 
-  // If caption is too long, we send photo without caption and send the text message separately.
-  const activeOptions = isCaptionTooLong ? { ...options, caption: "" } : options;
+  // If caption is too long, we send photo with caption split
+  // Important: We should NOT duplicate reply_markup if we are sending two messages
+  const photoOptions = isCaptionTooLong ? { ...options, caption: "", reply_markup: undefined } : options;
+  const textOptions = {
+    parse_mode: options.parse_mode || "HTML",
+    reply_markup: options.reply_markup
+  };
 
   const sendTextMessageIfTooLong = async () => {
     if (isCaptionTooLong) {
-      logBot(`Caption too long (${captionText.length} chars). Sending message text separately.`);
+      logBot(`Caption too long (${captionText.length} chars). Sending message text separately to ${chatId}.`);
       const textChunks = captionText.length > 4000 ? captionText.slice(0, 4000) + "..." : captionText;
-      await bot.sendMessage(chatId, textChunks, {
-        parse_mode: options.parse_mode || "HTML",
-        reply_markup: options.reply_markup
-      });
+      await bot.sendMessage(chatId, textChunks, textOptions);
     }
   };
 
-  if (!photoUrl.startsWith("http")) {
+  const trySendPhoto = async (targetPhoto: any, isBuffer = false) => {
+    try {
+      if (isBuffer) {
+        await bot.sendPhoto(chatId, targetPhoto, photoOptions, {
+          filename: "photo.jpg",
+          contentType: "image/jpeg"
+        });
+      } else {
+        await bot.sendPhoto(chatId, targetPhoto, photoOptions);
+      }
+      await sendTextMessageIfTooLong();
+      return true;
+    } catch (err: any) {
+      logBot(`[trySendPhoto] Error sending photo to ${chatId}: ${err.message}`);
+      return false;
+    }
+  };
+
+  // Case 1: Local File Path
+  if (!photoUrl.toLowerCase().startsWith("http")) {
     const fullPath = path.isAbsolute(photoUrl) ? photoUrl : path.join(process.cwd(), photoUrl);
     if (fs.existsSync(fullPath)) {
       logBot(`Sending local photo file: ${fullPath} to ${chatId}`);
-      try {
-        await bot.sendPhoto(chatId, fs.createReadStream(fullPath), activeOptions);
-        await sendTextMessageIfTooLong();
-      } catch (err: any) {
-        if (err.message && err.message.includes("caption is too long") && !isCaptionTooLong) {
-          logBot(`Fallback: Caption too long error received. Retrying with separate text.`);
-          await bot.sendPhoto(chatId, fs.createReadStream(fullPath), { ...options, caption: "" });
-          await bot.sendMessage(chatId, captionText, {
-            parse_mode: options.parse_mode || "HTML",
-            reply_markup: options.reply_markup
-          });
-        } else {
-          throw err;
-        }
-      }
+      if (await trySendPhoto(fs.createReadStream(fullPath))) return true;
     } else {
-      // If it's not a URL and doesn't exist on disk, it's likely a Telegram fileId.
-      // We try sending it directly to Telegram.
-      logBot(`Local file not found at ${fullPath}. Attempting to send as Telegram fileId: ${photoUrl.substring(0, 20)}...`);
-      try {
-        await bot.sendPhoto(chatId, photoUrl, activeOptions);
-        await sendTextMessageIfTooLong();
-      } catch (err: any) {
-        logBot(`Failed to send as fileId: ${err.message}. Falling back to sending message text only.`);
-        const textOptions = {
-          parse_mode: options.parse_mode || "HTML",
-          reply_markup: options.reply_markup
-        };
-        if (captionText) {
-          await bot.sendMessage(chatId, captionText, textOptions);
-        }
+      // If it's not a URL and doesn't exist on disk, it might be a Telegram fileId.
+      const isLikelyPath = photoUrl.includes("/") || photoUrl.includes("\\");
+      const isLikelyFileId = !isLikelyPath && photoUrl.length > 10;
+
+      if (isLikelyFileId) {
+        logBot(`Local file missing. Attempting to send as Telegram fileId: ${photoUrl.substring(0, 20)}...`);
+        if (await trySendPhoto(photoUrl)) return true;
+      }
+
+      logBot(`[downloadAndSendPhoto] ⚠️ Photo missing or invalid: ${photoUrl}. Using fallback image.`);
+      // Try fallback image instead of just sending text
+      if (photoUrl !== FALLBACK_IMAGE) {
+        if (await downloadAndSendPhoto(bot, chatId, FALLBACK_IMAGE, options)) return true;
       }
     }
-    return;
+    
+    // Last resort fallback to text only if everything fails
+    logBot(`[downloadAndSendPhoto] ❌ All photo attempts failed for ${photoUrl}. Sending text only.`);
+    if (captionText) {
+      await bot.sendMessage(chatId, captionText, textOptions);
+    }
+    return false;
   }
 
+  // Case 2: Remote URL
   try {
     logBot(`Downloading photo for ${chatId} from: ${photoUrl}`);
     const res = await fetch(photoUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      }
+      },
+      signal: AbortSignal.timeout(10000) // 10s timeout
     });
 
-    if (!res.ok) {
-      throw new Error(`HTTP status code ${res.status}`);
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    try {
-      await bot.sendPhoto(chatId, buffer, activeOptions, {
-        filename: "photo.jpg",
-        contentType: "image/jpeg"
-      });
-      logBot(`Successfully sent photo as buffer to ${chatId}`);
-      await sendTextMessageIfTooLong();
-    } catch (err: any) {
-      if (err.message && err.message.includes("caption is too long") && !isCaptionTooLong) {
-        logBot(`Fallback: Caption too long error received for buffer. Retrying with separate text.`);
-        await bot.sendPhoto(chatId, buffer, { ...options, caption: "" }, {
-          filename: "photo.jpg",
-          contentType: "image/jpeg"
-        });
-        await bot.sendMessage(chatId, captionText, {
-          parse_mode: options.parse_mode || "HTML",
-          reply_markup: options.reply_markup
-        });
-      } else {
-        throw err;
+    if (res.ok) {
+      const arrayBuffer = await res.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      if (await trySendPhoto(buffer, true)) {
+        logBot(`Successfully sent photo as buffer to ${chatId}`);
+        return true;
       }
+    } else {
+      logBot(`Fetch failed for ${photoUrl}: HTTP ${res.status}`);
     }
   } catch (err: any) {
     logBot(`Failed to download & send photo as buffer (URL: ${photoUrl}): ${err.message}. Retrying sending directly via URL...`);
-    try {
-      await bot.sendPhoto(chatId, photoUrl, activeOptions);
-      await sendTextMessageIfTooLong();
-    } catch (directErr: any) {
-      if (directErr.message && directErr.message.includes("caption is too long") && !isCaptionTooLong) {
-        logBot(`Fallback: Caption too long error received for direct URL. Retrying with separate text.`);
-        await bot.sendPhoto(chatId, photoUrl, { ...options, caption: "" });
-        await bot.sendMessage(chatId, captionText, {
-          parse_mode: options.parse_mode || "HTML",
-          reply_markup: options.reply_markup
-        });
-      } else {
-        logBot(`[downloadAndSendPhoto] ❌ ALL photo send attempts failed for ${chatId}. Sending text only as last resort.`);
-        await bot.sendMessage(chatId, captionText, {
-          parse_mode: options.parse_mode || "HTML",
-          reply_markup: options.reply_markup
-        });
-      }
-    }
   }
+
+  // Final attempt: Send URL directly to Telegram
+  if (await trySendPhoto(photoUrl)) return true;
+
+  // Last resort: Text only
+  logBot(`[downloadAndSendPhoto] ❌ Final fallback to text only for ${chatId}.`);
+  if (captionText) {
+    await bot.sendMessage(chatId, captionText, textOptions);
+  }
+  return false;
 }
+
+
 
 export function processAnnouncementText(ann: Announcement, slotsInfo: { grand: string, mini: string, fast: string }): string {
   let text = ann.text;
