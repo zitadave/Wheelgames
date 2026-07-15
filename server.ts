@@ -344,11 +344,8 @@ async function startServer() {
         }
       }
 
-      // If not verified by real SMS, we fallback to parsing the user's text (less secure)
-      // but only if the user hasn't explicitly disabled manual verification.
-      // For now, we'll allow it but prioritize the SMS Gateway if it matches.
-
-      if (txId && parsedAmount && parsedAmount === Number(amount)) {
+      // 3. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
+      if (isVerifiedBySMS && txId && parsedAmount && parsedAmount === Number(amount)) {
         // Double-check duplicates in DB
         const { data: duplicateTxs, error: dupError } = await supabase
           .from('transactions')
@@ -373,13 +370,13 @@ async function startServer() {
           const { postToChannel, escapeHTML, getBotInstance, getPrimaryOwnerId, adminChatIds } = await import("./src/server/telegramBot.js");
           const escapedUsername = escapeHTML(username);
           
-          const gatewayBadge = isVerifiedBySMS ? " [Gateway ✅]" : "";
+          const gatewayBadge = " [Gateway ✅]";
           await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${parsedAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
 
           // Notify admins
           const bot = getBotInstance();
           if (bot) {
-            const verificationBadge = isVerifiedBySMS ? "🛡️ <b>VERIFIED BY SMS GATEWAY</b>" : "🔍 <i>Parsed from user text</i>";
+            const verificationBadge = "🛡️ <b>VERIFIED BY SMS GATEWAY</b>";
             const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
               `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
               `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
