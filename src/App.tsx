@@ -138,9 +138,14 @@ export default function App() {
         .then(res => res.json())
         .then(data => {
           if (data.success && data.banks) {
-            setAvailableBanks(data.banks);
+            const banksArray = Object.entries(data.banks).map(([id, b]: [string, any]) => ({
+              id,
+              name: b.name || id
+            }));
+            setAvailableBanks(banksArray);
           }
-        });
+        })
+        .catch(err => console.error("Error fetching banks:", err));
     }
   }, [showPayoutModal, userId]);
 

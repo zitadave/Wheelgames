@@ -6318,7 +6318,8 @@ const withdrawalCooldowns = new Map<string, number>();
         
         const text = `🔎 <b>Affiliate Payout Review</b>\n\n` +
           `<b>Influencer ID:</b> <code>${req.user_id}</code>\n` +
-          `<b>Requested Amount:</b> ${req.amount} ETB\n\n` +
+          `<b>Requested Amount:</b> ${Math.abs(req.amount)} ETB\n` +
+          `<b>Details:</b> ${req.description || 'N/A'}\n\n` +
           `⚠️ <b>Security Check:</b>\n` +
           `Overlap with referred players' IPs: <b>${refOverlapCount} matches found</b>\n\n` +
           `<i>If overlap count is high, this might be a syndicate.</i>`;
