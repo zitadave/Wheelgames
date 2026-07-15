@@ -3020,7 +3020,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             const totalReferrals = referredUserIds.size;
 
             const { data: earnTx } = await supabase.from('transactions')
-              .select('amount, type')
+              .select('amount, type, description')
               .eq('user_id', userId)
               .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
             
@@ -3029,9 +3029,15 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             if (earnTx) {
                 earnTx.forEach(tx => {
                     const amt = Number(tx.amount || 0);
-                    if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
+                    if (tx.type === 'affiliate_commission') {
                         totalEarned += amt;
                         availableBalance += amt;
+                    } else if (tx.type === 'reward') {
+                        // Only count if it's explicitly a referral/promoter reward
+                        if (tx.description?.toLowerCase().includes('referral') || tx.description?.toLowerCase().includes('promoter')) {
+                            totalEarned += amt;
+                            availableBalance += amt;
+                        }
                     } else {
                         // affiliate_withdrawal and affiliate_payout_request are negative
                         availableBalance += amt;
@@ -6222,35 +6228,32 @@ const withdrawalCooldowns = new Map<string, number>();
           
           if (shareAmt <= 0) continue;
 
-          // 1. Fetch current balance
-          const { data: userProfile } = await supabase.from('users').select('balance, username, first_name').eq('id', entry.referrer_id).single();
+          // 1. Fetch user info
+          const { data: userProfile } = await supabase.from('users').select('username, first_name').eq('id', entry.referrer_id).single();
           
           if (userProfile) {
-            const currentBalance = Number(userProfile.balance || 0);
-            const newBalance = currentBalance + shareAmt;
+            // Per user request: Referral bonuses should NOT credit the main balance.
+            // We insert it as an 'affiliate_commission' so it appears in their Affiliate Dashboard.
 
-            // 2. Update balance
-            await supabase.from('users').update({ balance: newBalance }).eq('id', entry.referrer_id);
-
-            // 3. Insert transaction
+            // 2. Insert transaction (Affiliate balance is derived from transactions table, not users.balance)
             await supabase.from('transactions').insert({
               user_id: entry.referrer_id,
               amount: shareAmt,
-              type: 'reward',
+              type: 'affiliate_commission',
               description: `🏆 Weekly Promoter Jackpot - Rank ${rank} Winner (Week of ${startOfWeekISO.slice(0, 10)})`
             });
 
             const winnerName = userProfile.first_name || userProfile.username || `User ${entry.referrer_id}`;
             report += `🏅 <b>Rank ${rank}:</b> ${winnerName} (ID: <code>${entry.referrer_id}</code>)\n`;
             report += `  - Playing Vol: <b>${entry.volume.toLocaleString()} ETB</b>\n`;
-            report += `  - Prize Credited: <b>${shareAmt.toLocaleString()} ETB</b>\n\n`;
+            report += `  - Prize Credited to Affiliate Balance: <b>${shareAmt.toLocaleString()} ETB</b>\n\n`;
 
             // Send notification to the winner
             bot.sendMessage(entry.referrer_id, 
               `🎉 <b>Congratulations!</b>\n\n` +
               `You achieved <b>Rank ${rank}</b> on the Weekly Promoter Leaderboard with a referred volume of <b>${entry.volume.toLocaleString()} ETB</b>!\n\n` +
-              `🏆 Your prize share of <b>${shareAmt.toLocaleString()} ETB</b> has been credited to your main balance.\n\n` +
-              `Keep promoting ETB Game Hub and win big next week! 🎮`, 
+              `🏆 Your prize share of <b>${shareAmt.toLocaleString()} ETB</b> has been credited to your <b>Affiliate Balance</b>.\n\n` +
+              `You can request a withdrawal to your bank account from the Affiliate Dashboard in the app! 🎮`, 
               { parse_mode: "HTML" }
             ).catch(() => {});
           }
@@ -6350,22 +6353,20 @@ const withdrawalCooldowns = new Map<string, number>();
         const reqId = data.replace("affiliate_approve_", "");
         const { data: req } = await supabase.from('transactions').select('*').eq('id', reqId).single();
         if (req) {
-            // Convert request to an actual withdrawal transaction (we delete the request and insert an affiliate_withdrawal and a bot balance withdrawal)
-            // Wait, we can just change the type of the transaction!
-            await supabase.from('transactions').update({ type: 'affiliate_withdrawal', description: `Approved Affiliate Payout: ${req.amount} ETB`, amount: -Math.abs(req.amount) }).eq('id', reqId);
+            // Convert request to an actual withdrawal transaction
+            // We change the type to affiliate_withdrawal which effectively "consumes" the bonus balance
+            await supabase.from('transactions').update({ 
+                type: 'affiliate_withdrawal', 
+                description: `Approved Affiliate Payout: ${Math.abs(req.amount)} ETB (Manual Bank Transfer)`, 
+                amount: -Math.abs(req.amount) 
+            }).eq('id', reqId);
             
-            // Also need to add money to the user's actual balance so they can withdraw via normal means?
-            // OR we just give them ETB balance? Yes!
-            const { data: user } = await supabase.from('users').select('balance').eq('id', req.user_id).single();
-            if (user) {
-                const newBalance = Number(user.balance || 0) + req.amount;
-                await supabase.from('users').update({ balance: newBalance }).eq('id', req.user_id);
-                await supabase.from('transactions').insert({ user_id: req.user_id, amount: req.amount, type: 'reward', description: 'Affiliate Payout Credited to Main Balance' });
-                bot.sendMessage(req.user_id, `✅ <b>Affiliate Payout Approved!</b>\n\n${req.amount} ETB has been credited to your main balance.`, { parse_mode: "HTML" }).catch(()=>{});
-            }
+            // Per user request: Affiliate payouts should NOT credit the main balance.
+            // The admin is expected to pay the user manually via bank transfer.
+            bot.sendMessage(req.user_id, `✅ <b>Affiliate Payout Approved!</b>\n\nYour request for ${Math.abs(req.amount)} ETB has been processed and approved. The funds have been sent to your registered bank account manually by admin.`, { parse_mode: "HTML" }).catch(()=>{});
         }
         bot.answerCallbackQuery(query.id, { text: "Approved!" });
-        bot.sendMessage(chatId, "Payout Approved. User credited.");
+        bot.sendMessage(chatId, "Payout marked as Approved. User notified.");
         return;
     }
     

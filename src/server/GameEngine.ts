@@ -732,7 +732,7 @@ export function initGameEngine(io: Server) {
         const isFlagged = flags && flags.length > 0;
         
         const { data: earnTx } = await supabase.from('transactions')
-          .select('amount, type')
+          .select('amount, type, description')
           .eq('user_id', userId)
           .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
 
@@ -741,9 +741,15 @@ export function initGameEngine(io: Server) {
         if (earnTx) {
             earnTx.forEach(tx => {
                 const amt = Number(tx.amount || 0);
-                if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
+                if (tx.type === 'affiliate_commission') {
                     totalEarned += amt;
                     availableBalance += amt;
+                } else if (tx.type === 'reward') {
+                    // Only count as affiliate reward if it's explicitly referral-related
+                    if (tx.description?.toLowerCase().includes('referral') || tx.description?.toLowerCase().includes('promoter')) {
+                        totalEarned += amt;
+                        availableBalance += amt;
+                    }
                 } else {
                     // affiliate_withdrawal and affiliate_payout_request are negative
                     availableBalance += amt;
@@ -784,7 +790,7 @@ export function initGameEngine(io: Server) {
             
             // Calculate available balance
             const { data: earnTx } = await supabase.from('transactions')
-              .select('amount, type')
+              .select('amount, type, description')
               .eq('user_id', userId)
               .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
             
@@ -792,8 +798,12 @@ export function initGameEngine(io: Server) {
             if (earnTx) {
                 earnTx.forEach(tx => {
                     const amt = Number(tx.amount || 0);
-                    if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
+                    if (tx.type === 'affiliate_commission') {
                         availableBalance += amt;
+                    } else if (tx.type === 'reward') {
+                        if (tx.description?.toLowerCase().includes('referral') || tx.description?.toLowerCase().includes('promoter')) {
+                            availableBalance += amt;
+                        }
                     } else {
                         // negative for withdrawals and requests
                         availableBalance += amt;
@@ -830,10 +840,13 @@ export function initGameEngine(io: Server) {
             
             // Notify Admins
             try {
-                const { getBotInstance } = await import("./telegramBot.js");
+                const { getBotInstance, getPrimaryOwnerId } = await import("./telegramBot.js");
                 const bot = getBotInstance();
                 if (bot) {
+                    const ownerId = getPrimaryOwnerId();
                     const adminIds = process.env.TELEGRAM_ADMIN_IDS?.split(',') || [];
+                    const allAdminIds = new Set([ownerId.toString(), ...adminIds.map(id => id.trim())]);
+                    
                     const { data: user } = await supabase.from('users').select('username, first_name').eq('id', userId).single();
                     const userName = user?.username ? `@${user.username}` : (user?.first_name || userId);
                     
@@ -844,9 +857,9 @@ export function initGameEngine(io: Server) {
                                     `💳 <b>Account:</b> <code>${bankAccount}</code>\n\n` +
                                     `Review this request in the Affiliate Management panel.`;
                     
-                    for (const adminId of adminIds) {
-                        if (adminId.trim()) {
-                            await bot.sendMessage(parseInt(adminId.trim()), adminMsg, { parse_mode: 'HTML' });
+                    for (const adminId of allAdminIds) {
+                        if (adminId) {
+                            await bot.sendMessage(parseInt(adminId), adminMsg, { parse_mode: 'HTML' });
                         }
                     }
                 }
