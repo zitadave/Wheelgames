@@ -25,7 +25,11 @@ async function startServer() {
   app.set('trust proxy', 1);
   app.use(cors());
   app.use(compression());
-  app.use(express.json());
+  app.use(express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString();
+    }
+  }));
   const PORT = 3000;
   
   const httpServer = createServer(app);
@@ -62,7 +66,7 @@ async function startServer() {
 
     if (secret && signature) {
       try {
-        const bodyStr = JSON.stringify(req.body);
+        const bodyStr = (req as any).rawBody || JSON.stringify(req.body);
         const hmac = crypto.createHmac('sha256', secret);
         const digest = hmac.update(bodyStr).digest('hex');
         if (signature.toLowerCase() !== digest.toLowerCase()) {
@@ -76,6 +80,13 @@ async function startServer() {
     }
 
     const { from, text } = req.body;
+    
+    // Handle App Test Payloads
+    if (text === "%text%" || from === "%from%") {
+      console.log("🛠️ [SMS Webhook] Test request received and validated.");
+      return res.json({ success: true, message: "Test passed" });
+    }
+
     if (!text) {
       return res.status(400).json({ error: "Missing SMS text" });
     }
