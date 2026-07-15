@@ -786,11 +786,10 @@ export const JackpotArena = React.memo(function JackpotArena({
                 isDarkMode={isDarkMode}
                 soundTicks={soundTicks && isActive}
                 digits={tier === 'grand' ? 3 : 2}
-                duration={tier === 'grand' ? 60.0 : 7.0}
+                duration={tier === 'grand' ? 6.0 : 7.0}
               />
-              <div className="mt-3 text-xs font-black uppercase text-amber-500 tracking-widest animate-pulse flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-500 animate-bounce" />
-                <span>ROLLING FOR {drawNumber === 1 ? '1ST' : drawNumber === 2 ? '2ND' : '3RD'} PLACE SELECTION</span>
+              <div className="mt-4 text-sm font-black uppercase text-amber-500 tracking-widest flex items-center gap-2">
+                <span>DRAFTING {drawNumber === 1 ? '1ST' : drawNumber === 2 ? '2ND' : '3RD'} WINNER</span>
               </div>
               
               {tier === 'grand' && showTheater && (
@@ -856,22 +855,18 @@ export const JackpotArena = React.memo(function JackpotArena({
             {/* 1st Place (Gold Trophy - Elevated) */}
             <div className="flex flex-col items-center flex-1 max-w-[100px] text-center -translate-y-1">
               <div className="relative scale-110">
-                {/* Gold Crown */}
-                <Crown className="w-5 h-5 text-amber-400 fill-amber-400/30 absolute -top-4.5 left-1/2 -translate-x-1/2 -rotate-12 drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
-                {/* Gold Border Circle */}
-                <div className="w-14 h-14 rounded-full border-2 border-amber-400 bg-white dark:bg-zinc-950/90 flex items-center justify-center shadow-[0_4px_12px_rgba(245,158,11,0.25)]">
-                  <Trophy className="w-7 h-7 text-amber-400 drop-shadow-[0_1px_5px_rgba(245,158,11,0.5)]" />
+                <Crown className="w-5 h-5 text-amber-400 absolute -top-4.5 left-1/2 -translate-x-1/2 -rotate-12 drop-shadow-md" />
+                <div className="w-14 h-14 rounded-full border-2 border-amber-400 bg-white dark:bg-zinc-900 flex items-center justify-center shadow-lg">
+                  <Trophy className="w-7 h-7 text-amber-400" />
                 </div>
-                {/* Place Badge */}
-                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-amber-500 text-[7px] font-black rounded-md text-zinc-950 shadow-md border border-amber-300">
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-amber-500 text-[7px] font-black rounded-md text-white shadow-md">
                   #1
                 </span>
               </div>
-              <div className="mt-3.5 w-full py-1.5 px-1.5 bg-gradient-to-r from-amber-500 to-yellow-400 border border-amber-300 rounded-xl text-center shadow-[0_3px_8px_rgba(245,158,11,0.3)]">
-                <span className="font-mono text-[10px] font-black text-zinc-950">
+              <div className="mt-3.5 w-full py-1.5 px-1.5 bg-amber-500 border border-amber-300 rounded-xl text-center shadow-md">
+                <span className="font-mono text-[10px] font-black text-white">
                   {currentConfig.p1.toLocaleString()}
                 </span>
-                <span className="text-[7px] text-zinc-900 font-black ml-0.5">ETB</span>
               </div>
             </div>
 

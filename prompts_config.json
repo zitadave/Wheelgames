@@ -3,6 +3,7 @@
   "deposit_success_msg": "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
   "deposit_approved_msg": "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
   "deposit_declined_msg": "❌ *Your deposit of {amount} ETB is Declined.*",
+  "deposit_payment_instructions_msg": "1. ከታች ባለው የ*{bank_name}* አካውንት *{amount} ብር* ያስገቡ\n    *Account/Phone:* `{account}`\n    *Name:* `{owner_name}`\n\n2. የከፈሉበትን አጭር የጹሁፍ መልዕክት(message) copy በማድረግ እዚ ላይ Past አድረገው ያስገቡና ይላኩት👇👇👇\n\n_(Please copy and paste the SMS transaction receipt text as response)_",
   "support_text": "ሚያጋጥማቹ የክፍያ ችግር:\n@digitaletasupport ላይ ፃፉልን።",
   "withdraw_start_msg": "💰 *ማውጣት የሚፈልጉትን የገንዘብ መጠን ያስገቡ ?*\n\n💳 *የእርስዎ ባላንስ:* `{balance} ETB`\n\n_(Please type the amount you want to withdraw):_",
   "withdraw_telebirr_prompt": "📱 *እባክዎን ስልክ ቁጥርን ያስገቡ:*",

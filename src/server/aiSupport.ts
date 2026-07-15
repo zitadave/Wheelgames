@@ -197,7 +197,7 @@ CURRENT USER CONTEXT:
     while (attempt < maxRetries && !success) {
       try {
         response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3.5-flash",
           contents: history,
           config: {
             systemInstruction: systemInstruction + "\n\nCRITICAL: Do NOT ask the user for their Telegram ID if they ask for their balance or history. You already have it. Just call the tools directly.",
@@ -351,7 +351,7 @@ CURRENT USER CONTEXT:
         while (fuAttempt < maxRetries && !fuSuccess) {
            try {
              followUpResponse = await ai.models.generateContent({
-               model: "gemini-1.5-flash",
+               model: "gemini-3.5-flash",
                contents: followUpContents,
                config: {
                  systemInstruction: systemInstruction

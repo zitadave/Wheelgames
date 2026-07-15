@@ -53,28 +53,6 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/referrals", async (req, res) => {
-    const userId = req.query.userId as string;
-    if (!userId) return res.status(400).json({ error: "Missing userId" });
-
-    try {
-      const { supabase } = await import("./src/server/supabase.js");
-      if (!supabase) return res.status(500).json({ error: "DB not initialized" });
-
-      const { data, error } = await supabase
-        .from("users")
-        .select("id, username, created_at")
-        .eq("referrer_id", userId)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      res.json({ success: true, referrals: data || [] });
-    } catch (err: any) {
-      console.error("Referral fetch error:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   // Rate limiter for Mini App Initialization Endpoint (max 10 per minute per user/IP)
   const initLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
@@ -140,18 +118,54 @@ async function startServer() {
   });
   
   app.get("/api/referrals", async (req, res) => {
-    const { userId } = req.query;
+    let { userId } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
+    userId = userId.toString().trim();
+    
     try {
-      const { data, error } = await supabase
+      // 1. Get user IDs from transactions where they were referred by this user
+      // This matches the legacy logic used in GameEngine.ts for the total count
+      const { data: refTx, error: txError } = await supabase
+        .from('transactions')
+        .select('user_id')
+        .eq('type', 'referral_link')
+        .ilike('description', `Referred by ${userId}%`);
+
+      if (txError) throw txError;
+
+      const referredUserIds = [...new Set((refTx || []).map(tx => tx.user_id))];
+
+      // 2. Also check the users table directly (for newer referrals)
+      const { data: directUsers, error: userError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('referrer_id', userId);
+
+      if (userError) throw userError;
+      
+      if (directUsers) {
+        directUsers.forEach(u => {
+          if (!referredUserIds.includes(u.id)) {
+            referredUserIds.push(u.id);
+          }
+        });
+      }
+
+      if (referredUserIds.length === 0) {
+        return res.json({ success: true, referrals: [] });
+      }
+
+      // 3. Fetch details for all identified referred users
+      const { data: users, error: detailsError } = await supabase
         .from('users')
         .select('id, username, created_at')
-        .eq('referrer_id', userId.toString())
+        .in('id', referredUserIds)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      res.json({ success: true, referrals: data });
+      if (detailsError) throw detailsError;
+      res.json({ success: true, referrals: users || [] });
     } catch (err: any) {
+      console.error(`[API] Referral fetch error:`, err);
       res.status(500).json({ error: err.message });
     }
   });
