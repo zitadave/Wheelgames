@@ -49,16 +49,30 @@ async function startServer() {
   });
 
   // API routes
-  app.get("/api/claim-test", async (req, res) => {
-    const { getGridRooms } = await import("./src/server/gridState.js");
-    const gridRooms = getGridRooms();
-    if (!gridRooms["mini"]) gridRooms["mini"] = { claimedSlots: {}, roundId: 1, history: [] };
-    gridRooms["mini"].claimedSlots[5] = { userId: "test" };
-    res.json({ success: true, claimed: Object.keys(gridRooms["mini"].claimedSlots) });
-  });
-
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.get("/api/referrals", async (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    try {
+      const { supabase } = await import("./src/server/supabase.js");
+      if (!supabase) return res.status(500).json({ error: "DB not initialized" });
+
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, username, created_at")
+        .eq("referrer_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      res.json({ success: true, referrals: data || [] });
+    } catch (err: any) {
+      console.error("Referral fetch error:", err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Rate limiter for Mini App Initialization Endpoint (max 10 per minute per user/IP)
@@ -125,6 +139,23 @@ async function startServer() {
     }
   });
   
+  app.get("/api/referrals", async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, username, created_at')
+        .eq('referrer_id', userId.toString())
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      res.json({ success: true, referrals: data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/bot-info", (req, res) => {
     res.json({ username: getBotUsername() });
   });

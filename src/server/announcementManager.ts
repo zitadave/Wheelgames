@@ -9,7 +9,7 @@ const ANNOUNCEMENT_FILE = path.join(process.cwd(), "announcements.json");
 
 export interface Announcement {
   id: string;
-  type: "static" | "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "weekly_promoter" | "high_withdrawal" | "high_deposit" | "vip_slots_100" | "vip_slots_50" | "vip_slots_20" | "scheduled_match";
+  type: "static" | "promotion" | "join_play" | "event" | "guide" | "vip_slots" | "high_withdrawal" | "vip_slots_100" | "vip_slots_50" | "vip_slots_20" | "scheduled_match";
   text: string;
   photoUrl?: string;
   intervalHours?: number;
@@ -344,28 +344,6 @@ export async function processAnnouncements(bot: any) {
           // Skip if no real high withdrawal exists yet, to avoid any mock/dummy alerts
           logBot("No actual high withdrawal records found in database. Skipping this announcement cycle.");
           continue;
-        }
-      } else if (ann.type === "high_deposit") {
-        // High deposit > 50000
-        if (!ann.text || ann.text === "High Deposit placeholder") {
-          messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
-            `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
-            `🏆 Are you ready to challenge them?\n\n` +
-            `<i>Join the action now!</i>`;
-        }
-        if (!ann.photoUrl) {
-          photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
-        }
-      } else if (ann.type === "weekly_promoter") {
-        if (!ann.text || ann.text === "Weekly Promoter placeholder") {
-          messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
-            `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
-            `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
-            `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
-            `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
-        }
-        if (!ann.photoUrl) {
-          photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800"; // Trophies/Money/Celebration
         }
       } else if (ann.type === "join_play") {
         const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);

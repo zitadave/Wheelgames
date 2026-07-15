@@ -13,10 +13,10 @@ import { triggerHaptic } from './utils/haptic';
 import './utils/BingoVoiceEngine';
 
 const BANK_DETAILS: Record<string, { name: string; account: string; owner: string }> = {
-  "Telebirr": { name: "Telebirr (📱)", account: "0931503559", owner: "Tadese" },
-  "CBE": { name: "CBE (🏦 የኢትዮጵያ ንግድ ባንክ)", account: "1000123456789", owner: "Tadese" },
-  "Abyssinia": { name: "Abyssinia Bank (🏦)", account: "987654321", owner: "Tadese" },
-  "Dashen": { name: "Dashen Bank (🏦)", account: "555444332", owner: "Tadese" }
+  "Telebirr": { name: "Telebirr (📱)", account: "0931503559", owner: "Tsion Mekonnen" },
+  "CBE": { name: "CBE (🏦 የኢትዮጵያ ንግድ ባንክ)", account: "1000225087583", owner: "Tsion Mekonnen" },
+  "Abyssinia": { name: "Abyssinia Bank (🏦)", account: "987654321", owner: "Tsion Mekonnen" },
+  "Dashen": { name: "Dashen Bank (🏦)", account: "555444332", owner: "Tsion Mekonnen" }
 };
 
 const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || window.location.origin;
@@ -357,6 +357,9 @@ export default function App() {
   const soundAlertsRef = useRef(true);
   
   const [activeTab, setActiveTab] = useState<'even_odd' | 'jackpot' | 'chance' | 'bingo' | 'profile'>('bingo');
+  const [showReferralList, setShowReferralList] = useState(false);
+  const [referredUsers, setReferredUsers] = useState<any[]>([]);
+  const [isReferralLoading, setIsReferralLoading] = useState(false);
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -500,6 +503,22 @@ export default function App() {
         console.error("Error fetching leaderboard:", err);
         setIsLeaderboardLoading(false);
       });
+  };
+
+  const fetchReferralList = async () => {
+    if (!userId) return;
+    setIsReferralLoading(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/referrals?userId=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setReferredUsers(data.referrals);
+      }
+    } catch (e) {
+      console.error("Failed to fetch referrals:", e);
+    } finally {
+      setIsReferralLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -1509,10 +1528,17 @@ export default function App() {
                   )}
                   
                   <div className="grid grid-cols-2 gap-3.5">
-                      <div className="bg-gray-50 dark:bg-gray-800/30 p-4 rounded-2xl border border-gray-100 dark:border-gray-800/50">
+                      <div 
+                        className="bg-gray-50 dark:bg-gray-800/30 p-4 rounded-2xl border border-gray-100 dark:border-gray-800/50 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors active:scale-95"
+                        onClick={() => {
+                          setShowReferralList(true);
+                          fetchReferralList();
+                        }}
+                      >
                           <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Total Referrals</div>
-                          <div className="text-xl font-black text-gray-900 dark:text-white mt-1">
+                          <div className="text-xl font-black text-gray-900 dark:text-white mt-1 flex items-center justify-between">
                             {affiliateStats?.totalReferrals || 0}
+                            <ArrowUpRight className="w-3.5 h-3.5 opacity-40" />
                           </div>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-800/30 p-4 rounded-2xl border border-gray-100 dark:border-gray-800/50">
@@ -2539,6 +2565,95 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Referral List Modal */}
+      <AnimatePresence>
+        {showReferralList && (
+          <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+              onClick={() => setShowReferralList(false)} 
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] z-[210]"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-white dark:bg-gray-900 sticky top-0 z-10">
+                <div>
+                  <h2 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Your Referrals</h2>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Total: {referredUsers.length}</p>
+                </div>
+                <button 
+                  onClick={() => setShowReferralList(false)}
+                  className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:text-gray-900 dark:hover:text-white transition-all active:scale-90 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                {isReferralLoading ? (
+                  <div className="py-20 flex flex-col items-center justify-center gap-4 text-gray-400">
+                    <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                    <span className="text-xs font-black uppercase tracking-widest">Loading Network...</span>
+                  </div>
+                ) : referredUsers.length === 0 ? (
+                  <div className="py-20 flex flex-col items-center justify-center gap-4 text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-center">
+                      <Users className="w-8 h-8 text-gray-300 dark:text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-gray-900 dark:text-white">No Referrals Yet</h3>
+                      <p className="text-xs text-gray-400 mt-1 max-w-[200px] mx-auto">Share your link to start earning 1% commission on every bet!</p>
+                    </div>
+                  </div>
+                ) : (
+                  referredUsers.map((user) => (
+                    <div 
+                      key={user.id} 
+                      className="flex items-center justify-between p-4 rounded-2xl bg-gray-50 dark:bg-gray-800/30 border border-gray-100 dark:border-gray-800/50 hover:border-blue-500/30 transition-all group"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-black text-sm group-hover:scale-110 transition-transform">
+                          {user.username?.charAt(0).toUpperCase() || 'U'}
+                        </div>
+                        <div>
+                          <div className="text-sm font-black text-gray-900 dark:text-white">@{user.username || 'Hidden'}</div>
+                          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Joined {new Date(user.created_at).toLocaleDateString()}</div>
+                        </div>
+                      </div>
+                      <div className="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center">
+                        <Check className="w-4 h-4 text-green-500" />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Footer / CTA */}
+              <div className="p-6 bg-gray-50 dark:bg-gray-800/20 border-t border-gray-100 dark:border-gray-800">
+                 <button 
+                  onClick={() => {
+                    const referralLink = `https://t.me/${botUsername}?start=r_${userId}`;
+                    const text = encodeURIComponent(`🎮 Play & Win with me on Digital Bingo! 🚀\n\n💰 Instant Payouts\n🏆 Daily Jackpots\n\nJoin here: ${referralLink}`);
+                    window.Telegram.WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${text}`);
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-600/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                 >
+                   Invite More Players
+                   <ArrowUpRight className="w-4 h-4" />
+                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

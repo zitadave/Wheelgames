@@ -171,16 +171,8 @@ class Room {
     this.state.timeLeft = BALANCING_TIME;
 
     // Balancing Logic
-    // If one pool is 0, House Bot joins
-    if (this.state.pools.even > 0 && this.state.pools.odd === 0) {
-      this.state.pools.odd = this.state.pools.even;
-      // this.state.feed.unshift(`🤖 ሲስተም ጎደል ላይ ${this.state.pools.even.toLocaleString()} ETB አጫውቷል!`);
-    } else if (this.state.pools.odd > 0 && this.state.pools.even === 0) {
-      this.state.pools.even = this.state.pools.odd;
-      // this.state.feed.unshift(`🤖 ሲስተም ሞላ ላይ ${this.state.pools.odd.toLocaleString()} ETB አጫውቷል!`);
-    } else {
-      // P2P Match - balance the pools
-      if (this.state.pools.even !== this.state.pools.odd) {
+    // P2P Match - balance the pools
+    if (this.state.pools.even !== this.state.pools.odd) {
         const overSide = this.state.pools.even > this.state.pools.odd ? 'even' : 'odd';
         const underSide = overSide === 'even' ? 'odd' : 'even';
         const targetPool = this.state.pools[underSide];
@@ -235,20 +227,9 @@ class Room {
         }
         this.state.pools[overSide] = targetPool;
       }
-    }
 
     // Determine winner early for animation
-    const hasHouseBotEven = this.state.pools.even > 0 && this.state.pools.odd > 0 && Object.values(this.state.players).every(p => p.amount === 0 || p.side === 'odd');
-    const hasHouseBotOdd = this.state.pools.even > 0 && this.state.pools.odd > 0 && Object.values(this.state.players).every(p => p.amount === 0 || p.side === 'even');
-    
-    let isEvenWinner = false;
-    if (hasHouseBotEven) {
-       isEvenWinner = Math.random() < 0.75;
-    } else if (hasHouseBotOdd) {
-       isEvenWinner = Math.random() > 0.75;
-    } else {
-       isEvenWinner = Math.random() > 0.5;
-    }
+    const isEvenWinner = Math.random() > 0.5;
 
     // Even numbers: 2, 4, 6. Odd numbers: 1, 3, 5
     const evenNumbers = [2, 4, 6];

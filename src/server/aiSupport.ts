@@ -1,8 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from "./supabase.js";
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  console.warn("⚠️ GEMINI_API_KEY is not set in environment variables. AI Support will not function.");
+}
+
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: GEMINI_API_KEY || "dummy_key_to_prevent_immediate_crash",
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
@@ -155,7 +160,12 @@ CURRENT USER CONTEXT:
 
     // 4. Retrieve or initialize chat history
     if (!chatHistories.has(telegramId)) {
-      chatHistories.set(telegramId, []);
+      // Fallback to provided history if in-memory is lost
+      if (Array.isArray(oldHistoryArg) && oldHistoryArg.length > 0) {
+        chatHistories.set(telegramId, oldHistoryArg);
+      } else {
+        chatHistories.set(telegramId, []);
+      }
     }
     let history = chatHistories.get(telegramId)!;
 
@@ -187,7 +197,7 @@ CURRENT USER CONTEXT:
     while (attempt < maxRetries && !success) {
       try {
         response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-1.5-flash",
           contents: history,
           config: {
             systemInstruction: systemInstruction + "\n\nCRITICAL: Do NOT ask the user for their Telegram ID if they ask for their balance or history. You already have it. Just call the tools directly.",
@@ -341,7 +351,7 @@ CURRENT USER CONTEXT:
         while (fuAttempt < maxRetries && !fuSuccess) {
            try {
              followUpResponse = await ai.models.generateContent({
-               model: "gemini-2.5-flash",
+               model: "gemini-1.5-flash",
                contents: followUpContents,
                config: {
                  systemInstruction: systemInstruction

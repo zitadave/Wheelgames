@@ -69,10 +69,29 @@ export async function syncFromSupabase() {
       const current = (globalThis as any)[GLOBAL_GRID_KEY];
       if (current) {
         Object.keys(dbState).forEach(key => {
-          current[key] = dbState[key];
+          const room = dbState[key];
+          if (room && room.claimedSlots) {
+            // Purge mock players
+            Object.keys(room.claimedSlots).forEach(slot => {
+              const occupant = room.claimedSlots[slot];
+              // Purge known mock players or those with "test"/"mock" in their identifiers
+              if (
+                occupant.userId === 'test' || 
+                occupant.userId === 'mock' || 
+                occupant.userId?.toString() === '6768760181' || // Known test ID (Kibur)
+                occupant.username?.toLowerCase().includes('mock') || 
+                occupant.username?.toLowerCase().includes('test')
+              ) {
+                logBot(`[GridState] PURGING mock player in ${key} slot ${slot}: ${occupant.username} (${occupant.userId})`);
+                delete room.claimedSlots[slot];
+              }
+            });
+          }
+          current[key] = room;
         });
       }
-      logBot(`[GridState] State loaded from Supabase.`);
+      logBot(`[GridState] State loaded from Supabase and purged of mock data.`);
+      saveGridState();
     }
   } catch (e) {
     logBot(`[GridState] Error syncing state from Supabase: ${e}`);
@@ -83,6 +102,20 @@ if (!(globalThis as any)[GLOBAL_GRID_KEY]) {
   logBot(`[GridState] Initializing global grid rooms state... (PID: ${process.pid})`);
   const saved = loadState();
   (globalThis as any)[GLOBAL_GRID_KEY] = saved || defaultRooms;
+  
+  // Initial purge of mock data from local state
+  const current = (globalThis as any)[GLOBAL_GRID_KEY];
+  Object.keys(current).forEach(key => {
+    const room = current[key];
+    if (room && room.claimedSlots) {
+      Object.keys(room.claimedSlots).forEach(slot => {
+        if (room.claimedSlots[slot].userId === 'test' || room.claimedSlots[slot].userId === 'mock') {
+          delete room.claimedSlots[slot];
+        }
+      });
+    }
+  });
+
   syncFromSupabase().catch(e => logBot(`[GridState] Initial sync error: ${e}`));
 } else {
   logBot(`[GridState] Re-using existing global grid rooms state. (PID: ${process.pid})`);

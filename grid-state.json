@@ -10,11 +10,7 @@
     "history": []
   },
   "mini": {
-    "claimedSlots": {
-      "5": {
-        "userId": "test"
-      }
-    },
+    "claimedSlots": {},
     "roundId": 1003,
     "history": []
   },

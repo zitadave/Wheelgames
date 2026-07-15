@@ -2711,23 +2711,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         cmdName = cmdName.split("@")[0];
       }
       const customCmd = promptsConfig.custom_commands?.[cmdName];
-
-      // Built-in system commands
-      if (cmdName === "testclaim") {
-        if (!isAnyAdmin(userIdNum)) return;
-        const { gridRooms } = await import("./gridState.js");
-        const roomName = commandParts[1] || "mini";
-        const slotNum = parseInt(commandParts[2] || "1", 10);
-        const room = gridRooms[roomName];
-        if (room) {
-          room.claimedSlots[slotNum] = { isSelf: false, userId: "test", username: "Tester" };
-          await bot.sendMessage(chatId, `✅ Manually claimed slot #${slotNum} in ${roomName} for testing.`);
-        } else {
-          await bot.sendMessage(chatId, `❌ Room ${roomName} not found.`);
-        }
-        return;
-      }
-
+      
       if (cmdName === "checkadmin") {
       const isAdmin = isAnyAdmin(userIdNum);
       const isPrimary = userIdNum === getPrimaryOwnerId();
@@ -4176,7 +4160,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         `💰 <b>Amount:</b> <b>${amount.toLocaleString()} ETB</b>\n` +
         `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n\n` +
         `📝 <b>Receipt SMS text pasted:</b>\n` +
-        `<pre>${escapedText}</pre>\n\n` +
+        `<blockquote>${escapedText}</blockquote>\n\n` +
         `<b>Request ID:</b> <code>${requestId}</code>`;
 
       const primaryOwnerId = getPrimaryOwnerId();
@@ -5944,36 +5928,8 @@ const withdrawalCooldowns = new Map<string, number>();
                 photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
               }
             } else {
-              if (!ann.text || ann.text === "High Withdrawal placeholder") {
-                messageText = `💸 <b>Massive Withdrawal Alert!</b> 💸\n\n` +
-                  `🎉 Congratulations to <b>User_***</b> for withdrawing <b>25,000 ETB</b>!\n\n` +
-                  `🚀 Play now, win big, and get paid instantly.\n\n` +
-                  `<i>Real winners, real money! See the screenshot proof.</i>`;
-              }
-              if (!ann.photoUrl) {
-                photo = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800";
-              }
-            }
-          } else if (ann.type === "high_deposit") {
-            if (!ann.text || ann.text === "High Deposit placeholder") {
-              messageText = `💰 <b>Whale Deposit Alert!</b> 💰\n\n` +
-                `🔥 A user just deposited <b>50,000+ ETB</b> to dominate the VIP rooms!\n\n` +
-                `🏆 Are you ready to challenge them?\n\n` +
-                `<i>Join the action now!</i>`;
-            }
-            if (!ann.photoUrl) {
-              photo = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=800";
-            }
-          } else if (ann.type === "weekly_promoter") {
-            if (!ann.text || ann.text === "Weekly Promoter placeholder") {
-              messageText = `🏆 <b>Weekly Promoter Affiliate Winners!</b> 🏆\n\n` +
-                `🥇 <b>1st Place:</b> Received <b>15,000 ETB</b>\n` +
-                `🥈 <b>2nd Place:</b> Received <b>8,000 ETB</b>\n` +
-                `🥉 <b>3rd Place:</b> Received <b>4,000 ETB</b>\n\n` +
-                `🤝 <i>Start referring your friends using /referral and earn your share of the weekly jackpot!</i>`;
-            }
-            if (!ann.photoUrl) {
-              photo = "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=800";
+              // Only use real data, no mock fallbacks
+              return; 
             }
           } else if (ann.type === "join_play") {
             const vipGrandSlots = formatEmojiNumbers(await generateSlotNumbers(100), 100);
@@ -8444,7 +8400,7 @@ const withdrawalCooldowns = new Map<string, number>();
           `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
           `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
           `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
-          `📝 <b>Pasted Receipt SMS:</b>\n<pre>${escapedReceipt}</pre>\n\n` +
+          `📝 <b>Pasted Receipt SMS:</b>\n<blockquote>${escapedReceipt}</blockquote>\n\n` +
           `✅ <b>Approved by admin:</b> @${adminUsername}`;
 
         if (messageId) {
@@ -8498,7 +8454,7 @@ const withdrawalCooldowns = new Map<string, number>();
           `🆔 <b>User ID:</b> <code>${request.userId}</code>\n` +
           `💰 <b>Amount:</b> <b>${request.amount.toLocaleString()} ETB</b>\n` +
           `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n` +
-          `📝 <b>Pasted Receipt SMS:</b>\n<pre>${escapedReceipt}</pre>\n\n` +
+          `📝 <b>Pasted Receipt SMS:</b>\n<blockquote>${escapedReceipt}</blockquote>\n\n` +
           `❌ <b>Declined by admin:</b> @${adminUsername}`;
 
         if (messageId) {
