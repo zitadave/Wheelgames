@@ -3045,6 +3045,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
                 });
             }
 
+            availableBalance = Math.max(0, availableBalance);
+
             const msgText = `💰 <b>Your Affiliate Dashboard</b>\n\n👥 <b>Total Referrals:</b> ${totalReferrals}\n💵 <b>Total Commission Earned:</b> ${totalEarned.toLocaleString()} ETB\n💰 <b>Available to Withdraw:</b> ${availableBalance.toLocaleString()} ETB\n\n<i>To request a payout or view detailed logs, open the Mini App!\n\nShare your referral link using /referral to earn 1% on all your friends' bets!</i>`;
             await bot.sendMessage(chatId, msgText, { parse_mode: "HTML" });
           } catch (e: any) {

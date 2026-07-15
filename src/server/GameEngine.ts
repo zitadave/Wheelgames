@@ -757,6 +757,8 @@ export function initGameEngine(io: Server) {
             });
         }
         
+        availableBalance = Math.max(0, availableBalance);
+        
         socket.emit("affiliateStats", { totalReferrals, totalEarned, availableBalance, isFlagged });
       } catch (e) {
         console.error("Error fetching affiliate stats:", e);
@@ -810,6 +812,8 @@ export function initGameEngine(io: Server) {
                     }
                 });
             }
+            
+            availableBalance = Math.max(0, availableBalance);
             
             if (availableBalance < amount) {
                 socket.emit("notification", { message: `Insufficient affiliate balance. Available: ${availableBalance.toLocaleString()} ETB`, type: "error" });
