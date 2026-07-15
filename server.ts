@@ -70,13 +70,18 @@ async function startServer() {
         const hmac = crypto.createHmac('sha256', secret);
         const digest = hmac.update(bodyStr).digest('hex');
         if (signature.toLowerCase() !== digest.toLowerCase()) {
-          console.warn("⚠️ [SMS Webhook] Invalid Signature detected.");
+          console.error("❌ [SMS Webhook] Signature Mismatch!");
+          console.error(`Received: ${signature.substring(0, 8)}...`);
+          console.error(`Expected: ${digest.substring(0, 8)}...`);
           return res.status(401).json({ error: "Invalid signature" });
         }
+        console.log("✅ [SMS Webhook] Signature verified.");
       } catch (err) {
-        console.error("Error verifying SMS signature:", err);
+        console.error("❌ [SMS Webhook] HMAC Verification Error:", err);
         return res.status(401).json({ error: "Signature verification failed" });
       }
+    } else if (secret) {
+      console.warn("⚠️ [SMS Webhook] Secret is set but no x-signature header found.");
     }
 
     const { from, text } = req.body;
@@ -329,9 +334,9 @@ async function startServer() {
       let isVerifiedBySMS = false;
 
       if (txId && parsedAmount) {
-        // Retry logic: Wait for the SMS gateway for up to 15 seconds (3 attempts x 5s)
-        for (let attempt = 0; attempt < 3; attempt++) {
-          console.log(`🔍 [Deposit] Checking gateway for Ref: ${txId} (Attempt ${attempt + 1})...`);
+        // Retry logic: Wait for the SMS gateway for up to 30 seconds (6 attempts x 5s)
+        for (let attempt = 0; attempt < 6; attempt++) {
+          console.log(`🔍 [Deposit] Checking gateway for Ref: ${txId} (Attempt ${attempt + 1}/6)...`);
           
           const { data: smsRecord } = await supabase
             .from('bank_messages')
@@ -343,10 +348,11 @@ async function startServer() {
           if (smsRecord && Number(smsRecord.amount) === parsedAmount) {
             isVerifiedBySMS = true;
             await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('ref_id', txId);
+            console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
             break;
           }
 
-          if (attempt < 2) {
+          if (attempt < 5) {
             // Wait 5 seconds before next check
             await new Promise(resolve => setTimeout(resolve, 5000));
           }

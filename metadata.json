@@ -1,6 +1,6 @@
 {
-  "name": "Wheel Bet",
-  "description": "An interactive traditional Bingo game featuring a custom-made human caller voice (1-75) and a highly simplified, user-friendly interface, alongside a real-time multiplayer wheel betting arena.",
+  "name": "Wheel Bet & Bingo",
+  "description": "A highly user-friendly traditional Bingo and Wheel betting game featuring custom human voice calling and automated Telebirr/CBE deposit verification.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
