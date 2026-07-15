@@ -51,6 +51,16 @@ BEGIN
         WHEN duplicate_column THEN null;
     END;
     BEGIN
+        ALTER TABLE users ADD COLUMN bank_name TEXT;
+    EXCEPTION
+        WHEN duplicate_column THEN null;
+    END;
+    BEGIN
+        ALTER TABLE users ADD COLUMN bank_account TEXT;
+    EXCEPTION
+        WHEN duplicate_column THEN null;
+    END;
+    BEGIN
         ALTER TABLE users ADD COLUMN last_seen TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
     EXCEPTION
         WHEN duplicate_column THEN null;

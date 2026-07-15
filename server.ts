@@ -204,6 +204,22 @@ async function startServer() {
     }
   });
 
+  app.get("/api/user-payout-info", async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    try {
+      const { data: user, error } = await supabase
+        .from('users')
+        .select('bank_name, bank_account')
+        .eq('id', userId.toString())
+        .maybeSingle();
+      if (error) throw error;
+      res.json({ success: true, bankName: user?.bank_name, bankAccount: user?.bank_account });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/config/banks", async (req, res) => {
     try {
       const { getPromptsConfig } = await import("./src/server/telegramBot.js");

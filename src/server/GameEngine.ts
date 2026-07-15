@@ -701,11 +701,30 @@ export function initGameEngine(io: Server) {
       try {
         const { supabase } = await import("./supabase.js");
         if (!supabase) return;
+        // 1. Get unique user IDs from referral transactions
         const { data: refTx } = await supabase.from('transactions')
-          .select('id')
+          .select('user_id')
           .eq('type', 'referral_link')
           .ilike('description', `Referred by ${userId}%`);
-        const totalReferrals = refTx ? refTx.length : 0;
+        
+        const referredUserIds = new Set<string>();
+        if (refTx) {
+          refTx.forEach(tx => {
+            if (tx.user_id) referredUserIds.add(tx.user_id);
+          });
+        }
+
+        // 2. Also check the users table directly (for newer referrals)
+        const { data: directUsers } = await supabase
+          .from('users')
+          .select('id')
+          .eq('referrer_id', userId);
+
+        if (directUsers) {
+          directUsers.forEach(u => referredUserIds.add(u.id));
+        }
+
+        const totalReferrals = referredUserIds.size;
         
         // Check if flagged
         const { data: flags } = await supabase.from('transactions')
@@ -715,17 +734,18 @@ export function initGameEngine(io: Server) {
         const { data: earnTx } = await supabase.from('transactions')
           .select('amount, type')
           .eq('user_id', userId)
-          .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward']); // include reward for backward compatibility
+          .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
 
         let totalEarned = 0;
         let availableBalance = 0;
         if (earnTx) {
             earnTx.forEach(tx => {
                 const amt = Number(tx.amount || 0);
-                if (tx.type === 'affiliate_withdrawal') {
-                    availableBalance -= Math.abs(amt);
-                } else {
+                if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
                     totalEarned += amt;
+                    availableBalance += amt;
+                } else {
+                    // affiliate_withdrawal and affiliate_payout_request are negative
                     availableBalance += amt;
                 }
             });
@@ -737,14 +757,20 @@ export function initGameEngine(io: Server) {
       }
     });
 
-    socket.on("requestAffiliatePayout", async (userId: string, amount: number) => {
+    socket.on("requestAffiliatePayout", async (data: { userId: string, amount: number, bankName: string, bankAccount: string }) => {
         try {
+            const { userId, amount, bankName, bankAccount } = data;
             const { supabase } = await import("./supabase.js");
             if (!supabase) return;
             
             // Validate minimum amount (1000 ETB)
             if (amount < 1000) {
                 socket.emit("notification", { message: "Minimum payout threshold is 1,000 ETB.", type: "error" });
+                return;
+            }
+
+            if (!bankName || !bankAccount) {
+                socket.emit("notification", { message: "Bank name and account number are required.", type: "error" });
                 return;
             }
             
@@ -760,47 +786,77 @@ export function initGameEngine(io: Server) {
             const { data: earnTx } = await supabase.from('transactions')
               .select('amount, type')
               .eq('user_id', userId)
-              .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward']);
+              .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
             
             let availableBalance = 0;
             if (earnTx) {
                 earnTx.forEach(tx => {
                     const amt = Number(tx.amount || 0);
-                    if (tx.type === 'affiliate_withdrawal') {
-                        availableBalance -= Math.abs(amt);
+                    if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
+                        availableBalance += amt;
                     } else {
+                        // negative for withdrawals and requests
                         availableBalance += amt;
                     }
                 });
             }
             
-            // Also check pending requests
-            const { data: pendingReqs } = await supabase.from('transactions')
-              .select('amount')
-              .eq('user_id', userId)
-              .eq('type', 'affiliate_payout_request');
-            let pendingAmount = 0;
-            if (pendingReqs) {
-                pendingReqs.forEach(req => pendingAmount += Number(req.amount || 0));
-            }
-            
-            if (availableBalance - pendingAmount < amount) {
-                socket.emit("notification", { message: "Insufficient available affiliate balance.", type: "error" });
+            if (availableBalance < amount) {
+                socket.emit("notification", { message: `Insufficient affiliate balance. Available: ${availableBalance.toLocaleString()} ETB`, type: "error" });
                 return;
             }
+
+            // Update user's default bank details (ignore error if columns don't exist yet)
+            try {
+                await supabase.from('users').update({
+                    bank_name: bankName,
+                    bank_account: bankAccount
+                }).eq('id', userId);
+            } catch (err) {
+                console.warn("Could not update user bank info, columns might be missing:", err);
+            }
             
-            // Record the request
-            await supabase.from("transactions").insert({
-               user_id: userId,
-               amount: amount,
-               type: "affiliate_payout_request",
-               description: `Pending Review: Affiliate Payout Request for ${amount} ETB`
+            const description = `Affiliate Payout Request (Bank: ${bankName}, Acc: ${bankAccount})`;
+            const { error } = await supabase.from('transactions').insert({
+                user_id: userId,
+                amount: -amount,
+                type: 'affiliate_payout_request',
+                description: description
             });
+            
+            if (error) throw error;
             
             socket.emit("notification", { message: "Payout request submitted for manual admin review.", type: "success" });
             
-        } catch (e) {
+            // Notify Admins
+            try {
+                const { getBotInstance } = await import("./telegramBot.js");
+                const bot = getBotInstance();
+                if (bot) {
+                    const adminIds = process.env.TELEGRAM_ADMIN_IDS?.split(',') || [];
+                    const { data: user } = await supabase.from('users').select('username, first_name').eq('id', userId).single();
+                    const userName = user?.username ? `@${user.username}` : (user?.first_name || userId);
+                    
+                    const adminMsg = `🚨 <b>New Affiliate Payout Request</b>\n\n` +
+                                    `👤 <b>User:</b> ${userName} (<code>${userId}</code>)\n` +
+                                    `💰 <b>Amount:</b> ${amount.toLocaleString()} ETB\n` +
+                                    `🏦 <b>Bank:</b> ${bankName}\n` +
+                                    `💳 <b>Account:</b> <code>${bankAccount}</code>\n\n` +
+                                    `Review this request in the Affiliate Management panel.`;
+                    
+                    for (const adminId of adminIds) {
+                        if (adminId.trim()) {
+                            await bot.sendMessage(parseInt(adminId.trim()), adminMsg, { parse_mode: 'HTML' });
+                        }
+                    }
+                }
+            } catch (notifyErr) {
+                console.error("Error notifying admins of payout request:", notifyErr);
+            }
+
+        } catch (e: any) {
             console.error("Payout request error:", e);
+            socket.emit("notification", { message: `Error: ${e.message}`, type: "error" });
         }
     });
 

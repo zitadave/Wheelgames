@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle, AlignmentType } from 'docx';
+import ExcelJS from 'exceljs';
 
 // Helper to draw a horizontal line in PDF
 function drawPDFLine(doc: any, y: number) {
@@ -69,161 +70,221 @@ export async function handleUsersReport(bot: any, chatId: number, supabase: any)
         let totalReferredUsers = 0;
         referralCounts.forEach((count) => { totalReferredUsers += count; });
 
-        return new Promise((resolve) => {
-            const doc = new PDFDocument({ margin: 30, size: 'A4' });
-            let buffers: any[] = [];
-            doc.on('data', buffers.push.bind(buffers));
-            doc.on('end', async () => {
-                const pdfData = Buffer.concat(buffers);
-                await bot.sendDocument(chatId, pdfData, {}, {
-                    filename: `Real_Users_Report_${new Date().toISOString().split('T')[0]}.pdf`,
-                    contentType: 'application/pdf'
+        // PDF Generation
+        const generatePDF = () => {
+            return new Promise<Buffer>((resolve) => {
+                const doc = new PDFDocument({ margin: 30, size: 'A4' });
+                let buffers: any[] = [];
+                doc.on('data', buffers.push.bind(buffers));
+                doc.on('end', () => resolve(Buffer.concat(buffers)));
+
+                // Page Header / Banner
+                doc.rect(30, 30, 535, 60).fill('#1E293B');
+                doc.fillColor('#FFFFFF').fontSize(18).font('Helvetica-Bold').text('ETB GAME HUB - USER AUDIT & REGISTRATION REPORT', 45, 45);
+                doc.fontSize(9).font('Helvetica').text(`Run Date: ${new Date().toLocaleString()} (UTC) | Admin System Access`, 45, 68);
+                
+                doc.moveDown(4);
+
+                // Summary Info Section
+                doc.fillColor('#1E293B').fontSize(14).font('Helvetica-Bold').text('System Registration Summary', 30);
+                doc.moveDown(0.5);
+                
+                let startY = doc.y;
+                drawPDFLine(doc, startY);
+                doc.moveDown(0.5);
+
+                const col1X = 35;
+                const col2X = 200;
+                const col3X = 380;
+                
+                doc.fontSize(10).fillColor('#475569');
+                
+                // Row 1
+                doc.font('Helvetica-Bold').text('Total Registrations:', col1X);
+                doc.font('Helvetica').text(`${totalUsers} players`, col1X + 110);
+                
+                doc.font('Helvetica-Bold').text('Total Active Ledgers:', col2X);
+                doc.font('Helvetica').text(`${activeUsersCount} accounts`, col2X + 115);
+
+                doc.font('Helvetica-Bold').text('Total Platform Liability:', col3X);
+                doc.font('Helvetica').text(formatETB(totalLedgerBalance), col3X + 115);
+                
+                doc.moveDown();
+
+                // Row 2
+                doc.font('Helvetica-Bold').text('Total Affiliates:', col1X);
+                doc.font('Helvetica').text(`${totalPromoters} active`, col1X + 110);
+
+                doc.font('Helvetica-Bold').text('Referred Registrants:', col2X);
+                doc.font('Helvetica').text(`${totalReferredUsers} (${totalUsers ? Math.round((totalReferredUsers / totalUsers) * 100) : 0}%)`, col2X + 115);
+
+                doc.font('Helvetica-Bold').text('Average Ledger Size:', col3X);
+                doc.font('Helvetica').text(formatETB(totalUsers ? totalLedgerBalance / totalUsers : 0), col3X + 115);
+
+                doc.moveDown(1.5);
+
+                // Registration Velocity Table
+                doc.fillColor('#0F172A').fontSize(11).font('Helvetica-Bold').text('Registration Velocity & Acquisition Rates');
+                doc.moveDown(0.5);
+                
+                let vY = doc.y;
+                doc.rect(30, vY, 535, 20).fill('#F1F5F9');
+                doc.fillColor('#1E293B').font('Helvetica-Bold').fontSize(9);
+                doc.text('Time Horizon', 40, vY + 6);
+                doc.text('New Registrations', 200, vY + 6);
+                doc.text('Growth Rate (vs Total)', 380, vY + 6);
+                
+                doc.font('Helvetica').fillColor('#334155');
+                const metrics = [
+                    { label: 'Last 24 Hours', count: registered24h, pct: totalUsers ? (registered24h / totalUsers * 100).toFixed(1) : '0.0' },
+                    { label: 'Last 7 Days', count: registered7d, pct: totalUsers ? (registered7d / totalUsers * 100).toFixed(1) : '0.0' },
+                    { label: 'Last 30 Days', count: registered30d, pct: totalUsers ? (registered30d / totalUsers * 100).toFixed(1) : '0.0' },
+                    { label: 'Historical Baseline', count: totalUsers, pct: '100.0' }
+                ];
+
+                let rowY = vY + 20;
+                metrics.forEach((m) => {
+                    rowY += 18;
+                    doc.text(m.label, 40, rowY);
+                    doc.text(`${m.count} users`, 200, rowY);
+                    doc.text(`${m.pct}%`, 380, rowY);
+                    doc.moveTo(30, rowY + 12).lineTo(565, rowY + 12).strokeColor('#F1F5F9').stroke();
                 });
-                resolve(true);
-            });
 
-            // Page Header / Banner
-            doc.rect(30, 30, 535, 60).fill('#1E293B');
-            doc.fillColor('#FFFFFF').fontSize(18).font('Helvetica-Bold').text('ETB GAME HUB - USER AUDIT & REGISTRATION REPORT', 45, 45);
-            doc.fontSize(9).font('Helvetica').text(`Run Date: ${new Date().toLocaleString()} (UTC) | Admin System Access`, 45, 68);
-            
-            doc.moveDown(4);
+                doc.moveDown(3);
 
-            // Summary Info Section
-            doc.fillColor('#1E293B').fontSize(14).font('Helvetica-Bold').text('System Registration Summary', 30);
-            doc.moveDown(0.5);
-            
-            let startY = doc.y;
-            drawPDFLine(doc, startY);
-            doc.moveDown(0.5);
+                // Detailed Registration Log
+                doc.fillColor('#0F172A').fontSize(12).font('Helvetica-Bold').text('Player Registry & Referral Tracking');
+                doc.moveDown(0.5);
 
-            const col1X = 35;
-            const col2X = 200;
-            const col3X = 380;
-            
-            doc.fontSize(10).fillColor('#475569');
-            
-            // Row 1
-            doc.font('Helvetica-Bold').text('Total Registrations:', col1X);
-            doc.font('Helvetica').text(`${totalUsers} players`, col1X + 110);
-            
-            doc.font('Helvetica-Bold').text('Total Active Ledgers:', col2X);
-            doc.font('Helvetica').text(`${activeUsersCount} accounts`, col2X + 115);
+                if (users && users.length > 0) {
+                    let logY = doc.y;
+                    doc.rect(30, logY, 535, 20).fill('#1E293B');
+                    doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold');
+                    doc.text('Telegram ID', 35, logY + 6);
+                    doc.text('Username / Full Name', 115, logY + 6);
+                    doc.text('Is Promoter?', 230, logY + 6);
+                    doc.text('Referred By', 315, logY + 6);
+                    doc.text('Created At (UTC)', 410, logY + 6);
+                    doc.text('Ledger Bal', 495, logY + 6);
 
-            doc.font('Helvetica-Bold').text('Total Platform Liability:', col3X);
-            doc.font('Helvetica').text(formatETB(totalLedgerBalance), col3X + 115);
-            
-            doc.moveDown();
+                    doc.fillColor('#334155').font('Helvetica');
+                    let curY = logY + 20;
 
-            // Row 2
-            doc.font('Helvetica-Bold').text('Total Affiliates:', col1X);
-            doc.font('Helvetica').text(`${totalPromoters} active`, col1X + 110);
-
-            doc.font('Helvetica-Bold').text('Referred Registrants:', col2X);
-            doc.font('Helvetica').text(`${totalReferredUsers} (${totalUsers ? Math.round((totalReferredUsers / totalUsers) * 100) : 0}%)`, col2X + 115);
-
-            doc.font('Helvetica-Bold').text('Average Ledger Size:', col3X);
-            doc.font('Helvetica').text(formatETB(totalUsers ? totalLedgerBalance / totalUsers : 0), col3X + 115);
-
-            doc.moveDown(1.5);
-
-            // Registration Velocity Table
-            doc.fillColor('#0F172A').fontSize(11).font('Helvetica-Bold').text('Registration Velocity & Acquisition Rates');
-            doc.moveDown(0.5);
-            
-            let vY = doc.y;
-            doc.rect(30, vY, 535, 20).fill('#F1F5F9');
-            doc.fillColor('#1E293B').font('Helvetica-Bold').fontSize(9);
-            doc.text('Time Horizon', 40, vY + 6);
-            doc.text('New Registrations', 200, vY + 6);
-            doc.text('Growth Rate (vs Total)', 380, vY + 6);
-            
-            doc.font('Helvetica').fillColor('#334155');
-            const metrics = [
-                { label: 'Last 24 Hours', count: registered24h, pct: totalUsers ? (registered24h / totalUsers * 100).toFixed(1) : '0.0' },
-                { label: 'Last 7 Days', count: registered7d, pct: totalUsers ? (registered7d / totalUsers * 100).toFixed(1) : '0.0' },
-                { label: 'Last 30 Days', count: registered30d, pct: totalUsers ? (registered30d / totalUsers * 100).toFixed(1) : '0.0' },
-                { label: 'Historical Baseline', count: totalUsers, pct: '100.0' }
-            ];
-
-            let rowY = vY + 20;
-            metrics.forEach((m) => {
-                rowY += 18;
-                doc.text(m.label, 40, rowY);
-                doc.text(`${m.count} users`, 200, rowY);
-                doc.text(`${m.pct}%`, 380, rowY);
-                doc.moveTo(30, rowY + 12).lineTo(565, rowY + 12).strokeColor('#F1F5F9').stroke();
-            });
-
-            doc.moveDown(3);
-
-            // Detailed Registration Log
-            doc.fillColor('#0F172A').fontSize(12).font('Helvetica-Bold').text('Player Registry & Referral Tracking');
-            doc.moveDown(0.5);
-
-            if (users && users.length > 0) {
-                let logY = doc.y;
-                doc.rect(30, logY, 535, 20).fill('#1E293B');
-                doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold');
-                doc.text('Telegram ID', 35, logY + 6);
-                doc.text('Username / Full Name', 115, logY + 6);
-                doc.text('Is Promoter?', 230, logY + 6);
-                doc.text('Referred By', 315, logY + 6);
-                doc.text('Created At (UTC)', 410, logY + 6);
-                doc.text('Ledger Bal', 495, logY + 6);
-
-                doc.fillColor('#334155').font('Helvetica');
-                let curY = logY + 20;
-
-                for (const u of users) {
-                    if (curY > 750) {
-                        doc.addPage();
-                        // Redraw header on new page
-                        doc.rect(30, 30, 535, 20).fill('#1E293B');
-                        doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold');
-                        doc.text('Telegram ID', 35, 36);
-                        doc.text('Username / Full Name', 115, 36);
-                        doc.text('Is Promoter?', 230, 36);
-                        doc.text('Referred By', 315, 36);
-                        doc.text('Created At (UTC)', 410, 36);
-                        doc.text('Ledger Bal', 495, 36);
-                        doc.fillColor('#334155').font('Helvetica');
-                        curY = 50;
-                    }
-
-                    const telegramId = (u.id || '').toString();
-                    const refCount = referralCounts.get(telegramId) || 0;
-                    const promoterStatus = refCount > 0 ? `Yes (${refCount} refs)` : 'No';
-
-                    let referredByName = 'Direct';
-                    if (u.referrer_id) {
-                        const referrerUser = referrerMap.get(u.referrer_id);
-                        if (referrerUser) {
-                            referredByName = referrerUser.username ? `@${referrerUser.username}` : (referrerUser.first_name || u.referrer_id);
-                        } else {
-                            referredByName = u.referrer_id;
+                    for (const u of users) {
+                        if (curY > 750) {
+                            doc.addPage();
+                            // Redraw header on new page
+                            doc.rect(30, 30, 535, 20).fill('#1E293B');
+                            doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold');
+                            doc.text('Telegram ID', 35, 36);
+                            doc.text('Username / Full Name', 115, 36);
+                            doc.text('Is Promoter?', 230, 36);
+                            doc.text('Referred By', 315, 36);
+                            doc.text('Created At (UTC)', 410, 36);
+                            doc.text('Ledger Bal', 495, 36);
+                            doc.fillColor('#334155').font('Helvetica');
+                            curY = 50;
                         }
+
+                        const telegramId = (u.id || '').toString();
+                        const refCount = referralCounts.get(telegramId) || 0;
+                        const promoterStatus = refCount > 0 ? `Yes (${refCount} refs)` : 'No';
+
+                        let referredByName = 'Direct';
+                        if (u.referrer_id) {
+                            const referrerUser = referrerMap.get(u.referrer_id);
+                            if (referrerUser) {
+                                referredByName = referrerUser.username ? `@${referrerUser.username}` : (referrerUser.first_name || u.referrer_id);
+                            } else {
+                                referredByName = u.referrer_id;
+                            }
+                        }
+
+                        const nameText = u.username ? `@${u.username}` : `${u.first_name || ''} ${u.last_name || ''}`.trim() || 'N/A';
+                        const regDateStr = u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A';
+                        const balStr = `${Number(u.balance || 0).toLocaleString()} ETB`;
+
+                        doc.text(telegramId.substring(0, 11), 35, curY);
+                        doc.text(nameText.substring(0, 20), 115, curY);
+                        doc.text(promoterStatus, 230, curY);
+                        doc.text(referredByName.substring(0, 18), 315, curY);
+                        doc.text(regDateStr, 410, curY);
+                        doc.text(balStr, 495, curY);
+
+                        doc.moveTo(30, curY + 11).lineTo(565, curY + 11).strokeColor('#F8FAFC').stroke();
+                        curY += 15;
                     }
-
-                    const nameText = u.username ? `@${u.username}` : `${u.first_name || ''} ${u.last_name || ''}`.trim() || 'N/A';
-                    const regDateStr = u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A';
-                    const balStr = `${Number(u.balance || 0).toLocaleString()} ETB`;
-
-                    doc.text(telegramId.substring(0, 11), 35, curY);
-                    doc.text(nameText.substring(0, 20), 115, curY);
-                    doc.text(promoterStatus, 230, curY);
-                    doc.text(referredByName.substring(0, 18), 315, curY);
-                    doc.text(regDateStr, 410, curY);
-                    doc.text(balStr, 495, curY);
-
-                    doc.moveTo(30, curY + 11).lineTo(565, curY + 11).strokeColor('#F8FAFC').stroke();
-                    curY += 15;
+                } else {
+                    doc.fontSize(10).text('No registered users found.', 40, doc.y);
                 }
-            } else {
-                doc.fontSize(10).text('No registered users found.', 40, doc.y);
+
+                doc.end();
+            });
+        };
+
+        const pdfBuf = await generatePDF();
+        await bot.sendDocument(chatId, pdfBuf, {}, {
+            filename: `Real_Users_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+            contentType: 'application/pdf'
+        });
+
+        // Excel Generation
+        const workbook = new ExcelJS.Workbook();
+        const summarySheet = workbook.addWorksheet('Summary');
+        summarySheet.columns = [
+            { header: 'Metric', key: 'metric', width: 30 },
+            { header: 'Value', key: 'value', width: 25 }
+        ];
+        summarySheet.addRows([
+            { metric: 'Total Registrations', value: totalUsers },
+            { metric: 'Total Active Ledgers', value: activeUsersCount },
+            { metric: 'Total Platform Liability', value: totalLedgerBalance },
+            { metric: 'Total Affiliates', value: totalPromoters },
+            { metric: 'Referred Registrants', value: totalReferredUsers },
+            { metric: 'Average Ledger Size', value: totalUsers ? totalLedgerBalance / totalUsers : 0 }
+        ]);
+
+        const registrySheet = workbook.addWorksheet('Player Registry');
+        registrySheet.columns = [
+            { header: 'Telegram ID', key: 'id', width: 15 },
+            { header: 'Username', key: 'username', width: 20 },
+            { header: 'Full Name', key: 'fullname', width: 25 },
+            { header: 'Is Promoter?', key: 'is_promoter', width: 15 },
+            { header: 'Referral Count', key: 'refs', width: 15 },
+            { header: 'Referred By', key: 'referred_by', width: 15 },
+            { header: 'Created At', key: 'created_at', width: 20 },
+            { header: 'Balance (ETB)', key: 'balance', width: 15 }
+        ];
+
+        users.forEach(u => {
+            const refCount = referralCounts.get(u.id) || 0;
+            let referredByName = 'Direct';
+            if (u.referrer_id) {
+                const referrerUser = referrerMap.get(u.referrer_id);
+                if (referrerUser) {
+                    referredByName = referrerUser.username ? `@${referrerUser.username}` : (referrerUser.first_name || u.referrer_id);
+                } else {
+                    referredByName = u.referrer_id;
+                }
             }
 
-            doc.end();
+            registrySheet.addRow({
+                id: u.id,
+                username: u.username || 'N/A',
+                fullname: `${u.first_name || ''} ${u.last_name || ''}`.trim() || 'N/A',
+                is_promoter: refCount > 0 ? 'Yes' : 'No',
+                refs: refCount,
+                referred_by: referredByName,
+                created_at: u.created_at ? new Date(u.created_at).toLocaleString() : 'N/A',
+                balance: Number(u.balance || 0)
+            });
+        });
+
+        const excelBuf = await workbook.xlsx.writeBuffer() as Buffer;
+        await bot.sendDocument(chatId, excelBuf, {}, {
+            filename: `Real_Users_Report_${new Date().toISOString().split('T')[0]}.xlsx`,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         });
     } catch (e: any) {
         await bot.sendMessage(chatId, `❌ Error generating user report: ${e.message}`);
@@ -571,6 +632,44 @@ export async function handleFinancialReport(bot: any, chatId: number, supabase: 
         await bot.sendDocument(chatId, docxBuf, {}, {
             filename: `Financial_Statement_${new Date().toISOString().split('T')[0]}.docx`,
             contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        });
+
+        // Excel Financial Generation
+        const finWorkbook = new ExcelJS.Workbook();
+        const plSheet = finWorkbook.addWorksheet('Profit & Loss');
+        plSheet.columns = [
+            { header: 'Item', key: 'item', width: 40 },
+            { header: 'Amount (ETB)', key: 'amount', width: 20 }
+        ];
+        plSheet.addRows([
+            { item: 'Gross Bets Received (Revenue)', amount: totalBets },
+            { item: 'Gross Wins Disbursed (Cost of Service)', amount: -totalWins },
+            { item: 'Gross Gaming Revenue (GGR)', amount: grossGamingRevenue },
+            { item: 'Other Revenue (Admin Deposits/Credits)', amount: adminAdjustmentsIn },
+            { item: 'Affiliate Commissions Incurred', amount: -affiliateCommissions },
+            { item: 'Other Administrative Debits/Expenses', amount: -adminAdjustmentsOut },
+            { item: 'NET INCOME / NET PROFIT (LOSS)', amount: netProfit }
+        ]);
+
+        const bsSheet = finWorkbook.addWorksheet('Balance Sheet');
+        bsSheet.columns = [
+            { header: 'Category', key: 'cat', width: 20 },
+            { header: 'Item', key: 'item', width: 40 },
+            { header: 'Amount (ETB)', key: 'amount', width: 20 }
+        ];
+        bsSheet.addRows([
+            { cat: 'ASSETS', item: 'Cash and Cash Equivalents', amount: platformCash },
+            { cat: 'ASSETS', item: 'TOTAL ASSETS', amount: platformCash },
+            { cat: 'LIABILITIES', item: 'Player Ledger Liabilities', amount: totalPlayerLedgerLiability },
+            { cat: 'LIABILITIES', item: 'TOTAL LIABILITIES', amount: totalPlayerLedgerLiability },
+            { cat: 'EQUITY', item: 'Retained Earnings / Operational House Equity', amount: platformEquity },
+            { cat: 'EQUITY', item: 'TOTAL LIABILITIES & EQUITY', amount: totalPlayerLedgerLiability + platformEquity }
+        ]);
+
+        const finExcelBuf = await finWorkbook.xlsx.writeBuffer() as Buffer;
+        await bot.sendDocument(chatId, finExcelBuf, {}, {
+            filename: `Financial_Statement_${new Date().toISOString().split('T')[0]}.xlsx`,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         });
 
     } catch (e: any) {

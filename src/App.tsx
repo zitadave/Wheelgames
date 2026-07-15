@@ -115,6 +115,34 @@ export default function App() {
   const [failedBet, setFailedBet] = useState<{ side: Side; amount: number } | null>(null);
   const [isPlacingBet, setIsPlacingBet] = useState<boolean>(false);
   const [affiliateStats, setAffiliateStats] = useState<{totalReferrals: number, totalEarned: number, availableBalance: number, isFlagged: boolean} | null>(null);
+  const [showPayoutModal, setShowPayoutModal] = useState(false);
+  const [payoutAmount, setPayoutAmount] = useState('');
+  const [payoutBankName, setPayoutBankName] = useState('');
+  const [payoutBankAccount, setPayoutBankAccount] = useState('');
+  const [availableBanks, setAvailableBanks] = useState<{name: string}[]>([]);
+
+  useEffect(() => {
+    if (showPayoutModal && userId) {
+      // Fetch user's default payout info
+      fetch(`${BACKEND_URL}/api/user-payout-info?userId=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setPayoutBankName(data.bankName || '');
+            setPayoutBankAccount(data.bankAccount || '');
+          }
+        });
+      
+      // Fetch available banks
+      fetch(`${BACKEND_URL}/api/config/banks`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.banks) {
+            setAvailableBanks(data.banks);
+          }
+        });
+    }
+  }, [showPayoutModal, userId]);
 
   const showNotification = React.useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ message, type });
@@ -1558,21 +1586,7 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => {
-                          if (!affiliateStats?.availableBalance || affiliateStats.availableBalance < 1000) {
-                              showNotification("Minimum withdrawal is 1,000 ETB.", "error");
-                              return;
-                          }
-                          const reqAmt = prompt(`Enter amount to withdraw (Available: ${affiliateStats.availableBalance}):`);
-                          if (reqAmt) {
-                              const amt = parseInt(reqAmt, 10);
-                              if (isNaN(amt) || amt < 1000 || amt > affiliateStats.availableBalance) {
-                                  showNotification("Invalid amount. Minimum 1,000 ETB.", "error");
-                              } else {
-                                  socket?.emit('requestAffiliatePayout', userId, amt);
-                              }
-                          }
-                      }}
+                      onClick={() => setShowPayoutModal(true)}
                       disabled={affiliateStats?.isFlagged || (affiliateStats?.availableBalance || 0) < 1000}
                       className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black py-2.5 px-4 rounded-xl transition-all active:scale-95 shadow-md shadow-blue-600/10 flex justify-center items-center gap-1 cursor-pointer"
                     >
@@ -2654,6 +2668,111 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+      {/* Payout Modal */}
+      {showPayoutModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white dark:bg-gray-900 w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+          >
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-black text-gray-900 dark:text-white">Affiliate Payout</h3>
+                <button onClick={() => setShowPayoutModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 ml-1">Withdrawal Amount (ETB)</label>
+                  <input
+                    type="number"
+                    value={payoutAmount}
+                    onChange={(e) => setPayoutAmount(e.target.value)}
+                    placeholder="Min: 1,000 ETB"
+                    className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-3.5 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 ml-1">Select Bank</label>
+                  <select
+                    value={payoutBankName}
+                    onChange={(e) => setPayoutBankName(e.target.value)}
+                    className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-3.5 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all appearance-none"
+                  >
+                    <option value="">Choose a bank...</option>
+                    {availableBanks.map(b => (
+                      <option key={b.name} value={b.name}>{b.name}</option>
+                    ))}
+                    <option value="Other">Other Bank</option>
+                  </select>
+                </div>
+
+                {payoutBankName === 'Other' && (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 ml-1">Custom Bank Name</label>
+                    <input
+                      type="text"
+                      placeholder="Enter bank name"
+                      className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-3.5 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                      onChange={(e) => setPayoutBankName(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5 ml-1">Account Number</label>
+                  <input
+                    type="text"
+                    value={payoutBankAccount}
+                    onChange={(e) => setPayoutBankAccount(e.target.value)}
+                    placeholder="Enter your account number"
+                    className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-3.5 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-8">
+                <button
+                  onClick={() => {
+                    const amt = parseInt(payoutAmount, 10);
+                    if (isNaN(amt) || amt < 1000) {
+                      showNotification("Minimum withdrawal is 1,000 ETB.", "error");
+                      return;
+                    }
+                    if (amt > (affiliateStats?.availableBalance || 0)) {
+                      showNotification("Insufficient affiliate balance.", "error");
+                      return;
+                    }
+                    if (!payoutBankName || !payoutBankAccount) {
+                      showNotification("Please fill in all bank details.", "error");
+                      return;
+                    }
+
+                    socket?.emit('requestAffiliatePayout', {
+                      userId,
+                      amount: amt,
+                      bankName: payoutBankName,
+                      bankAccount: payoutBankAccount
+                    });
+                    setShowPayoutModal(false);
+                    setPayoutAmount('');
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all active:scale-[0.98] shadow-xl shadow-blue-600/20"
+                >
+                  Confirm Withdrawal
+                </button>
+                <p className="text-[10px] text-gray-400 text-center mt-4">
+                  Manual admin review typically takes 15-60 minutes.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

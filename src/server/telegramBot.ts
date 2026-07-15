@@ -2994,26 +2994,46 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       if (cmdName === "affiliate") {
         await checkRegisteredAndHandle(msg, async () => {
           try {
+            // 1. Get unique user IDs from referral transactions
             const { data: refTx } = await supabase.from('transactions')
-              .select('id')
+              .select('user_id')
               .eq('type', 'referral_link')
               .ilike('description', `Referred by ${userId}%`);
-            const totalReferrals = refTx ? refTx.length : 0;
+            
+            const referredUserIds = new Set<string>();
+            if (refTx) {
+              refTx.forEach(tx => {
+                if (tx.user_id) referredUserIds.add(tx.user_id);
+              });
+            }
+
+            // 2. Also check the users table directly (for newer referrals)
+            const { data: directUsers } = await supabase
+              .from('users')
+              .select('id')
+              .eq('referrer_id', userId);
+
+            if (directUsers) {
+              directUsers.forEach(u => referredUserIds.add(u.id));
+            }
+
+            const totalReferrals = referredUserIds.size;
 
             const { data: earnTx } = await supabase.from('transactions')
               .select('amount, type')
               .eq('user_id', userId)
-              .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward']);
+              .in('type', ['affiliate_commission', 'affiliate_withdrawal', 'reward', 'affiliate_payout_request']);
             
             let totalEarned = 0;
             let availableBalance = 0;
             if (earnTx) {
                 earnTx.forEach(tx => {
                     const amt = Number(tx.amount || 0);
-                    if (tx.type === 'affiliate_withdrawal') {
-                        availableBalance -= Math.abs(amt);
-                    } else {
+                    if (tx.type === 'reward' || tx.type === 'affiliate_commission') {
                         totalEarned += amt;
+                        availableBalance += amt;
+                    } else {
+                        // affiliate_withdrawal and affiliate_payout_request are negative
                         availableBalance += amt;
                     }
                 });
