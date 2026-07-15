@@ -81,7 +81,7 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
     /\b(MT[A-Z0-9.]{8,22})\b/i,
     /\b(FT[A-Z0-9.]{8,22})\b/i,
     /\b(TXN[A-Z0-9.]{8,22})\b/i,
-    /(?:ref|reference|transaction\s*id|Ref\s*No|የማመሳከሪያ\s*ቁጥር|መለያ)[:\s#]+([A-Z0-9.]{8,22})/i,
+    /(?:ref|reference|transaction\s*id|transaction\s*number|Ref\s*No|የማመሳከሪያ\s*ቁጥር|መለያ)(?::|\s+is)?[:\s#]+([A-Z0-9.]{8,22})/i,
     /\b([A-Z0-9]{10,22})\b/
   ];
 
@@ -119,7 +119,7 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
       const cleanAmt = match[1].replace(/,/g, '');
       const parsed = parseFloat(cleanAmt);
       if (!isNaN(parsed) && parsed > 0) {
-        amount = Math.floor(parsed);
+        amount = parsed;
         break;
       }
     }
@@ -137,7 +137,7 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
         const cleanAmt = match[1].replace(/,/g, '');
         const parsed = parseFloat(cleanAmt);
         if (!isNaN(parsed) && parsed > 0) {
-          amount = Math.floor(parsed);
+          amount = parsed;
           break;
         }
       }

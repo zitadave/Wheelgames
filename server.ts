@@ -329,18 +329,27 @@ async function startServer() {
       let isVerifiedBySMS = false;
 
       if (txId && parsedAmount) {
-        // Check if we have received this transaction via SMS Webhook
-        const { data: smsRecord, error: smsError } = await supabase
-          .from('bank_messages')
-          .select('*')
-          .eq('ref_id', txId)
-          .eq('is_claimed', false)
-          .maybeSingle();
+        // Retry logic: Wait for the SMS gateway for up to 15 seconds (3 attempts x 5s)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          console.log(`🔍 [Deposit] Checking gateway for Ref: ${txId} (Attempt ${attempt + 1})...`);
+          
+          const { data: smsRecord } = await supabase
+            .from('bank_messages')
+            .select('*')
+            .eq('ref_id', txId)
+            .eq('is_claimed', false)
+            .maybeSingle();
 
-        if (smsRecord && Number(smsRecord.amount) === parsedAmount) {
-          isVerifiedBySMS = true;
-          // Mark as claimed
-          await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('ref_id', txId);
+          if (smsRecord && Number(smsRecord.amount) === parsedAmount) {
+            isVerifiedBySMS = true;
+            await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('ref_id', txId);
+            break;
+          }
+
+          if (attempt < 2) {
+            // Wait 5 seconds before next check
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
         }
       }
 

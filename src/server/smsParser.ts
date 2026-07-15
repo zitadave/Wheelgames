@@ -27,21 +27,21 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   // Example: "Transaction successful. You have received ETB 100.00 from 251911223344 ABEBE BALCHA. Your current balance is... Transaction ID: 0123456789"
   // Example 2: "Your transaction number is DGF4VDU0WI"
   if (from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr")) {
-    const amountMatch = text.match(/(?:received|credited|ETB)\s?([\d,]+\.?\d*)/i);
-    // Matches "Transaction ID: XXX" or "transaction number is XXX" or just "number XXX"
-    const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID)(?::|\s+is)?\s+([A-Z0-9]{8,15})/i);
+    const amountMatch = text.match(/(?:received|credited|ETB|deposited)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+    // Matches "Transaction ID: XXX" or "transaction number is XXX" or "number XXX" or "Ref: XXX"
+    const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID|number)(?::|\s+is)?\s+([A-Z0-9]{8,15})/i);
     
     if (amountMatch && refMatch) {
       return {
         amount: parseFloat(amountMatch[1].replace(/,/g, "")),
-        transactionId: refMatch[1],
+        transactionId: refMatch[1].trim().toUpperCase(),
         bankName: "Telebirr"
       };
     }
   }
 
   // Generic/Fallback
-  const amountMatch = text.match(/ETB\s?([\d,]+\.?\d*)/i);
+  const amountMatch = text.match(/(?:ETB|Birr|ብር)\s*([\d,]+\.?\d*)/i);
   const refMatch = text.match(/(?:Ref|ID|Transaction|number)(?::|\s+is)?\s+([A-Z0-9]{8,15})/i);
   if (amountMatch && refMatch) {
     return {
