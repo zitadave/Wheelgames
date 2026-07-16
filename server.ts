@@ -85,34 +85,35 @@ async function startServer() {
     }
 
     const { from, text } = req.body;
-    
-    // Handle App Test Payloads
-    if (text === "%text%" || from === "%from%") {
-      console.log("🛠️ [SMS Webhook] Test request received and validated.");
-      return res.json({ success: true, message: "Test passed" });
-    }
+    const queryFrom = req.query.from as string;
+    const queryText = req.query.text as string;
 
-    if (!text) {
+    const sender = (from || queryFrom || "Unknown").toString();
+    const smsText = (text || queryText || "").toString();
+
+    if (!smsText) {
+      console.warn("⚠️ [SMS Webhook] Received empty SMS text.");
       return res.status(400).json({ error: "Missing SMS text" });
     }
 
-    const sender = from || "Unknown";
-    console.log(`📩 [SMS Received] From: ${sender} | Text: ${text}`);
+    console.log(`📩 [SMS Received] From: ${sender} | Text: ${smsText.substring(0, 100)}...`);
 
     try {
-      const parsed = parseBankSMS(text, sender);
+      const parsed = parseBankSMS(smsText, sender);
       if (parsed) {
         const { amount, transactionId, bankName } = parsed;
-        console.log(`✅ [SMS Parsed] Ref: ${transactionId} | Amount: ${amount} ETB | Bank: ${bankName}`);
+        const cleanTxId = transactionId.trim().toUpperCase();
+        console.log(`✅ [SMS Parsed] Ref: ${cleanTxId} | Amount: ${amount} ETB | Bank: ${bankName}`);
         
         // Save to DB (Table: bank_messages)
-        // Note: We ignore duplicate Ref IDs (unique constraint) to handle retries from the app
         const { error } = await supabase.from('bank_messages').insert({
-          ref_id: transactionId,
+          from_number: sender,
+          raw_text: smsText,
           amount: amount,
+          ref_id: cleanTxId,
           bank_name: bankName,
-          sender: sender,
-          raw_text: text
+          is_claimed: false,
+          received_at: new Date().toISOString()
         });
 
         if (error && error.code !== '23505') { 
@@ -334,25 +335,33 @@ async function startServer() {
       let isVerifiedBySMS = false;
 
       if (txId && parsedAmount) {
-        // Retry logic: Wait for the SMS gateway for up to 30 seconds (6 attempts x 5s)
-        for (let attempt = 0; attempt < 6; attempt++) {
-          console.log(`🔍 [Deposit] Checking gateway for Ref: ${txId} (Attempt ${attempt + 1}/6)...`);
+        const cleanUserTxId = txId.trim().toUpperCase();
+        // Retry logic: Wait for the SMS gateway for up to 60 seconds (12 attempts x 5s)
+        for (let attempt = 0; attempt < 12; attempt++) {
+          console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/12)...`);
           
           const { data: smsRecord } = await supabase
             .from('bank_messages')
             .select('*')
-            .eq('ref_id', txId)
+            .ilike('ref_id', cleanUserTxId)
             .eq('is_claimed', false)
             .maybeSingle();
 
-          if (smsRecord && Number(smsRecord.amount) === parsedAmount) {
-            isVerifiedBySMS = true;
-            await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('ref_id', txId);
-            console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
-            break;
+          if (smsRecord) {
+            const smsAmount = Number(smsRecord.amount);
+            console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, User Amount: ${parsedAmount}`);
+            
+            if (Math.abs(smsAmount - parsedAmount) < 0.01) {
+              isVerifiedBySMS = true;
+              await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('id', smsRecord.id);
+              console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
+              break;
+            } else {
+              console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${parsedAmount}, got ${smsAmount}`);
+            }
           }
 
-          if (attempt < 5) {
+          if (attempt < 11) {
             // Wait 5 seconds before next check
             await new Promise(resolve => setTimeout(resolve, 5000));
           }

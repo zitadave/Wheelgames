@@ -10,10 +10,10 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   const lowercaseText = text.toLowerCase();
   
   // CBE Parsing logic
-  // Example: "Dear Customer, your A/C *7890 has been credited with ETB 500.00 by ABEBE BALCHA. Ref: FT2312345678. 15-Jul-26 10:30 AM"
-  if (from.includes("CBE") || lowercaseText.includes("cbe")) {
-    const amountMatch = text.match(/(?:credited|sent|received|ETB|ብር)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
-    const refMatch = text.match(/(?:Ref|ID|Transaction)(?::|\s+is)?\s+([A-Z0-9]{8,20})/i);
+  const isCBE = from === "889" || from.includes("CBE") || lowercaseText.includes("cbe") || lowercaseText.includes("ንግድ ባንክ");
+  if (isCBE) {
+    const amountMatch = text.match(/(?:credited|sent|received|ETB|ብር|amount|amt|deposited)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+    const refMatch = text.match(/(?:Ref|ID|Transaction|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9]{8,22})/i);
     if (amountMatch && refMatch) {
       return {
         amount: parseFloat(amountMatch[1].replace(/,/g, "")),
@@ -24,12 +24,11 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   }
 
   // Telebirr Parsing logic
-  // Example: "Transaction successful. You have received ETB 100.00 from 251911223344 ABEBE BALCHA. Your current balance is... Transaction ID: 0123456789"
-  // Example 2: "Your transaction number is DGG1VDU0WI"
-  if (from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr")) {
-    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
-    // Matches "Transaction ID: XXX" or "transaction number is XXX" or "number XXX" or "Ref: XXX"
-    const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID|number)(?::|\s+is)?\s+([A-Z0-9]{8,20})/i);
+  const isTelebirr = from === "127" || from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr") || lowercaseText.includes("ቴሌብር");
+  if (isTelebirr) {
+    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent|ብር|amount|amt)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+    // Matches English and common Amharic "Reference Number" labels
+    const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID|number|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9]{8,22})/i);
     
     if (amountMatch && refMatch) {
       return {
@@ -41,12 +40,12 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   }
 
   // Generic/Fallback
-  const amountMatch = text.match(/(?:ETB|Birr|ብር|amount|amt)\s*([\d,]+\.?\d*)/i);
-  const refMatch = text.match(/(?:Ref|ID|Transaction|number)(?::|\s+is)?\s+([A-Z0-9]{8,20})/i);
+  const amountMatch = text.match(/(?:ETB|Birr|ብር|amount|amt|sent|received|transferred|deposited)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+  const refMatch = text.match(/(?:Ref|ID|Transaction|number|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9]{8,22})/i);
   if (amountMatch && refMatch) {
     return {
       amount: parseFloat(amountMatch[1].replace(/,/g, "")),
-      transactionId: refMatch[1],
+      transactionId: refMatch[1].trim().toUpperCase(),
       bankName: from || "Unknown"
     };
   }
