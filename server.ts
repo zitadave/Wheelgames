@@ -30,6 +30,7 @@ async function startServer() {
       req.rawBody = buf.toString();
     }
   }));
+  app.use(express.urlencoded({ extended: true }));
   const PORT = 3000;
   
   const httpServer = createServer(app);
@@ -84,19 +85,19 @@ async function startServer() {
       console.warn("⚠️ [SMS Webhook] Secret is set but no x-signature header found.");
     }
 
-    const { from, text } = req.body;
-    const queryFrom = req.query.from as string;
-    const queryText = req.query.text as string;
+    const { from, text, sender: bodySender, message: bodyMessage } = req.body;
+    const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query;
 
-    const sender = (from || queryFrom || "Unknown").toString();
-    const smsText = (text || queryText || "").toString();
+    const sender = (from || bodySender || queryFrom || qSender || "Unknown").toString();
+    const smsText = (text || bodyMessage || queryText || qMessage || "").toString();
 
     if (!smsText) {
-      console.warn("⚠️ [SMS Webhook] Received empty SMS text.");
+      console.warn("⚠️ [SMS Webhook] Received empty SMS text. Body:", JSON.stringify(req.body), "Query:", JSON.stringify(req.query));
       return res.status(400).json({ error: "Missing SMS text" });
     }
 
     console.log(`📩 [SMS Received] From: ${sender} | Text: ${smsText.substring(0, 100)}...`);
+    console.log(`🔍 [SMS Debug] Full Body: ${JSON.stringify(req.body)} | Query: ${JSON.stringify(req.query)}`);
 
     try {
       const parsed = parseBankSMS(smsText, sender);
@@ -331,6 +332,7 @@ async function startServer() {
       // 2. Try Automatic Parsing & Verification
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
+      console.log(`🔍 [Deposit] Parsed Receipt - Ref: ${txId}, Amount: ${parsedAmount}`);
 
       let isVerifiedBySMS = false;
 
