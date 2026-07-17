@@ -146,16 +146,26 @@ async function startServer() {
       phone,
       raw_message,
       body,
-      msg
+      msg,
+      sender_name,
+      senderName
     } = req.body || {};
     const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query || {};
 
     const sender = (from || bodySender || sender_phone || phone || queryFrom || qSender || "Unknown").toString();
     const smsText = (text || bodyMessage || raw_message || body || msg || queryText || qMessage || "").toString();
 
-    if (!smsText) {
-      console.warn("⚠️ [SMS Webhook] Received empty SMS text. Body:", JSON.stringify(req.body), "Query:", JSON.stringify(req.query));
-      return res.status(400).json({ error: "Missing SMS text" });
+    // Prioritize pre-parsed data from JSON if present
+    let finalTxId = (req.body?.transaction_id || req.body?.transactionId || "").toString().trim().toUpperCase();
+    let finalAmount = Number(req.body?.amount);
+    let finalBank = (req.body?.bank || req.body?.bank_name || "").toString().trim();
+    let finalSenderName = (sender_name || senderName || "").toString().trim();
+
+    let isFullyParsed = !!(finalTxId && !isNaN(finalAmount) && finalAmount > 0);
+
+    if (!smsText && !isFullyParsed) {
+      console.warn("⚠️ [SMS Webhook] Received empty SMS text and no parsed transaction. Body:", JSON.stringify(req.body), "Query:", JSON.stringify(req.query));
+      return res.status(400).json({ error: "Missing SMS text or pre-parsed transaction details" });
     }
 
     console.log(`📩 [SMS Received] From: ${sender} | Text: ${smsText.substring(0, 100)}...`);
@@ -165,31 +175,48 @@ async function startServer() {
     console.log(`🔍 [SMS Debug] Normalized Sender: ${normalizedSender} | Raw Text: ${smsText.substring(0, 50)}...`);
 
     try {
-      const parsed = parseBankSMS(smsText, normalizedSender);
-      if (parsed) {
-        const { amount, transactionId, bankName } = parsed;
-        const cleanTxId = transactionId.trim().toUpperCase();
-        console.log(`✅ [SMS Parsed] Ref: ${cleanTxId} | Amount: ${amount} ETB | Bank: ${bankName}`);
+      if (!isFullyParsed) {
+        // Fallback to parsing raw text using regex
+        const parsed = parseBankSMS(smsText, normalizedSender);
+        if (parsed) {
+          finalTxId = parsed.transactionId.trim().toUpperCase();
+          finalAmount = parsed.amount;
+          finalBank = parsed.bankName;
+          isFullyParsed = true;
+        }
+      }
+
+      if (isFullyParsed && finalTxId) {
+        console.log(`✅ [SMS Webhook Processing] Ref: ${finalTxId} | Amount: ${finalAmount} ETB | Bank: ${finalBank} | Sender Name: ${finalSenderName || 'Not Provided'}`);
         
+        // Extract sender name from raw text if not already provided
+        if (!finalSenderName && smsText) {
+          const parsedName = extractSenderName(smsText);
+          if (parsedName) {
+            finalSenderName = parsedName;
+          }
+        }
+
         // Save to DB (Table: deposit_pool)
         const { error } = await supabase.from('deposit_pool').insert({
-          transaction_id: cleanTxId,
-          amount: amount,
+          transaction_id: finalTxId,
+          amount: finalAmount,
+          sender_name: finalSenderName || null,
           sender_phone: sender,
-          raw_message: smsText,
+          raw_message: smsText || `Pre-parsed transaction from gateway. Bank: ${finalBank}`,
           status: 'unused',
           received_at: new Date().toISOString()
         });
 
         if (error && error.code !== '23505') { 
-           console.error(`❌ [SMS Webhook] DB Error for ${cleanTxId}:`, error.message, error.details);
+           console.error(`❌ [SMS Webhook] DB Error for ${finalTxId}:`, error.message, error.details);
         } else if (error && error.code === '23505') {
-           console.log(`ℹ️ [SMS Webhook] Transaction ${cleanTxId} already exists in DB.`);
+           console.log(`ℹ️ [SMS Webhook] Transaction ${finalTxId} already exists in DB.`);
         } else {
-           console.log(`💾 [SMS Stored] Transaction ${cleanTxId} ready for verification.`);
+           console.log(`💾 [SMS Stored] Transaction ${finalTxId} ready for verification.`);
         }
       } else {
-        console.log(`ℹ️ [SMS Webhook] No matching bank pattern found for sender: ${normalizedSender}. Raw Text: "${smsText.substring(0, 50)}..."`);
+        console.log(`ℹ️ [SMS Webhook] No matching bank pattern found or invalid data. Sender: ${normalizedSender}. Raw Text: "${smsText.substring(0, 50)}..."`);
       }
       
       res.json({ success: true });
@@ -489,8 +516,8 @@ async function startServer() {
                 console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
                 
                 if (Math.abs(smsAmount - targetAmount) < 0.01) {
-                  // Extract and verify sender/depositor name
-                  const realDepositorName = extractSenderName(smsRecord.raw_message);
+                  // Use database-stored sender_name or fallback to extracting from raw text
+                  const realDepositorName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
                   const isDepositorVerified = verifyNameMatch(realDepositorName, fullName, username);
                   
                   console.log(`🔍 [Deposit] Name Verification Result - Real Depositor: "${realDepositorName}", Telegram Name: "${fullName}", Username: "${username}", Matched: ${isDepositorVerified}`);
