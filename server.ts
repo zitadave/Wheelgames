@@ -340,15 +340,16 @@ async function startServer() {
       // 2. Try Automatic Parsing & Verification
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
-      console.log(`🔍 [Deposit] Parsed Receipt - Ref: ${txId}, Amount: ${parsedAmount}`);
+      const targetAmount = parsedAmount || Number(amount);
+      console.log(`🔍 [Deposit] Parsed Receipt - Ref: ${txId}, Parsed Amount: ${parsedAmount}, Target Amount: ${targetAmount}`);
 
       let isVerifiedBySMS = false;
 
-      if (txId && parsedAmount) {
+      if (txId && targetAmount) {
         const cleanUserTxId = txId.trim().toUpperCase();
-        // Retry logic: Wait for the SMS gateway for up to 60 seconds (12 attempts x 5s)
-        for (let attempt = 0; attempt < 12; attempt++) {
-          console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/12)...`);
+        // Retry logic: Wait for the SMS gateway for up to 4 seconds (3 attempts x 2s)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/3)...`);
           
           const { data: smsRecord } = await supabase
             .from('deposit_pool')
@@ -359,27 +360,27 @@ async function startServer() {
 
           if (smsRecord) {
             const smsAmount = Number(smsRecord.amount);
-            console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, User Amount: ${parsedAmount}`);
+            console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
             
-            if (Math.abs(smsAmount - parsedAmount) < 0.01) {
+            if (Math.abs(smsAmount - targetAmount) < 0.01) {
               isVerifiedBySMS = true;
               await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
               console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
               break;
             } else {
-              console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${parsedAmount}, got ${smsAmount}`);
+              console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
             }
           }
 
-          if (attempt < 11) {
-            // Wait 5 seconds before next check
-            await new Promise(resolve => setTimeout(resolve, 5000));
+          if (attempt < 2) {
+            // Wait 2 seconds before next check
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
         }
       }
 
       // 3. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
-      if (isVerifiedBySMS && txId && parsedAmount && parsedAmount === Number(amount)) {
+      if (isVerifiedBySMS && txId && targetAmount && Math.abs(targetAmount - Number(amount)) < 0.01) {
         // Double-check duplicates in DB
         const { data: duplicateTxs, error: dupError } = await supabase
           .from('transactions')
@@ -394,7 +395,7 @@ async function startServer() {
         // Auto approve!
         const result = await txManager.modifyBalance(
           userId.toString(),
-          parsedAmount,
+          targetAmount,
           'reward',
           `Deposit Auto-Approved (Ref: ${txId})`
         );
@@ -405,7 +406,7 @@ async function startServer() {
           const escapedUsername = escapeHTML(username);
           
           const gatewayBadge = " [Gateway ✅]";
-          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${parsedAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
 
           // Notify admins
           const bot = getBotInstance();
@@ -414,7 +415,7 @@ async function startServer() {
             const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
               `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
               `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
-              `💰 <b>Amount:</b> <b>${parsedAmount.toLocaleString()} ETB</b>\n` +
+              `💰 <b>Amount:</b> <b>${targetAmount.toLocaleString()} ETB</b>\n` +
               `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
               `🧾 <b>Ref ID:</b> <code>${txId}</code>\n` +
               `${verificationBadge}\n\n` +
@@ -436,7 +437,7 @@ async function startServer() {
             success: true,
             autoApproved: true,
             newBalance: result.newBalance,
-            message: `🎉 Automatic verification successful! ${parsedAmount} ETB has been instantly credited to your wallet.`
+            message: `🎉 Automatic verification successful! ${targetAmount} ETB has been instantly credited to your wallet.`
           });
         }
       }

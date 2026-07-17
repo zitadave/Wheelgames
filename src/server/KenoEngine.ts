@@ -56,6 +56,55 @@ class KenoEngine {
       bets: []
     };
     this.startLoop();
+    this.loadHistoryFromDB().catch(e => console.error("Error loading Keno history:", e));
+  }
+
+  private async loadHistoryFromDB() {
+    try {
+      if (supabase) {
+        // Ensure system_keno user exists in the users table to prevent FK constraint error
+        await supabase.from("users").upsert({
+          id: "system_keno",
+          username: "system_keno",
+          balance: 0
+        });
+
+        const { data, error } = await supabase
+          .from("game_logs")
+          .select("*")
+          .eq("user_id", "system_keno")
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        if (data && data.length > 0) {
+          const loadedHistory = data.map(log => {
+            let parsedRoundId = '';
+            let balls: number[] = [];
+            const parts = log.game_type.split(' | ');
+            for (const part of parts) {
+              const trimmed = part.trim();
+              if (trimmed.startsWith('R#')) {
+                parsedRoundId = trimmed.substring(2);
+              } else if (trimmed.startsWith('Draw:')) {
+                balls = trimmed.substring(5).split(',').map(Number);
+              }
+            }
+            return {
+              id: parsedRoundId,
+              time: new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              balls
+            };
+          }).filter(h => h.id && h.balls.length > 0);
+
+          const existingIds = new Set(this.state.history.map(h => h.id));
+          const toAdd = loadedHistory.filter(h => !existingIds.has(h.id));
+          this.state.history = [...this.state.history, ...toAdd].slice(0, 100);
+          this.broadcast();
+        }
+      }
+    } catch (e) {
+      console.error("Error loading Keno history from DB:", e);
+    }
   }
 
   private startLoop() {
@@ -192,8 +241,20 @@ class KenoEngine {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         balls: [...drawNums]
       });
-      if (this.state.history.length > 20) {
+      if (this.state.history.length > 100) {
         this.state.history.pop();
+      }
+
+      // Save round to DB for persistence
+      if (supabase) {
+        supabase.from("game_logs").insert({
+          user_id: "system_keno",
+          game_type: `KenoRound | R#${roundId} | Draw:${drawNums.join(',')}`,
+          result: `Draw`,
+          win_amount: 0
+        }).then(({ error }) => {
+          if (error) console.error("Error saving Keno round to DB:", error);
+        });
       }
     } catch (e) {
       console.error("Critical error in resolveBets:", e);

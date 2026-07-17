@@ -209,6 +209,28 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
       frequency: 0
     }));
   });
+
+  // Dynamically compute frequency stats whenever serverHistory changes (source of truth from real-time database history)
+  useEffect(() => {
+    if (serverHistory && serverHistory.length > 0) {
+      const counts = Array(81).fill(0);
+      for (const round of serverHistory) {
+        if (round.balls) {
+          for (const num of round.balls) {
+            if (num >= 1 && num <= 80) {
+              counts[num]++;
+            }
+          }
+        }
+      }
+      setNumberStats(
+        Array.from({ length: 80 }, (_, i) => ({
+          number: i + 1,
+          frequency: counts[i + 1]
+        }))
+      );
+    }
+  }, [serverHistory]);
   
   // Dynamically compute Hot/Cold numbers based on real draw statistics, falling back to empty if no history
   const hotNumbers = [...numberStats]
@@ -218,7 +240,6 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
     .map(item => item.number);
 
   const coldNumbers = [...numberStats]
-    .filter(item => item.frequency > 0)
     .sort((a, b) => a.frequency - b.frequency)
     .slice(0, 5)
     .map(item => item.number);

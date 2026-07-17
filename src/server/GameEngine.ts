@@ -182,7 +182,7 @@ class Room {
       botSide = 'odd';
       const botAmount = poolEven;
       const botUserId = "bot_house";
-      const botUsername = "ጎደል ሮቦት (Bot)";
+      const botUsername = "dave";
       this.state.players[botUserId] = {
         userId: botUserId,
         username: botUsername,
@@ -192,14 +192,14 @@ class Room {
       };
       this.state.pools.odd = botAmount;
       this.state.capacity.odd += 1;
-      this.state.feed.unshift(`🤖 ${botUsername} ${botAmount.toLocaleString()} ETB ጎደለ ላይ ተጫውቷል!`);
+      this.state.feed.unshift(`${botUsername} ${botAmount.toLocaleString()} ETB ጎደለ ላይ ተጫውቷል!`);
       botBetPlaced = true;
     } else if (poolOdd > 0 && poolEven === 0) {
       // Player on 'odd', bot places bet on 'even'
       botSide = 'even';
       const botAmount = poolOdd;
       const botUserId = "bot_house";
-      const botUsername = "ሞላ ሮቦት (Bot)";
+      const botUsername = "dave";
       this.state.players[botUserId] = {
         userId: botUserId,
         username: botUsername,
@@ -209,7 +209,7 @@ class Room {
       };
       this.state.pools.even = botAmount;
       this.state.capacity.even += 1;
-      this.state.feed.unshift(`🤖 ${botUsername} ${botAmount.toLocaleString()} ETB ሞላ ላይ ተጫውቷል!`);
+      this.state.feed.unshift(`${botUsername} ${botAmount.toLocaleString()} ETB ሞላ ላይ ተጫውቷል!`);
       botBetPlaced = true;
     }
 
