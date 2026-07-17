@@ -7,6 +7,8 @@ interface LeaderboardProps {
     totalPlatformVolume: number;
     platformFees: number;
     promoterJackpot: number;
+    isJackpotAnnounced?: boolean;
+    announcedJackpotAmount?: number;
     leaderboard: any[];
   } | null;
   isLoading: boolean;
@@ -38,6 +40,9 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
 
   const startOfWeekDate = stats ? new Date(stats.startOfWeek) : new Date();
   const dateStr = startOfWeekDate.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  
+  const isAnnounced = stats?.isJackpotAnnounced;
+  const jackpotPool = isAnnounced ? (stats?.announcedJackpotAmount || 0) : 0;
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
@@ -49,7 +54,7 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
           <span>Weekly Leaderboard</span>
         </h2>
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Rankings updated in real-time based on your referred playing volume
+          Rankings updated based on your referred new players this week
         </p>
       </div>
 
@@ -75,14 +80,19 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
         <div className="space-y-1">
           <span className="text-[10px] font-bold text-indigo-200/80">CURRENT JACKPOT POOL</span>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-3xl font-black font-mono tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-200 to-yellow-400">
-              {stats ? stats.promoterJackpot.toLocaleString() : "0"}
-            </span>
-            <span className="text-sm font-black text-yellow-300">ETB</span>
+            {isAnnounced ? (
+              <>
+                <span className="text-3xl font-black font-mono tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-200 to-yellow-400">
+                  {jackpotPool.toLocaleString()}
+                </span>
+                <span className="text-sm font-black text-yellow-300">ETB</span>
+              </>
+            ) : (
+              <span className="text-xl font-black tracking-tight text-indigo-200">
+                🤫 Suspense (To be announced)
+              </span>
+            )}
           </div>
-          <p className="text-[10px] text-indigo-200/75 leading-relaxed">
-            Funded by a reward of <b>5% of 50%</b> of the platform's overall weekly fee retention with no guaranteed minimum. Only playing volume from <b>ዕድል (Jackpot)</b> and <b>ፈጣን (1-20 room)</b> contributes.
-          </p>
         </div>
 
         {/* Prize Split Tiers */}
@@ -90,21 +100,21 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
           <div className="text-center p-2 rounded-2xl bg-yellow-500/10 border border-yellow-500/20">
             <span className="block text-[9px] font-black text-yellow-400 uppercase">🥇 1st Place</span>
             <span className="text-xs font-black font-mono text-white mt-0.5 block">
-              {stats ? Math.floor(stats.promoterJackpot * 0.50).toLocaleString() : "0"} ETB
+              {isAnnounced ? Math.floor(jackpotPool * 0.50).toLocaleString() : "???"} {isAnnounced && "ETB"}
             </span>
             <span className="text-[8px] font-semibold text-yellow-400/80">50% Share</span>
           </div>
           <div className="text-center p-2 rounded-2xl bg-slate-300/10 border border-slate-300/20">
             <span className="block text-[9px] font-black text-slate-300 uppercase">🥈 2nd Place</span>
             <span className="text-xs font-black font-mono text-white mt-0.5 block">
-              {stats ? Math.floor(stats.promoterJackpot * 0.30).toLocaleString() : "0"} ETB
+              {isAnnounced ? Math.floor(jackpotPool * 0.30).toLocaleString() : "???"} {isAnnounced && "ETB"}
             </span>
             <span className="text-[8px] font-semibold text-slate-300/80">30% Share</span>
           </div>
           <div className="text-center p-2 rounded-2xl bg-amber-600/10 border border-amber-600/20">
             <span className="block text-[9px] font-black text-amber-500 uppercase">🥉 3rd Place</span>
             <span className="text-xs font-black font-mono text-white mt-0.5 block">
-              {stats ? Math.floor(stats.promoterJackpot * 0.20).toLocaleString() : "0"} ETB
+              {isAnnounced ? Math.floor(jackpotPool * 0.20).toLocaleString() : "???"} {isAnnounced && "ETB"}
             </span>
             <span className="text-[8px] font-semibold text-amber-500/80">20% Share</span>
           </div>
@@ -114,7 +124,7 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
       {/* Week and Platform Volume metadata */}
       <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 font-mono font-bold">
         <span>WEEK COMMENCING: {dateStr} (UTC)</span>
-        <span>REFERRED VOL: {stats ? stats.totalPlatformVolume.toLocaleString() : "0"} ETB</span>
+        <span>WEEKLY NEW REFS: {stats ? stats.totalPlatformVolume.toLocaleString() : "0"}</span>
       </div>
 
       {/* Leaderboard Entries List */}
@@ -196,9 +206,9 @@ export const Leaderboard = React.memo(function Leaderboard({ stats, isLoading, o
                   {/* Volume score */}
                   <div className="text-right">
                     <span className="text-xs font-black font-mono text-gray-900 dark:text-white">
-                      {entry.volume.toLocaleString()}
+                      {entry.referral_count || entry.volume}
                     </span>
-                    <span className="text-[8px] font-bold text-gray-400 block tracking-tight">ETB VOL</span>
+                    <span className="text-[8px] font-bold text-gray-400 block tracking-tight">NEW REFS</span>
                   </div>
                 </div>
               );

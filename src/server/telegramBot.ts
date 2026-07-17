@@ -9,6 +9,7 @@ import { startAnnouncementScheduler, loadAnnouncements, saveAnnouncements, Annou
 import { txManager } from "./transactionManager.js";
 import * as fs from "fs";
 import * as path from "path";
+import ExcelJS from 'exceljs';
 import { handleSupportChat } from "./aiSupport.js";
 import { handleUsersReport, handleFinancialReport } from "./reports.js";
 import PDFDocument from "pdfkit";
@@ -315,6 +316,7 @@ interface PromptsConfig {
     [cmd: string]: CustomCommand;
   };
 
+  weekly_jackpot_amount?: number;
   banks: {
     [bankId: string]: BankConfig;
   };
@@ -376,7 +378,7 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
     ]
   ],
   custom_commands: {},
-
+  weekly_jackpot_amount: 1000,
   banks: {
     "Telebirr": {
       name: "📱 Telebirr",
@@ -1967,15 +1969,18 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         const { data: txs } = await supabase.from('transactions').select('amount').in('type', ['affiliate_withdrawal', 'reward']).ilike('description', '%Referral Commission%');
         const totalHousePaidOut = txs ? txs.reduce((sum, t) => sum + Number(t.amount || 0), 0) : 0;
         
-        const { data: referrals } = await supabase.from('transactions').select('id').eq('type', 'referral_link');
-        const totalHouseReferrals = referrals ? referrals.length : 0;
+        // Fetch current week jackpot stats
+        const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
+        const startOfWeekISO = stats.startOfWeek;
+        
+        // Fetch all time referrals (count of referral_link transactions)
+        const { count: totalHouseReferrals } = await supabase
+          .from('transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('type', 'referral_link');
         
         // Fetch pending requests
         const { data: pending } = await supabase.from('transactions').select('id, user_id, amount, description').eq('type', 'affiliate_payout_request');
-        
-        // Fetch current week jackpot stats
-        const stats = await fetchLeaderboardData();
-        const startOfWeekISO = stats.startOfWeek;
         
         // Fetch last announcement for this week
         const { data: annList } = await supabase
@@ -2012,10 +2017,11 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         
         let text = `🤝 <b>House Affiliate Report</b>\n\n` +
           `Current Commission Rate: <b>1% of Bet Amount</b>\n\n` +
-          `👥 <b>Total House Referrals:</b> ${totalHouseReferrals}\n` +
+          `👥 <b>Weekly New Referrals:</b> <b>${stats.totalPlatformVolume}</b>\n` +
+          `👥 <b>Total All-Time Referrals:</b> <b>${totalHouseReferrals || 0}</b>\n` +
           `💵 <b>Total Payouts to Influencers:</b> ${totalHousePaidOut.toLocaleString()} ETB\n\n` +
           `🏆 <b>Current Promoter Jackpot Pool:</b> <b>${stats.promoterJackpot.toLocaleString()} ETB</b>\n` +
-          `<i>(5% of 50% platform weekly overall retained fees)</i>\n\n` +
+          `<i>(Manually set by Admin)</i>\n\n` +
           announcementStatusText;
           
         const inline_keyboard: any[][] = [];
@@ -2031,6 +2037,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             text += `✅ <i>No pending payout requests.</i>\n\n`;
         }
         
+        inline_keyboard.push([{ text: "📊 Referrers Referee Report (Excel)", callback_data: "affiliate_referrers_report" }]);
+        inline_keyboard.push([{ text: "💰 Set Weekly Jackpot Amount", callback_data: "affiliate_set_jackpot" }]);
         inline_keyboard.push([{ text: "📢 Announce Jackpot Pool", callback_data: "affiliate_payout_announce" }]);
         inline_keyboard.push([{ text: isReadyToPayout ? "🎁 Distribute Promoter Jackpot (Unlocked ✅)" : "🎁 Distribute Promoter Jackpot (Locked 🔒)", callback_data: "affiliate_payout_weekly" }]);
         inline_keyboard.push([{ text: "🔙 Back", callback_data: "control_panel_back" }]);
@@ -2950,7 +2958,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         });
         return;
       }
-      if (cmdName === "manage_affiliate") {
+      if (cmdName === "manage_affiliate" || (cmdName === "manage" && (commandParts[1] === "affiliate" || commandParts[1] === "affiliates"))) {
         if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
         await renderManageAffiliate(chatId);
         return;
@@ -3078,17 +3086,22 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       if (cmdName === "promoter_leaderboard") {
         await checkRegisteredAndHandle(msg, async () => {
           try {
-            const stats = await fetchLeaderboardData();
+            const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
             const dateStr = new Date(stats.startOfWeek).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
-            let text = `🏆 <b>Weekly Promoter Leaderboard</b>\n\n📅 <b>Week of:</b> <code>${dateStr}</code> (Sunday UTC)\n💰 <b>Weekly Promoter Jackpot:</b> <b>${stats.promoterJackpot.toLocaleString()} ETB</b>\n\n👥 <b>Top 10 Active Promoters:</b>\n`;
+            
+            const jackpotDisplay = stats.isJackpotAnnounced 
+              ? `<b>${stats.announcedJackpotAmount.toLocaleString()} ETB</b>`
+              : `<i>🤫 Suspense (To be announced)</i>`;
+
+            let text = `🏆 <b>Weekly Promoter Leaderboard</b>\n\n📅 <b>Week of:</b> <code>${dateStr}</code> (Sunday UTC)\n💰 <b>Weekly Promoter Jackpot:</b> ${jackpotDisplay}\n\n👥 <b>Top 10 Active Promoters:</b>\n`;
             if (stats.leaderboard && stats.leaderboard.length > 0) {
                 stats.leaderboard.forEach((entry, idx) => {
                     const name = entry.first_name || entry.username || `User ${entry.referrer_id.slice(0, 6)}`;
                     const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "•";
-                    text += `${medal} <b>${name}</b> | Vol: <code>${entry.volume.toLocaleString()} ETB</code>\n`;
+                    text += `${medal} <b>${name}</b> | New Referrals: <b>${entry.referral_count || entry.volume}</b>\n`;
                 });
             } else {
-                text += `<i>No referred playing volume yet for this week.</i>\n`;
+                text += `<i>No new referrals found for this week yet.</i>\n`;
             }
             text += `\n📢 <i>Share your referral link using /referral to invite friends!</i>`;
             await bot.sendMessage(chatId, text, { parse_mode: "HTML" });
@@ -4100,6 +4113,25 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     }
 
     const state = userStates.get(userId) || { step: 'idle' };
+
+    // 0. ADMIN: SET JACKPOT AMOUNT
+    if (state.step === 'waiting_for_jackpot_amount') {
+      if (!numUserId || !isAnyAdmin(userId)) return;
+      const cleanText = text.replace(/,/g, '');
+      const amount = Math.floor(Math.abs(parseFloat(cleanText)));
+      if (isNaN(amount) || amount < 0) {
+        return bot.sendMessage(chatId, "❌ <b>Invalid Amount!</b>\nPlease enter a valid number, or /cancel.", { parse_mode: "HTML" });
+      }
+
+      promptsConfig.weekly_jackpot_amount = amount;
+      savePromptsConfig(promptsConfig);
+      
+      userStates.set(userId, { step: 'idle' });
+      bot.sendMessage(chatId, `✅ <b>Weekly Jackpot Amount Set!</b>\n\n` + 
+        `The current pool is now officially <b>${amount.toLocaleString()} ETB</b>.\n` + 
+        `You can now return to the Affiliate panel and Announce it.`, { parse_mode: "HTML" });
+      return;
+    }
 
     // 1. DEPOSIT: AMOUNT ENTRY
     if (state.step === 'deposit_amount') {
@@ -6295,6 +6327,134 @@ const withdrawalCooldowns = new Map<string, number>();
       return;
     }
 
+    if (data === "affiliate_referrers_report") {
+      if (!isAnyAdmin(userId)) {
+        try { await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true }); } catch (e) {}
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      
+      try {
+        logBot(`[Affiliate Report] Started by admin ${userId}`);
+        const { data: users, error } = await supabase.from('users').select('id, username, first_name, referrer_id');
+        if (error) {
+          logBot(`[Affiliate Report] Supabase Error: ${error.message}`);
+          throw error;
+        }
+        
+        logBot(`[Affiliate Report] Found ${users?.length || 0} users to analyze.`);
+        
+        const referrerCounts = new Map<string, number>();
+        const userDetails = new Map<string, any>();
+        const referredUserIds = new Set<string>(); // To prevent double counting
+        
+        users?.forEach(u => {
+          userDetails.set(u.id, u);
+          if (u.referrer_id) {
+            referrerCounts.set(u.referrer_id, (referrerCounts.get(u.referrer_id) || 0) + 1);
+            referredUserIds.add(u.id);
+          }
+        });
+
+        // 2. Fetch legacy referrals from transactions table
+        try {
+          const { data: legacyRefs } = await supabase.from('transactions').select('user_id, description').eq('type', 'referral_link');
+          if (legacyRefs && legacyRefs.length > 0) {
+            logBot(`[Affiliate Report] Found ${legacyRefs.length} legacy referral transactions.`);
+            legacyRefs.forEach(ref => {
+              if (!referredUserIds.has(ref.user_id)) {
+                // Extract referrer ID from description: "Referred by 12345678"
+                const match = ref.description.match(/Referred by (\d+)/);
+                const refId = match ? match[1] : ref.description.replace('Referred by ', '').trim();
+                
+                if (refId && refId !== ref.user_id) {
+                  referrerCounts.set(refId, (referrerCounts.get(refId) || 0) + 1);
+                  referredUserIds.add(ref.user_id);
+                }
+              }
+            });
+          }
+        } catch (le) {
+          logBot(`[Affiliate Report] Warning: Failed to fetch legacy referrals: ${le.message}`);
+        }
+        
+        const reportRows: any[] = [];
+        referrerCounts.forEach((count, refId) => {
+          const u = userDetails.get(refId);
+          reportRows.push({
+            ReferrerID: refId,
+            Username: u?.username ? `@${u.username}` : 'N/A',
+            FirstName: u?.first_name || 'N/A',
+            TotalReferred: count
+          });
+        });
+        
+        reportRows.sort((a, b) => b.TotalReferred - a.TotalReferred);
+        logBot(`[Affiliate Report] Generated ${reportRows.length} report rows.`);
+        
+        if (reportRows.length === 0) {
+          await bot.sendMessage(chatId, "ℹ️ <b>No referrals found.</b>\nNo users have been referred through the system yet.", { parse_mode: "HTML" });
+          return;
+        }
+        
+        logBot(`[Affiliate Report] Initializing ExcelJS Workbook...`);
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Referrers Report');
+        
+        worksheet.columns = [
+          { header: 'Referrer ID', key: 'ReferrerID', width: 20 },
+          { header: 'Username', key: 'Username', width: 25 },
+          { header: 'First Name', key: 'FirstName', width: 25 },
+          { header: 'Total Referred Users', key: 'TotalReferred', width: 20 }
+        ];
+        
+        worksheet.addRows(reportRows);
+        
+        // Style header
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE2E8F0' }
+        };
+        
+        logBot(`[Affiliate Report] Writing XLSX to buffer...`);
+        const buffer = await workbook.xlsx.writeBuffer() as Buffer;
+        logBot(`[Affiliate Report] Buffer created: ${buffer.length} bytes. Sending document...`);
+        
+        const filename = `Referrers_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+        await bot.sendDocument(chatId, buffer, {
+          caption: `📊 <b>Referrers Referee Report (Excel)</b>\n\nTotal Referrers: <b>${reportRows.length}</b>\nGenerated: <code>${new Date().toLocaleString()}</code>`,
+          parse_mode: 'HTML'
+        }, {
+          filename: filename,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+        
+        logBot(`[Affiliate Report] Successfully sent report to ${userId}`);
+      } catch (err: any) {
+        logBot(`[Affiliate Report] CRITICAL ERROR: ${err.message}`);
+        await bot.sendMessage(chatId, `❌ <b>Report Generation Error</b>\n<code>${err.message}</code>`, { parse_mode: "HTML" });
+      }
+      return;
+    }
+
+    if (data === "affiliate_set_jackpot") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      
+      const promptText = `💰 <b>Set Weekly Jackpot Amount</b>\n\n` +
+        `Please send the amount (in ETB) you want to distribute for the Weekly Promoter Jackpot.\n\n` +
+        `<i>Send a number, or /cancel to abort.</i>`;
+        
+      userStates.set(String(chatId), { step: 'waiting_for_jackpot_amount' });
+      bot.sendMessage(chatId, promptText, { parse_mode: "HTML" });
+      return;
+    }
+
     if (data === "affiliate_payout_announce") {
       if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
@@ -6303,7 +6463,7 @@ const withdrawalCooldowns = new Map<string, number>();
       await bot.answerCallbackQuery(query.id);
 
       try {
-        const stats = await fetchLeaderboardData();
+        const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
         const startOfWeekISO = stats.startOfWeek;
         const totalJackpot = stats.promoterJackpot;
 
@@ -6318,14 +6478,14 @@ const withdrawalCooldowns = new Map<string, number>();
         const msgText = `📢 <b>UPCOMING WEEKLY PROMOTER JACKPOT DISTRIBUTION!</b>\n\n` +
           `The Weekly Promoter Jackpot distribution is scheduled to happen in exactly <b>30 minutes</b>!\n\n` +
           `💰 <b>Jackpot Pool Amount:</b> <b>${totalJackpot.toLocaleString()} ETB</b>\n` +
-          `<i>(Reward is 5% of 50% of the platform's weekly overall retained fees, with no Guaranteed Minimum)</i>\n\n` +
+          `<i>(Distribution: 50% for 1st, 30% for 2nd, 20% for 3rd place)</i>\n\n` +
           `🏆 <b>Current Top Standings:</b>\n` +
           (stats.leaderboard && stats.leaderboard.length > 0 
             ? stats.leaderboard.slice(0, 3).map((entry, idx) => {
                 const displayName = entry.first_name || entry.username || `User_${entry.referrer_id.slice(0, 6)}`;
                 const prizeShare = idx === 0 ? 0.50 : idx === 1 ? 0.30 : 0.20;
                 const shareAmount = Math.floor(totalJackpot * prizeShare);
-                return `🏅 <b>Rank ${idx+1}:</b> ${displayName} — Vol: <b>${entry.volume.toLocaleString()} ETB</b> (Est. Reward: <b>${shareAmount.toLocaleString()} ETB</b>)`;
+                return `🏅 <b>Rank ${idx+1}:</b> ${displayName} — New Referrals: <b>${entry.referral_count || entry.volume}</b> (Est. Reward: <b>${shareAmount.toLocaleString()} ETB</b>)`;
               }).join('\n')
             : `<i>No qualified referrers recorded yet this week.</i>`) +
           `\n\n📢 Promote your referral link <code>/referral</code> now to secure or upgrade your ranking before distribution! 🎮`;
@@ -6366,7 +6526,7 @@ const withdrawalCooldowns = new Map<string, number>();
       await bot.answerCallbackQuery(query.id);
 
       try {
-        const stats = await fetchLeaderboardData();
+        const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
         const startOfWeekISO = stats.startOfWeek;
         const dateStr = new Date(startOfWeekISO).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
@@ -6447,13 +6607,13 @@ const withdrawalCooldowns = new Map<string, number>();
 
             const winnerName = userProfile.first_name || userProfile.username || `User ${entry.referrer_id}`;
             report += `🏅 <b>Rank ${rank}:</b> ${winnerName} (ID: <code>${entry.referrer_id}</code>)\n`;
-            report += `  - Playing Vol: <b>${entry.volume.toLocaleString()} ETB</b>\n`;
+            report += `  - New Referrals: <b>${entry.referral_count || entry.volume}</b>\n`;
             report += `  - Prize Credited to Affiliate Balance: <b>${shareAmt.toLocaleString()} ETB</b>\n\n`;
 
             // Send notification to the winner
             bot.sendMessage(entry.referrer_id, 
               `🎉 <b>Congratulations!</b>\n\n` +
-              `You achieved <b>Rank ${rank}</b> on the Weekly Promoter Leaderboard with a referred volume of <b>${entry.volume.toLocaleString()} ETB</b>!\n\n` +
+              `You achieved <b>Rank ${rank}</b> on the Weekly Promoter Leaderboard with <b>${entry.referral_count || entry.volume}</b> new referrals!\n\n` +
               `🏆 Your prize share of <b>${shareAmt.toLocaleString()} ETB</b> has been credited to your <b>Affiliate Balance</b>.\n\n` +
               `You can request a withdrawal to your bank account from the Affiliate Dashboard in the app! 🎮`, 
               { parse_mode: "HTML" }
@@ -9074,7 +9234,7 @@ export function startAutomatedJackpotScheduler(bot: any) {
         if (!annList || annList.length === 0) {
           logBot(`[AutomatedJackpot] Time to announce jackpot for week starting ${startOfWeekISO}. Running...`);
           
-          const stats = await fetchLeaderboardData();
+          const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
           const totalJackpot = stats.promoterJackpot;
 
           // Insert announcement to prevent double triggering
@@ -9088,14 +9248,14 @@ export function startAutomatedJackpotScheduler(bot: any) {
           const msgText = `📢 <b>UPCOMING WEEKLY PROMOTER JACKPOT DISTRIBUTION!</b>\n\n` +
             `The Weekly Promoter Jackpot distribution is scheduled to happen in exactly <b>30 minutes</b> (at the turn of the week)!\n\n` +
             `💰 <b>Jackpot Pool Amount:</b> <b>${totalJackpot.toLocaleString()} ETB</b>\n` +
-            `<i>(Reward is 5% of 50% of the platform's weekly overall retained fees, with no Guaranteed Minimum)</i>\n\n` +
+            `<i>(Distribution: 50% for 1st, 30% for 2nd, 20% for 3rd place)</i>\n\n` +
             `🏆 <b>Current Top Standings:</b>\n` +
             (stats.leaderboard && stats.leaderboard.length > 0 
               ? stats.leaderboard.slice(0, 3).map((entry, idx) => {
                   const displayName = entry.first_name || entry.username || `User_${entry.referrer_id.slice(0, 6)}`;
                   const prizeShare = idx === 0 ? 0.50 : idx === 1 ? 0.30 : 0.20;
                   const shareAmount = Math.floor(totalJackpot * prizeShare);
-                  return `🏅 <b>Rank ${idx+1}:</b> ${displayName} — Vol: <b>${entry.volume.toLocaleString()} ETB</b> (Est. Reward: <b>${shareAmount.toLocaleString()} ETB</b>)`;
+                  return `🏅 <b>Rank ${idx+1}:</b> ${displayName} — New Referrals: <b>${entry.referral_count || entry.volume}</b> (Est. Reward: <b>${shareAmount.toLocaleString()} ETB</b>)`;
                 }).join('\n')
               : `<i>No qualified referrers recorded yet this week.</i>`) +
             `\n\n📢 Promote your referral link <code>/referral</code> now to secure or upgrade your ranking before distribution! 🎮`;

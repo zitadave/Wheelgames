@@ -10,7 +10,8 @@ export function getStartOfWeekUTC(): Date {
 
 export interface LeaderboardEntry {
   referrer_id: string;
-  volume: number;
+  volume: number; // Keeping for compatibility, but we will use referral_count for rank
+  referral_count?: number;
   username?: string;
   first_name?: string;
   last_name?: string;
@@ -22,91 +23,73 @@ export interface LeaderboardStats {
   totalPlatformVolume: number;
   platformFees: number;
   promoterJackpot: number;
+  isJackpotAnnounced: boolean;
+  announcedJackpotAmount: number;
   leaderboard: LeaderboardEntry[];
 }
 
-export async function fetchLeaderboardData(): Promise<LeaderboardStats> {
+export async function fetchLeaderboardData(jackpotAmount: number = 0): Promise<LeaderboardStats> {
   if (!supabase) {
     throw new Error("Supabase client not initialized.");
   }
-
   const startOfWeek = getStartOfWeekUTC();
   const startOfWeekISO = startOfWeek.toISOString();
 
-  // 1. Fetch all referrals
-  const { data: refs, error: refsError } = await supabase
-    .from('transactions')
-    .select('user_id, description')
-    .eq('type', 'referral_link');
-
-  if (refsError) {
-    throw refsError;
-  }
-
-  const referrerMap = new Map<string, string>();
-  if (refs) {
-    refs.forEach(r => {
-      if (r.description && r.description.startsWith('Referred by ')) {
-        const referrerId = r.description.replace('Referred by ', '').trim();
-        referrerMap.set(r.user_id, referrerId);
-      }
-    });
-  }
-
-  // 2. Fetch current week's transactions of type 'bet' and 'refund'
-  const { data: txs, error: txError } = await supabase
-    .from('transactions')
-    .select('user_id, amount, type, description')
+  // 1. Fetch referrals from users table
+  const { data: usersRef, error: usersError } = await supabase
+    .from('users')
+    .select('id, referrer_id, created_at')
+    .not('referrer_id', 'is', null)
     .gte('created_at', startOfWeekISO);
 
-  if (txError) {
-    throw txError;
+  if (usersError) {
+    throw usersError;
   }
 
-  let totalPlatformVolume = 0;
-  const userVolumeMap = new Map<string, number>();
+  const referrerCountMap = new Map<string, number>();
+  const referredUserIds = new Set<string>();
 
-  if (txs) {
-    txs.forEach(t => {
-      const amount = Number(t.amount || 0);
-      const desc = t.description || '';
-
-      const isJackpot = desc.includes('Secured Spot') && desc.includes('in Jackpot');
-      const isChance120 = desc.includes('1-20 Room');
-      const isJackpotRefund = desc.includes('Refund Spot');
-
-      if (t.type === 'bet' && (isJackpot || isChance120)) {
-        const betVal = Math.abs(amount);
-        totalPlatformVolume += betVal;
-        userVolumeMap.set(t.user_id, (userVolumeMap.get(t.user_id) || 0) + betVal);
-      } else if (t.type === 'refund' && (isJackpotRefund || isChance120)) {
-        const refundVal = Math.abs(amount);
-        totalPlatformVolume -= refundVal;
-        userVolumeMap.set(t.user_id, (userVolumeMap.get(t.user_id) || 0) - refundVal);
+  if (usersRef) {
+    usersRef.forEach(u => {
+      if (u.referrer_id) {
+        referrerCountMap.set(u.referrer_id, (referrerCountMap.get(u.referrer_id) || 0) + 1);
+        referredUserIds.add(u.id);
       }
     });
   }
 
-  // 3. Map user volumes to referrers
-  const referrerVolumeMap = new Map<string, number>();
-  userVolumeMap.forEach((volume, player_id) => {
-    if (volume > 0) {
-      const referrerId = referrerMap.get(player_id);
-      if (referrerId) {
-        referrerVolumeMap.set(referrerId, (referrerVolumeMap.get(referrerId) || 0) + volume);
+  // 2. Fetch from transactions table (referral_link) to catch those missing from users table or legacy
+  const { data: txRefs } = await supabase
+    .from('transactions')
+    .select('user_id, description')
+    .eq('type', 'referral_link')
+    .gte('created_at', startOfWeekISO);
+
+  if (txRefs) {
+    txRefs.forEach(ref => {
+      if (!referredUserIds.has(ref.user_id)) {
+        const match = ref.description.match(/Referred by (\d+)/);
+        const refId = match ? match[1] : ref.description.replace('Referred by ', '').trim();
+        if (refId && refId !== ref.user_id) {
+          referrerCountMap.set(refId, (referrerCountMap.get(refId) || 0) + 1);
+          referredUserIds.add(ref.user_id);
+        }
       }
-    }
-  });
+    });
+  }
 
   const leaderboardList: LeaderboardEntry[] = [];
-  referrerVolumeMap.forEach((volume, referrer_id) => {
-    leaderboardList.push({ referrer_id, volume });
+  let totalWeekReferrals = 0;
+  referrerCountMap.forEach((count, referrer_id) => {
+    leaderboardList.push({ referrer_id, volume: count, referral_count: count });
+    totalWeekReferrals += count;
   });
 
   leaderboardList.sort((a, b) => b.volume - a.volume);
 
   // 4. Load top 10 profiles
   const topReferrerIds = leaderboardList.slice(0, 10).map(l => l.referrer_id);
+
   if (topReferrerIds.length > 0) {
     const { data: users } = await supabase
       .from('users')
@@ -129,16 +112,25 @@ export async function fetchLeaderboardData(): Promise<LeaderboardStats> {
     }
   }
 
-  const platformFees = Math.max(0, totalPlatformVolume) * 0.10;
-  // Reward 5% of 50% of the platform's weekly overall retained fees, with no Guaranteed Minimum
-  const promoterJackpot = platformFees * 0.50 * 0.05;
-  const finalJackpot = promoterJackpot;
+  // Check if announced
+  const { data: annList } = await supabase
+    .from('transactions')
+    .select('amount')
+    .eq('type', 'jackpot_announcement')
+    .eq('description', startOfWeekISO)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const isJackpotAnnounced = annList && annList.length > 0;
+  const announcedJackpotAmount = isJackpotAnnounced ? Number(annList[0].amount) : 0;
 
   return {
     startOfWeek: startOfWeekISO,
-    totalPlatformVolume,
-    platformFees,
-    promoterJackpot: finalJackpot,
+    totalPlatformVolume: totalWeekReferrals,
+    platformFees: 0,
+    promoterJackpot: jackpotAmount,
+    isJackpotAnnounced,
+    announcedJackpotAmount,
     leaderboard: leaderboardList.slice(0, 10)
   };
 }
