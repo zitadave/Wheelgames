@@ -787,6 +787,7 @@ interface PendingRequest {
   account?: string;
   receiptText?: string;
   chatId: number;
+  rejectReason?: string;
 }
 
 const processedMessages = new Set<string>();
@@ -4148,6 +4149,203 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const username = msg.from?.username || "no_username";
       const fullName = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "Player";
 
+      let progressMsg: any = null;
+      try {
+        progressMsg = await bot.sendMessage(chatId, "🔍 *የደረሰኝ ማረጋገጫ በራስ-ሰር በመካሄድ ላይ ነው። እባክዎ ጥቂት ሰኮንዶች ይጠብቁ...*\n\n_(Verifying your receipt automatically, please wait...)_", { parse_mode: "Markdown" });
+      } catch (e) {}
+
+      // Try Automatic Parsing & Verification
+      const { parseReceiptSMS } = await import("./transactionManager.js");
+      const { extractSenderName } = await import("./smsParser.js");
+
+      const { txId, amount: parsedAmount } = parseReceiptSMS(text);
+      const targetAmount = parsedAmount || Number(amount);
+      logBot(`🔍 [Bot-Deposit] Parsed Receipt - Ref: ${txId}, Parsed Amount: ${parsedAmount}, Target Amount: ${targetAmount}`);
+
+      const bankId = Object.keys(promptsConfig.banks || {}).find(k => k.toLowerCase() === bank.toLowerCase()) || bank;
+      const bankConfig = promptsConfig.banks?.[bankId];
+
+      let isReceiverVerified = false;
+      if (bankConfig) {
+        const ownerName = (bankConfig.owner_name || "").toLowerCase().trim();
+        const accountNum = (bankConfig.account || "").toLowerCase().trim();
+        const cleanReceiptText = text.toLowerCase();
+
+        if (ownerName && cleanReceiptText.includes(ownerName)) {
+          isReceiverVerified = true;
+        } else if (accountNum && cleanReceiptText.includes(accountNum)) {
+          isReceiverVerified = true;
+        } else {
+          // Check if last 4 digits of the account number are in the text
+          const last4 = accountNum.length >= 4 ? accountNum.slice(-4) : "";
+          if (last4 && cleanReceiptText.includes(last4)) {
+            isReceiverVerified = true;
+          }
+        }
+      } else {
+        isReceiverVerified = true;
+      }
+
+      logBot(`🔍 [Bot-Deposit] Receiver/Merchant Name Match: ${isReceiverVerified}`);
+
+      let isVerifiedBySMS = false;
+      let nameVerificationMsg = "";
+      let autoVerifyFailedReason = "";
+
+      if (!txId) {
+        autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
+      } else if (!targetAmount || isNaN(targetAmount)) {
+        autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
+      } else if (!isReceiverVerified) {
+        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
+      }
+
+      if (txId && targetAmount && isReceiverVerified) {
+        const cleanUserTxId = txId.trim().toUpperCase();
+
+        // Check if the reference ID has already been used in transactions list
+        const { data: duplicateTxsCheck } = await supabase
+          .from('transactions')
+          .select('id')
+          .ilike('description', `%${cleanUserTxId}%`)
+          .limit(1);
+
+        if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
+          autoVerifyFailedReason = `Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been processed and claimed.`;
+        } else {
+          // Check if this reference ID is in deposit_pool but marked as 'used'
+          const { data: usedPoolCheck } = await supabase
+            .from('deposit_pool')
+            .select('*')
+            .ilike('transaction_id', cleanUserTxId)
+            .eq('status', 'used')
+            .maybeSingle();
+
+          if (usedPoolCheck) {
+            autoVerifyFailedReason = `Reference ID is already used. The gateway has already processed the SMS for transaction ID "${cleanUserTxId}".`;
+          } else {
+            let smsRecordFound = null;
+            // Retry logic: Wait for the SMS gateway for up to 45 seconds (15 attempts x 3s)
+            for (let attempt = 0; attempt < 15; attempt++) {
+              logBot(`🔍 [Bot-Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/15)...`);
+              
+              const { data: smsRecord } = await supabase
+                .from('deposit_pool')
+                .select('*')
+                .ilike('transaction_id', cleanUserTxId)
+                .eq('status', 'unused')
+                .maybeSingle();
+
+              if (smsRecord) {
+                smsRecordFound = smsRecord;
+                const smsAmount = Number(smsRecord.amount);
+                logBot(`📊 [Bot-Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
+                
+                if (Math.abs(smsAmount - targetAmount) < 0.01) {
+                  const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
+                  
+                  isVerifiedBySMS = true;
+                  nameVerificationMsg = realSenderName ? `Payer Name: ${realSenderName}` : "Payer Name: Not Provided";
+                  
+                  await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+                  logBot(`✅ [Bot-Deposit] Verified by gateway (reference and amount matched) on attempt ${attempt + 1}. Payer: ${realSenderName}`);
+                  break;
+                } else {
+                  logBot(`⚠️ [Bot-Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
+                  autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
+                  break;
+                }
+              }
+
+              if (attempt < 14) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
+            }
+
+            if (!smsRecordFound && !autoVerifyFailedReason) {
+              autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+            }
+          }
+        }
+      }
+
+      // 3. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
+      if (isVerifiedBySMS && txId && targetAmount && Math.abs(targetAmount - Number(amount)) < 0.01) {
+        // Double-check duplicates in DB
+        const { data: duplicateTxsCheck } = await supabase
+          .from('transactions')
+          .select('id')
+          .ilike('description', `%${txId}%`)
+          .limit(1);
+
+        if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
+          if (progressMsg) {
+            await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+          }
+          await bot.sendMessage(chatId, "❌ This transaction ID has already been verified and claimed.");
+          userStates.set(userId, { step: 'idle' });
+          return;
+        }
+
+        // Auto approve!
+        const result = await txManager.modifyBalance(
+          userId,
+          targetAmount,
+          'reward',
+          `Deposit Auto-Approved (Ref: ${txId})`
+        );
+
+        if (result.success) {
+          if (progressMsg) {
+            await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+          }
+
+          // Clear user's cache and emit socket updates
+          userBalanceCache.delete(userId);
+          io.emit('balanceUpdated', { userId, balance: result.newBalance });
+
+          const escapedUsername = escapeHTML(username);
+          const gatewayBadge = " [Gateway ✅]";
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
+
+          // Notify admins of success
+          const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY & NAME MATCH</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
+          const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
+            `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
+            `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
+            `💰 <b>Amount:</b> <b>${targetAmount.toLocaleString()} ETB</b>\n` +
+            `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
+            `🧾 <b>Ref ID:</b> <code>${txId}</code>\n` +
+            `${verificationBadge}\n\n` +
+            `🟢 <i>Credited instantly to user's wallet!</i>`;
+
+          const primaryId = getPrimaryOwnerId();
+          adminChatIds.add(primaryId);
+          adminChatIds.forEach(async (adminId) => {
+            try {
+              await bot.sendMessage(adminId, adminMsg, { parse_mode: "HTML" });
+            } catch (e) {}
+          });
+
+          // Send confirmation message to the user
+          const userApprovedMsg = (promptsConfig.deposit_approved_msg || "✅ *ማስገባትዎ ተረጋግጧል!*\n\n💰 *{amount} ብር* በWalletዎ ውስጥ ገብቷል።\n🧾 *Ref:* `{ref}`")
+            .replace(/{amount}/g, targetAmount.toLocaleString())
+            .replace(/{ref}/g, txId);
+          await bot.sendMessage(chatId, userApprovedMsg, { parse_mode: "Markdown" });
+
+          // Clear state
+          userStates.set(userId, { step: 'idle' });
+          return;
+        }
+      }
+
+      // Fallback to manual admin approval
+      if (progressMsg) {
+        await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+      }
+
       // Unique request identifier
       const requestId = "DEP_" + generateRef(8);
 
@@ -4161,12 +4359,13 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         amount,
         bank,
         receiptText: text,
-        chatId
+        chatId,
+        rejectReason: autoVerifyFailedReason || "Unknown Reason"
       });
-      savePendingRequestsToDB().catch(e => logBot(`Error saving pending request: ${e.message}`));
+      await savePendingRequestsToDB().catch(e => logBot(`Error saving pending request: ${e.message}`));
 
       // Send Confirmation to User
-      bot.sendMessage(chatId, "✅ *Your deposit Request have been sent to admins please wait 1 min.*", { parse_mode: "Markdown" });
+      bot.sendMessage(chatId, "✅ *የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ።*\n\n_(Your deposit Request have been sent to admins please wait 1 min.)_", { parse_mode: "Markdown" });
 
       // Clear state
       userStates.set(userId, { step: 'idle' });
@@ -4181,20 +4380,23 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const escapedFullName = escapeHTML(fullName);
       const escapedText = escapeHTML(text);
       const escapedBank = escapeHTML(bank);
+      const escapedReason = escapeHTML(autoVerifyFailedReason || "Unknown Reason / No Match Found");
 
-      const adminMsg = `📥 <b>NEW DEPOSIT REQUEST</b>\n\n` +
+      const adminMsg = `📥 <b>NEW DEPOSIT REQUEST (Manual Review Required)</b>\n\n` +
         `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
         `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
         `💰 <b>Amount:</b> <b>${amount.toLocaleString()} ETB</b>\n` +
         `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n\n` +
-        `📝 <b>Receipt SMS text pasted:</b>\n` +
-        `<blockquote>${escapedText}</blockquote>\n\n` +
+        `⚠️ <b>Auto-Verification Failure Reason:</b>\n` +
+        `🔴 <i>${escapedReason}</i>\n\n` +
+        `📝 <b>Receipt SMS text:</b>\n` +
+        `<pre>${escapedText}</pre>\n\n` +
         `<b>Request ID:</b> <code>${requestId}</code>`;
 
       const primaryOwnerId = getPrimaryOwnerId();
       adminChatIds.add(primaryOwnerId); // Ensure primary owner is always in the set
 
-      logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new deposit request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
+      logBot(`[ADMIN-NOTIFY] Notifying ${adminChatIds.size} admins of new manual deposit request ${requestId}. Admin IDs: ${Array.from(adminChatIds).join(', ')}`);
       adminChatIds.forEach(async (adminId) => {
         try {
           await bot.sendMessage(adminId, adminMsg, {
