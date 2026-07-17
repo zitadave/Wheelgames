@@ -7,6 +7,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { initGameEngine } from "./src/server/GameEngine.js";
 import { initBingoEngine } from "./src/server/BingoEngine.js";
+import { initKenoEngine } from "./src/server/KenoEngine.js";
 import { initTelegramBot, getBotUsername, triggerBotFlow } from "./src/server/telegramBot.js";
 import { getBotLogs } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
@@ -49,6 +50,7 @@ async function startServer() {
   // Initialize Game Engine with Socket.IO
   initGameEngine(io);
   initBingoEngine(io);
+  initKenoEngine(io);
   
   // Initialize Telegram Bot in the background (non-blocking)
   initTelegramBot(io).catch(err => {
@@ -97,31 +99,37 @@ async function startServer() {
     }
 
     console.log(`📩 [SMS Received] From: ${sender} | Text: ${smsText.substring(0, 100)}...`);
-    console.log(`🔍 [SMS Debug] Full Body: ${JSON.stringify(req.body)} | Query: ${JSON.stringify(req.query)}`);
+    // Normalize sender (remove +, leading zeros)
+    const normalizedSender = sender.replace(/^\+/, '').replace(/^0+/, '');
+    
+    console.log(`🔍 [SMS Debug] Normalized Sender: ${normalizedSender} | Raw Text: ${smsText.substring(0, 50)}...`);
 
     try {
-      const parsed = parseBankSMS(smsText, sender);
+      const parsed = parseBankSMS(smsText, normalizedSender);
       if (parsed) {
         const { amount, transactionId, bankName } = parsed;
         const cleanTxId = transactionId.trim().toUpperCase();
         console.log(`✅ [SMS Parsed] Ref: ${cleanTxId} | Amount: ${amount} ETB | Bank: ${bankName}`);
         
-        // Save to DB (Table: bank_messages)
-        const { error } = await supabase.from('bank_messages').insert({
-          from_number: sender,
-          raw_text: smsText,
+        // Save to DB (Table: deposit_pool)
+        const { error } = await supabase.from('deposit_pool').insert({
+          transaction_id: cleanTxId,
           amount: amount,
-          ref_id: cleanTxId,
-          bank_name: bankName,
-          is_claimed: false,
+          sender_phone: sender,
+          raw_message: smsText,
+          status: 'unused',
           received_at: new Date().toISOString()
         });
 
         if (error && error.code !== '23505') { 
-           console.error("❌ Error saving bank message to DB:", error);
-        } else if (!error) {
-           console.log(`💾 [SMS Stored] Transaction ${transactionId} ready for verification.`);
+           console.error(`❌ [SMS Webhook] DB Error for ${cleanTxId}:`, error.message, error.details);
+        } else if (error && error.code === '23505') {
+           console.log(`ℹ️ [SMS Webhook] Transaction ${cleanTxId} already exists in DB.`);
+        } else {
+           console.log(`💾 [SMS Stored] Transaction ${cleanTxId} ready for verification.`);
         }
+      } else {
+        console.log(`ℹ️ [SMS Webhook] No matching bank pattern found for sender: ${normalizedSender}. Raw Text: "${smsText.substring(0, 50)}..."`);
       }
       
       res.json({ success: true });
@@ -343,10 +351,10 @@ async function startServer() {
           console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/12)...`);
           
           const { data: smsRecord } = await supabase
-            .from('bank_messages')
+            .from('deposit_pool')
             .select('*')
-            .ilike('ref_id', cleanUserTxId)
-            .eq('is_claimed', false)
+            .ilike('transaction_id', cleanUserTxId)
+            .eq('status', 'unused')
             .maybeSingle();
 
           if (smsRecord) {
@@ -355,7 +363,7 @@ async function startServer() {
             
             if (Math.abs(smsAmount - parsedAmount) < 0.01) {
               isVerifiedBySMS = true;
-              await supabase.from('bank_messages').update({ is_claimed: true, claimed_by: userId.toString() }).eq('id', smsRecord.id);
+              await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
               console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
               break;
             } else {

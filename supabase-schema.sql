@@ -180,3 +180,36 @@ $$ LANGUAGE plpgsql;
 
 -- Add is_blocked_bot flag
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked_bot BOOLEAN DEFAULT FALSE;
+
+-- ==============================================================================
+-- AUTOMATED DEPOSIT POOL (Sms_forwarder_to_supabase)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.deposit_pool (
+    transaction_id TEXT PRIMARY KEY,
+    amount NUMERIC NOT NULL,
+    sender_name TEXT,
+    sender_phone TEXT,
+    received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    status TEXT DEFAULT 'unused' CHECK (status IN ('unused', 'used', 'flagged')),
+    raw_message TEXT
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE public.deposit_pool ENABLE ROW LEVEL SECURITY;
+
+-- Policy for the Android App / Service Role inserts
+DROP POLICY IF EXISTS "Allow Service Role to Insert Deposits" ON public.deposit_pool;
+CREATE POLICY "Allow Service Role to Insert Deposits" 
+ON public.deposit_pool
+FOR INSERT 
+TO service_role
+WITH CHECK (true);
+
+-- Policy for authenticated users / main app reads
+DROP POLICY IF EXISTS "Allow authenticated users to read unused deposits" ON public.deposit_pool;
+CREATE POLICY "Allow authenticated users to read unused deposits"
+ON public.deposit_pool
+FOR SELECT
+TO authenticated
+USING (status = 'unused');
+

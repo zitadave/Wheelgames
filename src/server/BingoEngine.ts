@@ -83,7 +83,12 @@ export class BingoRoom {
     // }
 
     this.state.status = "playing";
-    this.ballSequence = Array.from({length: 75}, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+    const nums = Array.from({length: 75}, (_, i) => i + 1);
+    for (let i = nums.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [nums[i], nums[j]] = [nums[j], nums[i]];
+    }
+    this.ballSequence = nums;
     this.ballIndex = 0;
     this.broadcastState();
     

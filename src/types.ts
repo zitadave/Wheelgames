@@ -17,6 +17,8 @@ declare global {
         openTelegramLink: (url: string) => void;
         HapticFeedback: {
           impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
+          selectionChanged: () => void;
+          notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
         };
       };
     };

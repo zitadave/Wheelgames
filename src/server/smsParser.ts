@@ -12,12 +12,14 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   // CBE Parsing logic
   const isCBE = from.includes("889") || from.includes("CBE") || lowercaseText.includes("cbe") || lowercaseText.includes("ንግድ ባንክ");
   if (isCBE) {
-    const amountMatch = text.match(/(?:credited|sent|received|ETB|ብር|amount|amt|deposited|transferred)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+    const amountMatch = text.match(/(?:credited|sent|received|ETB|ብር|amount|amt|deposited|transferred)\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d+)?)/i);
     const refMatch = text.match(/(?:Ref|ID|Transaction|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9.]{8,22})/i);
     if (amountMatch && refMatch) {
+      let cleanTxId = refMatch[1].trim().toUpperCase();
+      if (cleanTxId.endsWith('.')) cleanTxId = cleanTxId.slice(0, -1);
       return {
         amount: parseFloat(amountMatch[1].replace(/,/g, "")),
-        transactionId: refMatch[1].trim().toUpperCase(),
+        transactionId: cleanTxId,
         bankName: "CBE"
       };
     }
@@ -26,14 +28,16 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   // Telebirr Parsing logic
   const isTelebirr = from.includes("127") || from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr") || lowercaseText.includes("ቴሌብር");
   if (isTelebirr) {
-    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent|ብር|amount|amt)\s*(?:ETB|Birr|ብር)?\s*([\d,]+\.?\d*)/i);
+    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent|ብር|amount|amt)\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d+)?)/i);
     // Matches English and common Amharic "Reference Number" labels
     const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID|number|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9.]{8,22})/i);
     
     if (amountMatch && refMatch) {
+      let cleanTxId = refMatch[1].trim().toUpperCase();
+      if (cleanTxId.endsWith('.')) cleanTxId = cleanTxId.slice(0, -1);
       return {
         amount: parseFloat(amountMatch[1].replace(/,/g, "")),
-        transactionId: refMatch[1].trim().toUpperCase(),
+        transactionId: cleanTxId,
         bankName: "Telebirr"
       };
     }

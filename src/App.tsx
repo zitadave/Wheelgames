@@ -6,7 +6,8 @@ import { JackpotArena } from './components/JackpotArena';
 import { WheelOfChance } from './components/WheelOfChance';
 import { Leaderboard } from './components/Leaderboard';
 import { BingoGame } from './components/BingoGame';
-import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Settings, X, HelpCircle, Search, Trophy, Gamepad2, TrendingUp, Wallet, User, Plus, ArrowUpRight, ArrowDownLeft, Copy, Check, ChevronRight, Dices, Binary, RefreshCw, Info, Award, Grid3X3, Volume2, VolumeX, Zap } from 'lucide-react';
+import { KenoGame } from './components/KenoGame';
+import { ChevronLeft, Users, Clock, History, AlertCircle, Coins, Moon, Sun, Settings, X, HelpCircle, Search, Trophy, Gamepad2, TrendingUp, Wallet, User, Plus, ArrowUpRight, ArrowDownLeft, Copy, Check, CheckCircle2, ChevronRight, Dices, Binary, RefreshCw, Info, Award, Grid3X3, Volume2, VolumeX, Zap, LayoutGrid } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playWin, playLoss, suspendAudio, resumeAudio } from './utils/sound';
 import { triggerHaptic } from './utils/haptic';
@@ -100,7 +101,7 @@ export default function App() {
   const [firstName] = useState(() => tgUser?.first_name || '');
   const [lastName] = useState(() => tgUser?.last_name || '');
 
-  const [balance, setBalance] = useState<number | null>(null);
+  const [balance, setBalance] = useState<number | null>(0);
   const [isBalanceSynced, setIsBalanceSynced] = useState(false);
   const [currentRoom, setCurrentRoom] = useState<string>('Main-Room');
   const [selectedBingoRoomId, setSelectedBingoRoomId] = useState<string | null>(null);
@@ -389,7 +390,34 @@ export default function App() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const soundAlertsRef = useRef(true);
   
-  const [activeTab, setActiveTab] = useState<'even_odd' | 'jackpot' | 'chance' | 'bingo' | 'profile'>('bingo');
+  const [activeTab, setActiveTab] = useState<'even_odd' | 'jackpot' | 'chance' | 'bingo' | 'keno' | 'profile'>('bingo');
+  const [kenoRoundId, setKenoRoundId] = useState('870909999');
+  const [kenoCountdown, setKenoCountdown] = useState(60);
+  const [kenoGameState, setKenoGameState] = useState<'betting' | 'draw' | 'result'>('betting');
+  const [kenoDrawNumbers, setKenoDrawNumbers] = useState<number[]>([]);
+
+  // Local Keno Game Loop removed, relying on Server completely
+
+  // Keno Timer Logic (Synchronized with Server)
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleKenoState = (state: any) => {
+      setKenoCountdown(state.timeLeft);
+      setKenoGameState(state.status);
+      if (state.drawNumbers && state.drawNumbers.length > 0) {
+        setKenoDrawNumbers(state.drawNumbers);
+      }
+      if (state.roundId) {
+        setKenoRoundId(state.roundId);
+      }
+    };
+
+    socket.on('keno_state', handleKenoState);
+    return () => {
+      socket.off('keno_state', handleKenoState);
+    };
+  }, [socket]);
   const [showReferralList, setShowReferralList] = useState(false);
   const [referredUsers, setReferredUsers] = useState<any[]>([]);
   const [isReferralLoading, setIsReferralLoading] = useState(false);
@@ -701,8 +729,9 @@ export default function App() {
 
     socket.on('balanceUpdated', (data: { userId: string, balance: number }) => {
       if (data.userId === userId) {
-        setBalance(data.balance);
-        showNotification(`Wallet updated to ${data.balance.toLocaleString()} ETB`, 'success');
+        const newBalance = data.balance;
+        setBalance(newBalance);
+        showNotification(`Wallet updated to ${newBalance.toLocaleString()} ETB`, 'success');
         socket.emit('getUserTransactions', userId);
         socket.emit('getUserGameLogs', userId);
         socket.emit('getAffiliateStats', userId);
@@ -1032,11 +1061,11 @@ export default function App() {
 
   return (
     <div className={isDarkMode ? "dark" : ""}>
-      <div className="h-screen max-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 flex flex-col w-full max-w-md mx-auto relative overflow-hidden font-sans transition-colors duration-300 overscroll-none select-none" style={{ touchAction: 'pan-y' }}>
+      <div className="h-screen max-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 flex flex-col w-full relative overflow-hidden font-sans transition-colors duration-300 overscroll-none select-none" style={{ touchAction: 'pan-y' }}>
         
         {/* Top Header Panel */}
         {!isJackpotTheaterMode && (
-          <header className="flex justify-between items-center px-4 py-2 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shrink-0 transition-colors duration-300 z-40 fixed top-0 left-0 right-0 w-full max-w-md mx-auto">
+          <header className="flex justify-between items-center px-4 py-2 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shrink-0 transition-colors duration-300 z-40 fixed top-0 left-0 right-0 w-full">
             {activeTab === 'bingo' && selectedBingoRoomId && bingoRoomState?.status === 'lobby' ? (
               // BINGO LOBBY HEADER: Equal space between balance, timer, label, and profile
               <div className="flex items-center justify-between w-full">
@@ -1114,6 +1143,14 @@ export default function App() {
                       </span>
                     </div>
                   )}
+                  {activeTab === 'keno' && kenoGameState === 'betting' && (
+                    <div className="flex items-center gap-1.5 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/30 animate-in fade-in duration-300">
+                      <Clock className="w-3.5 h-3.5 text-[#2ecc71] animate-pulse" />
+                      <span className={`font-mono text-[18px] font-black tracking-tighter ${kenoCountdown < 10 ? 'text-red-500 animate-pulse' : 'text-[#2ecc71]'}`}>
+                        {kenoCountdown}s
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1134,6 +1171,11 @@ export default function App() {
                         </div>
                       </div>
                     )
+                  ) : activeTab === 'keno' ? (
+                    <div className="bg-[#1a2525]/80 px-2.5 py-1 rounded-lg border border-[#2ecc71]/20 flex flex-col items-center leading-none shrink-0 animate-in zoom-in duration-300 min-w-[70px]">
+                      <span className="text-[8px] text-gray-500 font-black uppercase tracking-widest mb-0.5">ID</span>
+                      <span className="text-[11px] font-mono font-black text-gray-300">{kenoRoundId}</span>
+                    </div>
                   ) : (
                     <button 
                       id="players-portal-btn-top"
@@ -1160,7 +1202,7 @@ export default function App() {
                     </button>
                   )}
                   
-                  {!(activeTab === 'bingo' && selectedBingoRoomId && bingoRoomState?.status !== 'lobby') && (
+                  {activeTab !== 'keno' && !(activeTab === 'bingo' && selectedBingoRoomId && bingoRoomState?.status !== 'lobby') && (
                     <button
                       onClick={() => setActiveTab('profile')}
                       className="p-0 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer relative w-8 h-8 flex items-center justify-center overflow-hidden shrink-0"
@@ -1198,7 +1240,7 @@ export default function App() {
         )}
 
         {/* Scrollable Main Content Frame */}
-        <main className={`flex-1 min-h-0 relative z-10 flex flex-col transition-all duration-300 ${activeTab === 'bingo' ? 'px-0 overflow-hidden pb-14' : 'px-4 overflow-y-auto overflow-x-hidden pb-[62px]'} ${isJackpotTheaterMode ? 'pt-4 pb-4' : 'pt-[52px]'}`}>
+        <main className={`flex-1 min-h-0 relative z-10 flex flex-col transition-all duration-300 ${(activeTab === 'bingo' || activeTab === 'keno') ? 'px-0 overflow-hidden pb-14' : 'px-4 overflow-y-auto overflow-x-hidden pb-[62px]'} ${isJackpotTheaterMode ? 'pt-4 pb-4' : 'pt-[52px]'}`}>
             
             {/* TAB 1: Game Arena (Even/Odd) */}
             <div
@@ -1477,6 +1519,43 @@ export default function App() {
                 />
             </div>
 
+            {/* TAB 4: Keno Game */}
+            <div className={`flex-1 min-h-0 overflow-hidden flex-col ${activeTab === 'keno' ? 'flex' : 'hidden'}`}>
+                <KenoGame 
+                  balance={balance || 0}
+                  userId={userId}
+                  username={username}
+                  onPlaceBet={(nums, amt) => {
+                    if (amt > (balance || 0)) {
+                      showNotification("Insufficient balance", "error");
+                      return;
+                    }
+                    if (!socket) {
+                      showNotification("Not connected to server", "error");
+                      return;
+                    }
+                    socket.emit('keno_place_bet', {
+                      userId,
+                      username,
+                      numbers: nums,
+                      bet: amt
+                    }, (res: any) => {
+                      if (res && res.success) {
+                        showNotification(`ውርርድዎ በተሳካ ሁኔታ ተመዝግቧል! (Bet of ${amt} placed!)`, "success");
+                      } else {
+                        showNotification(res?.message || "ውርርድ መመዝገብ አልተቻለም (Failed to place bet)", "error");
+                      }
+                    });
+                  }}
+                  socket={socket}
+                  countdown={kenoCountdown}
+                  gameState={kenoGameState}
+                  setGameState={setKenoGameState}
+                  drawNumbers={kenoDrawNumbers}
+                  setBalance={setBalance}
+                />
+            </div>
+
             {/* TAB 4: Profile Page */}
             <div className={`flex-1 p-4 space-y-4 ${activeTab === 'profile' ? 'block' : 'hidden'}`}>
                 {/* User Info Row */}
@@ -1664,7 +1743,7 @@ export default function App() {
 
         {/* Modern Bottom Tabbed Menu Bar */}
         {!isJackpotTheaterMode && (
-          <nav id="bottom-navigation-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex justify-around items-center py-1.5 px-1 z-40 transition-colors duration-300 shadow-lg shrink-0 w-full max-w-md mx-auto">
+          <nav id="bottom-navigation-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex justify-around items-center py-1.5 px-1 z-40 transition-colors duration-300 shadow-lg shrink-0 w-full">
             <button
               onClick={() => setActiveTab('even_odd')}
               className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
@@ -1699,6 +1778,18 @@ export default function App() {
             >
               <Dices className="w-5 h-5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ፈጣን</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('keno')}
+              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+                activeTab === 'keno' 
+                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
+                  : 'text-gray-400 hover:text-gray-500'
+              }`}
+            >
+              <LayoutGrid className="w-5 h-5" />
+              <span className="text-[10px] tracking-tight font-black uppercase">ኬኖ</span>
             </button>
 
             <button
