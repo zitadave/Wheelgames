@@ -9,7 +9,7 @@ import { initGameEngine } from "./src/server/GameEngine.js";
 import { initBingoEngine } from "./src/server/BingoEngine.js";
 import { initKenoEngine } from "./src/server/KenoEngine.js";
 import { initTelegramBot, getBotUsername, triggerBotFlow } from "./src/server/telegramBot.js";
-import { getBotLogs } from "./src/server/logger.js";
+import { getBotLogs, logBot } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
 import crypto from "crypto";
 import { parseBankSMS } from "./src/server/smsParser.js";
@@ -67,31 +67,91 @@ async function startServer() {
     const signature = req.headers['x-signature'] as string;
     const secret = process.env.SMS_WEBHOOK_SECRET;
 
-    if (secret && signature) {
-      try {
-        const bodyStr = (req as any).rawBody || JSON.stringify(req.body);
-        const hmac = crypto.createHmac('sha256', secret);
-        const digest = hmac.update(bodyStr).digest('hex');
-        if (signature.toLowerCase() !== digest.toLowerCase()) {
-          console.error("❌ [SMS Webhook] Signature Mismatch!");
-          console.error(`Received: ${signature.substring(0, 8)}...`);
-          console.error(`Expected: ${digest.substring(0, 8)}...`);
-          return res.status(401).json({ error: "Invalid signature" });
-        }
-        console.log("✅ [SMS Webhook] Signature verified.");
-      } catch (err) {
-        console.error("❌ [SMS Webhook] HMAC Verification Error:", err);
-        return res.status(401).json({ error: "Signature verification failed" });
+    let isAuthorized = true; // Default to true if no secret is set
+
+    if (secret) {
+      isAuthorized = false;
+
+      // 1. Check if x-signature is the raw secret itself
+      if (signature && signature === secret) {
+        isAuthorized = true;
+        console.log("✅ [SMS Webhook] Authorized via raw x-signature header matching secret.");
       }
-    } else if (secret) {
-      console.warn("⚠️ [SMS Webhook] Secret is set but no x-signature header found.");
+
+      // 2. Check standard HMAC-SHA256 if x-signature is provided but not raw secret
+      if (!isAuthorized && signature) {
+        try {
+          const bodyStr = (req as any).rawBody || JSON.stringify(req.body);
+          const hmac = crypto.createHmac('sha256', secret);
+          const digest = hmac.update(bodyStr).digest('hex');
+          if (signature.toLowerCase() === digest.toLowerCase()) {
+            isAuthorized = true;
+            console.log("✅ [SMS Webhook] Authorized via HMAC signature verification.");
+          } else {
+            console.warn(`⚠️ [SMS Webhook] Signature mismatch. Received: "${signature}", Calculated digest: "${digest}"`);
+          }
+        } catch (err) {
+          console.error("❌ [SMS Webhook] HMAC Verification Error:", err);
+        }
+      }
+
+      // 3. Check custom headers (x-api-key, secret, Authorization)
+      if (!isAuthorized) {
+        const apiKeyHeader = req.headers['x-api-key'] as string;
+        const secretHeader = req.headers['secret'] as string;
+        const authHeader = req.headers['authorization'] as string;
+
+        if (apiKeyHeader === secret || secretHeader === secret) {
+          isAuthorized = true;
+          console.log("✅ [SMS Webhook] Authorized via API key or secret header.");
+        } else if (authHeader) {
+          const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+          if (token === secret) {
+            isAuthorized = true;
+            console.log("✅ [SMS Webhook] Authorized via Bearer token.");
+          }
+        }
+      }
+
+      // 4. Check query parameters (secret, key, api_key)
+      if (!isAuthorized) {
+        const secretQuery = req.query.secret || req.query.key || req.query.api_key;
+        if (secretQuery === secret) {
+          isAuthorized = true;
+          console.log("✅ [SMS Webhook] Authorized via query parameter.");
+        }
+      }
+
+      // 5. If still not authorized, log error and return 401
+      if (!isAuthorized) {
+        console.error("❌ [SMS Webhook] Unauthorized request. Secret is set but no credentials matched.");
+        console.error("Headers:", JSON.stringify(req.headers));
+        console.error("Query parameters:", JSON.stringify(req.query));
+        console.error("Body:", JSON.stringify(req.body));
+        
+        logBot(`❌ [SMS Webhook] Unauthorized attempt. Headers: ${JSON.stringify(req.headers)} | Body: ${JSON.stringify(req.body)}`);
+        
+        return res.status(401).json({ 
+          error: "Unauthorized. Please configure your SMS gateway app with the correct SMS_WEBHOOK_SECRET as a header (x-signature, x-api-key, secret) or query parameter (?secret=...)." 
+        });
+      }
     }
 
-    const { from, text, sender: bodySender, message: bodyMessage } = req.body;
-    const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query;
+    const { 
+      from, 
+      text, 
+      sender: bodySender, 
+      message: bodyMessage,
+      sender_phone,
+      phone,
+      raw_message,
+      body,
+      msg
+    } = req.body || {};
+    const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query || {};
 
-    const sender = (from || bodySender || queryFrom || qSender || "Unknown").toString();
-    const smsText = (text || bodyMessage || queryText || qMessage || "").toString();
+    const sender = (from || bodySender || sender_phone || phone || queryFrom || qSender || "Unknown").toString();
+    const smsText = (text || bodyMessage || raw_message || body || msg || queryText || qMessage || "").toString();
 
     if (!smsText) {
       console.warn("⚠️ [SMS Webhook] Received empty SMS text. Body:", JSON.stringify(req.body), "Query:", JSON.stringify(req.query));
