@@ -339,42 +339,129 @@ async function startServer() {
 
       // 2. Try Automatic Parsing & Verification
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
+      const { extractSenderName, verifyNameMatch } = await import("./src/server/smsParser.js");
+      const { getPromptsConfig } = await import("./src/server/telegramBot.js");
+
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
       const targetAmount = parsedAmount || Number(amount);
       console.log(`🔍 [Deposit] Parsed Receipt - Ref: ${txId}, Parsed Amount: ${parsedAmount}, Target Amount: ${targetAmount}`);
 
-      let isVerifiedBySMS = false;
+      const promptsConfig = await getPromptsConfig();
+      const bankId = Object.keys(promptsConfig.banks || {}).find(k => k.toLowerCase() === bank.toLowerCase()) || bank;
+      const bankConfig = promptsConfig.banks?.[bankId];
 
-      if (txId && targetAmount) {
+      let isReceiverVerified = false;
+      if (bankConfig) {
+        const ownerName = (bankConfig.owner_name || "").toLowerCase().trim();
+        const accountNum = (bankConfig.account || "").toLowerCase().trim();
+        const cleanReceiptText = receiptText.toLowerCase();
+
+        if (ownerName && cleanReceiptText.includes(ownerName)) {
+          isReceiverVerified = true;
+        } else if (accountNum && cleanReceiptText.includes(accountNum)) {
+          isReceiverVerified = true;
+        } else {
+          // Check if last 4 digits of the account number are in the text
+          const last4 = accountNum.length >= 4 ? accountNum.slice(-4) : "";
+          if (last4 && cleanReceiptText.includes(last4)) {
+            isReceiverVerified = true;
+          }
+        }
+      } else {
+        isReceiverVerified = true;
+      }
+
+      console.log(`🔍 [Deposit] Receiver/Merchant Name Match: ${isReceiverVerified}`);
+
+      let isVerifiedBySMS = false;
+      let nameVerificationMsg = "";
+      let autoVerifyFailedReason = "";
+
+      if (!txId) {
+        autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
+      } else if (!targetAmount || isNaN(targetAmount)) {
+        autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
+      } else if (!isReceiverVerified) {
+        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
+      }
+
+      if (txId && targetAmount && isReceiverVerified) {
         const cleanUserTxId = txId.trim().toUpperCase();
-        // Retry logic: Wait for the SMS gateway for up to 4 seconds (3 attempts x 2s)
-        for (let attempt = 0; attempt < 3; attempt++) {
-          console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/3)...`);
-          
-          const { data: smsRecord } = await supabase
+
+        // Check if the reference ID has already been used in transactions list
+        const { data: duplicateTxsCheck } = await supabase
+          .from('transactions')
+          .select('id')
+          .ilike('description', `%${cleanUserTxId}%`)
+          .limit(1);
+
+        if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
+          autoVerifyFailedReason = `Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been processed and claimed.`;
+        } else {
+          // Check if this reference ID is in deposit_pool but marked as 'used'
+          const { data: usedPoolCheck } = await supabase
             .from('deposit_pool')
             .select('*')
             .ilike('transaction_id', cleanUserTxId)
-            .eq('status', 'unused')
+            .eq('status', 'used')
             .maybeSingle();
 
-          if (smsRecord) {
-            const smsAmount = Number(smsRecord.amount);
-            console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
-            
-            if (Math.abs(smsAmount - targetAmount) < 0.01) {
-              isVerifiedBySMS = true;
-              await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-              console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}`);
-              break;
-            } else {
-              console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
-            }
-          }
+          if (usedPoolCheck) {
+            autoVerifyFailedReason = `Reference ID is already used. The gateway has already processed the SMS for transaction ID "${cleanUserTxId}".`;
+          } else {
+            let smsRecordFound = null;
+            // Retry logic: Wait for the SMS gateway for up to 45 seconds (15 attempts x 3s)
+            for (let attempt = 0; attempt < 15; attempt++) {
+              console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/15)...`);
+              
+              const { data: smsRecord } = await supabase
+                .from('deposit_pool')
+                .select('*')
+                .ilike('transaction_id', cleanUserTxId)
+                .eq('status', 'unused')
+                .maybeSingle();
 
-          if (attempt < 2) {
-            // Wait 2 seconds before next check
-            await new Promise(resolve => setTimeout(resolve, 2000));
+              if (smsRecord) {
+                smsRecordFound = smsRecord;
+                const smsAmount = Number(smsRecord.amount);
+                console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
+                
+                if (Math.abs(smsAmount - targetAmount) < 0.01) {
+                  // Extract and verify sender/depositor name
+                  const realDepositorName = extractSenderName(smsRecord.raw_message);
+                  const isDepositorVerified = verifyNameMatch(realDepositorName, fullName, username);
+                  
+                  console.log(`🔍 [Deposit] Name Verification Result - Real Depositor: "${realDepositorName}", Telegram Name: "${fullName}", Username: "${username}", Matched: ${isDepositorVerified}`);
+
+                  if (isDepositorVerified) {
+                    isVerifiedBySMS = true;
+                    nameVerificationMsg = `Payer Name Verified: ${realDepositorName}`;
+                    await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+                    console.log(`✅ [Deposit] Verified by gateway with Name Verification on attempt ${attempt + 1}`);
+                  } else {
+                    console.warn(`⚠️ [Deposit] Depositor name mismatch! Real: "${realDepositorName}", Telegram: "${fullName}" / "@${username}"`);
+                    nameVerificationMsg = `Mismatch (Real: ${realDepositorName || "Unknown"}, Telegram Name: ${fullName})`;
+                    autoVerifyFailedReason = `Depositor/Sender Name Mismatch. Payer name in bank SMS ("${realDepositorName || 'Unknown'}") does not match Telegram name ("${fullName}") or username ("@${username}").`;
+                  }
+                  break;
+                } else {
+                  console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
+                  autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
+                  break;
+                }
+              }
+
+              if (attempt < 14) {
+                // Wait 3 seconds before next check
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
+            }
+
+            if (!smsRecordFound && !autoVerifyFailedReason) {
+              autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+            }
           }
         }
       }
@@ -406,12 +493,12 @@ async function startServer() {
           const escapedUsername = escapeHTML(username);
           
           const gatewayBadge = " [Gateway ✅]";
-          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>`);
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
 
           // Notify admins
           const bot = getBotInstance();
           if (bot) {
-            const verificationBadge = "🛡️ <b>VERIFIED BY SMS GATEWAY</b>";
+            const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY & NAME MATCH</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
             const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
               `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
               `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
@@ -455,7 +542,8 @@ async function startServer() {
         amount: Number(amount),
         bank,
         receiptText,
-        chatId: Number(userId)
+        chatId: Number(userId),
+        rejectReason: autoVerifyFailedReason || "Unknown Reason"
       };
 
       pendingRequests.set(requestId, requestPayload);
@@ -468,12 +556,15 @@ async function startServer() {
         const escapedFullName = escapeHTML(fullName);
         const escapedText = escapeHTML(receiptText);
         const escapedBank = escapeHTML(bank);
+        const escapedReason = escapeHTML(autoVerifyFailedReason || "Unknown Reason / No Match Found");
 
-        const adminMsg = `📥 <b>NEW DEPOSIT REQUEST (Manual Review)</b>\n\n` +
+        const adminMsg = `📥 <b>NEW DEPOSIT REQUEST (Manual Review Required)</b>\n\n` +
           `👤 <b>User:</b> @${escapedUsername} (${escapedFullName})\n` +
           `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
           `💰 <b>Amount:</b> <b>${Number(amount).toLocaleString()} ETB</b>\n` +
           `🏦 <b>Bank:</b> <b>${escapedBank}</b>\n\n` +
+          `⚠️ <b>Auto-Verification Failure Reason:</b>\n` +
+          `🔴 <i>${escapedReason}</i>\n\n` +
           `📝 <b>Receipt SMS text:</b>\n` +
           `<pre>${escapedText}</pre>\n\n` +
           `<b>Request ID:</b> <code>${requestId}</code>`;
