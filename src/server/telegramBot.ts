@@ -4191,21 +4191,16 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       let isVerifiedBySMS = false;
       let nameVerificationMsg = "";
       let autoVerifyFailedReason = "";
+      let smsRecordFound: any = null;
 
       if (!txId) {
         autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
       } else if (!targetAmount || isNaN(targetAmount)) {
         autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
-      } else if (!isReceiverVerified) {
-        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
-        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
-        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
-      }
-
-      if (txId && targetAmount && isReceiverVerified) {
+      } else {
         const cleanUserTxId = txId.trim().toUpperCase();
 
-        // Check if the reference ID has already been used in transactions list
+        // 1. Check if the reference ID has already been used in transactions list
         const { data: duplicateTxsCheck } = await supabase
           .from('transactions')
           .select('id')
@@ -4215,7 +4210,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
           autoVerifyFailedReason = `Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been processed and claimed.`;
         } else {
-          // Check if this reference ID is in deposit_pool but marked as 'used'
+          // 2. Check if this reference ID is in deposit_pool but marked as 'used'
           const { data: usedPoolCheck } = await supabase
             .from('deposit_pool')
             .select('*')
@@ -4226,8 +4221,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           if (usedPoolCheck) {
             autoVerifyFailedReason = `Reference ID is already used. The gateway has already processed the SMS for transaction ID "${cleanUserTxId}".`;
           } else {
-            let smsRecordFound = null;
-            // Retry logic: Wait for the SMS gateway for up to 45 seconds (15 attempts x 3s)
+            // 3. Retry logic: Wait for the SMS gateway to receive and record the SMS for up to 45 seconds (15 attempts x 3s)
             for (let attempt = 0; attempt < 15; attempt++) {
               logBot(`🔍 [Bot-Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/15)...`);
               
@@ -4243,20 +4237,15 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
                 const smsAmount = Number(smsRecord.amount);
                 logBot(`📊 [Bot-Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
                 
-                if (Math.abs(smsAmount - targetAmount) < 0.01) {
-                  const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
-                  
-                  isVerifiedBySMS = true;
-                  nameVerificationMsg = realSenderName ? `Payer Name: ${realSenderName}` : "Payer Name: Not Provided";
-                  
-                  await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-                  logBot(`✅ [Bot-Deposit] Verified by gateway (reference and amount matched) on attempt ${attempt + 1}. Payer: ${realSenderName}`);
-                  break;
-                } else {
-                  logBot(`⚠️ [Bot-Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
-                  autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
-                  break;
-                }
+                // Trust the gateway bank SMS amount as the absolute source of truth
+                isVerifiedBySMS = true;
+                const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
+                nameVerificationMsg = realSenderName ? `Payer Name: ${realSenderName}` : "Payer Name: Not Provided";
+                
+                // Update status in deposit_pool to avoid duplicate use
+                await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+                logBot(`✅ [Bot-Deposit] Verified by gateway (reference matched) on attempt ${attempt + 1}. Payer: ${realSenderName}`);
+                break;
               }
 
               if (attempt < 14) {
@@ -4264,16 +4253,25 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               }
             }
 
-            if (!smsRecordFound && !autoVerifyFailedReason) {
-              autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+            if (!smsRecordFound) {
+              // Gateway didn't receive it (yet) - perform text mismatch validation for manual submission
+              if (!isReceiverVerified) {
+                const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+                const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+                autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
+              } else {
+                autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+              }
             }
           }
         }
       }
 
-      // 3. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
-      if (isVerifiedBySMS && txId && targetAmount && Math.abs(targetAmount - Number(amount)) < 0.01) {
-        // Double-check duplicates in DB
+      // 4. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
+      if (isVerifiedBySMS && txId && smsRecordFound) {
+        const creditAmount = Number(smsRecordFound.amount) || targetAmount;
+
+        // Double-check duplicates in DB just to be absolutely sure
         const { data: duplicateTxsCheck } = await supabase
           .from('transactions')
           .select('id')
@@ -4292,7 +4290,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         // Auto approve!
         const result = await txManager.modifyBalance(
           userId,
-          targetAmount,
+          creditAmount,
           'reward',
           `Deposit Auto-Approved (Ref: ${txId})`
         );
@@ -4308,14 +4306,14 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
           const escapedUsername = escapeHTML(username);
           const gatewayBadge = " [Gateway ✅]";
-          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${creditAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
 
           // Notify admins of success
-          const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY & NAME MATCH</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
+          const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
           const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
             `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
             `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
-            `💰 <b>Amount:</b> <b>${targetAmount.toLocaleString()} ETB</b>\n` +
+            `💰 <b>Amount:</b> <b>${creditAmount.toLocaleString()} ETB</b>\n` +
             `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
             `🧾 <b>Ref ID:</b> <code>${txId}</code>\n` +
             `${verificationBadge}\n\n` +
@@ -4331,7 +4329,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
           // Send confirmation message to the user
           const userApprovedMsg = (promptsConfig.deposit_approved_msg || "✅ *ማስገባትዎ ተረጋግጧል!*\n\n💰 *{amount} ብር* በWalletዎ ውስጥ ገብቷል።\n🧾 *Ref:* `{ref}`")
-            .replace(/{amount}/g, targetAmount.toLocaleString())
+            .replace(/{amount}/g, creditAmount.toLocaleString())
             .replace(/{ref}/g, txId);
           await bot.sendMessage(chatId, userApprovedMsg, { parse_mode: "Markdown" });
 
@@ -8571,7 +8569,7 @@ const withdrawalCooldowns = new Map<string, number>();
       const request = pendingRequests.get(requestId);
 
       if (!request) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." });
+        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." }).catch(() => {});
         return;
       }
 
@@ -8601,7 +8599,7 @@ const withdrawalCooldowns = new Map<string, number>();
         const escapedUsername = escapeHTML(request.username);
 
         // Send confirmation to User
-        const successMsg = promptsConfig.deposit_approved_msg
+        const successMsg = (promptsConfig.deposit_approved_msg || "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`")
           .replace(/{amount}/g, request.amount.toLocaleString())
           .replace(/{ref}/g, refCode);
         await bot.sendMessage(request.chatId, successMsg, { parse_mode: "Markdown" });
@@ -8639,7 +8637,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
       } catch (err) {
         console.error("Failed to approve deposit:", err);
-        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing deposit." });
+        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing deposit." }).catch(() => {});
       }
       return;
     }
@@ -8650,13 +8648,13 @@ const withdrawalCooldowns = new Map<string, number>();
       const request = pendingRequests.get(requestId);
 
       if (!request) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." });
+        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." }).catch(() => {});
         return;
       }
 
       try {
         // Send decline notification to User
-        const declineMsg = promptsConfig.deposit_declined_msg
+        const declineMsg = (promptsConfig.deposit_declined_msg || "❌ *Your deposit of {amount} ETB is Declined.*")
           .replace(/{amount}/g, request.amount.toLocaleString());
         await bot.sendMessage(request.chatId, declineMsg, { parse_mode: "Markdown" });
 
@@ -8665,7 +8663,7 @@ const withdrawalCooldowns = new Map<string, number>();
         savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
         // Acknowledge Admin click
-        bot.answerCallbackQuery(query.id, { text: "❌ Deposit Declined" });
+        bot.answerCallbackQuery(query.id, { text: "❌ Deposit Declined" }).catch(() => {});
 
         // Update Admin inline message
         const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
@@ -8693,7 +8691,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
       } catch (err) {
         console.error("Failed to decline deposit:", err);
-        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing decline." });
+        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing decline." }).catch(() => {});
       }
       return;
     }
@@ -8704,7 +8702,7 @@ const withdrawalCooldowns = new Map<string, number>();
       const request = pendingRequests.get(requestId);
 
       if (!request) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." });
+        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." }).catch(() => {});
         return;
       }
 
@@ -8722,7 +8720,7 @@ const withdrawalCooldowns = new Map<string, number>();
         const escapedUsername = escapeHTML(request.username);
 
         // Send confirmation to User
-        const successMsg = promptsConfig.withdraw_approved_msg
+        const successMsg = (promptsConfig.withdraw_approved_msg || "✅ *Your withdrawal of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`")
           .replace(/{amount}/g, request.amount.toLocaleString())
           .replace(/{ref}/g, refCode);
         await bot.sendMessage(request.chatId, successMsg, { parse_mode: "Markdown" });
@@ -8732,7 +8730,7 @@ const withdrawalCooldowns = new Map<string, number>();
         pendingRequests.delete(requestId);
         savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
-        bot.answerCallbackQuery(query.id, { text: "✅ Withdrawal Approved!" });
+        bot.answerCallbackQuery(query.id, { text: "✅ Withdrawal Approved!" }).catch(() => {});
 
         // Update Admin inline message
         const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
@@ -8759,7 +8757,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
       } catch (err) {
         console.error("Failed to approve withdrawal:", err);
-        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing approval." });
+        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing approval." }).catch(() => {});
       }
       return;
     }
@@ -8770,7 +8768,7 @@ const withdrawalCooldowns = new Map<string, number>();
       const request = pendingRequests.get(requestId);
 
       if (!request) {
-        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." });
+        bot.answerCallbackQuery(query.id, { text: "❌ Request not found or already processed." }).catch(() => {});
         return;
       }
 
@@ -8784,14 +8782,14 @@ const withdrawalCooldowns = new Map<string, number>();
         );
 
         if (!result.success) {
-          bot.answerCallbackQuery(query.id, { text: `❌ Refund failed: ${result.error || 'Database error'}` });
+          bot.answerCallbackQuery(query.id, { text: `❌ Refund failed: ${result.error || 'Database error'}` }).catch(() => {});
           return;
         }
 
         const refundedBalance = result.newBalance;
 
         // Send detailed Decline & Refund message to user
-        const declineMsg = promptsConfig.withdraw_declined_msg
+        const declineMsg = (promptsConfig.withdraw_declined_msg || "❌ *Withdrawal Declined*\n\nYour withdrawal of *{amount} Birr* was declined and refunded.")
           .replace(/{amount}/g, request.amount.toLocaleString())
           .replace(/{balance}/g, refundedBalance.toLocaleString());
         await bot.sendMessage(request.chatId, declineMsg, { parse_mode: "Markdown" });
@@ -8803,7 +8801,7 @@ const withdrawalCooldowns = new Map<string, number>();
         pendingRequests.delete(requestId);
         savePendingRequestsToDB().catch(e => logBot(`Error saving pending requests: ${e.message}`));
 
-        bot.answerCallbackQuery(query.id, { text: "❌ Withdrawal Declined" });
+        bot.answerCallbackQuery(query.id, { text: "❌ Withdrawal Declined" }).catch(() => {});
 
         // Update Admin inline message
         const rawAdminUsername = query.from.username || query.from.first_name || "Admin";
@@ -8831,7 +8829,7 @@ const withdrawalCooldowns = new Map<string, number>();
 
       } catch (err) {
         console.error("Failed to decline and refund withdrawal:", err);
-        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing withdrawal refund." });
+        bot.answerCallbackQuery(query.id, { text: "⚠️ Error processing withdrawal refund." }).catch(() => {});
       }
       return;
     }
