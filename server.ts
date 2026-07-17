@@ -426,7 +426,7 @@ async function startServer() {
 
       // 2. Try Automatic Parsing & Verification
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
-      const { extractSenderName, verifyNameMatch } = await import("./src/server/smsParser.js");
+      const { extractSenderName } = await import("./src/server/smsParser.js");
       const { getPromptsConfig } = await import("./src/server/telegramBot.js");
 
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
@@ -516,22 +516,15 @@ async function startServer() {
                 console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
                 
                 if (Math.abs(smsAmount - targetAmount) < 0.01) {
-                  // Use database-stored sender_name or fallback to extracting from raw text
+                  // Skip Telegram-versus-bank name matching restriction, since Telegram users rarely use their legal/official bank names.
+                  // Just retrieve/extract the real depositor name for reference and audit logging.
                   const realDepositorName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
-                  const isDepositorVerified = verifyNameMatch(realDepositorName, fullName, username);
                   
-                  console.log(`🔍 [Deposit] Name Verification Result - Real Depositor: "${realDepositorName}", Telegram Name: "${fullName}", Username: "${username}", Matched: ${isDepositorVerified}`);
-
-                  if (isDepositorVerified) {
-                    isVerifiedBySMS = true;
-                    nameVerificationMsg = `Payer Name Verified: ${realDepositorName}`;
-                    await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-                    console.log(`✅ [Deposit] Verified by gateway with Name Verification on attempt ${attempt + 1}`);
-                  } else {
-                    console.warn(`⚠️ [Deposit] Depositor name mismatch! Real: "${realDepositorName}", Telegram: "${fullName}" / "@${username}"`);
-                    nameVerificationMsg = `Mismatch (Real: ${realDepositorName || "Unknown"}, Telegram Name: ${fullName})`;
-                    autoVerifyFailedReason = `Depositor/Sender Name Mismatch. Payer name in bank SMS ("${realDepositorName || 'Unknown'}") does not match Telegram name ("${fullName}") or username ("@${username}").`;
-                  }
+                  isVerifiedBySMS = true;
+                  nameVerificationMsg = realDepositorName ? `Payer Name: ${realDepositorName}` : "Payer Name: Not Provided";
+                  
+                  await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+                  console.log(`✅ [Deposit] Verified by gateway (reference and amount matched) on attempt ${attempt + 1}. Payer: ${realDepositorName}`);
                   break;
                 } else {
                   console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
