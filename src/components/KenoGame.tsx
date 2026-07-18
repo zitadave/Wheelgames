@@ -396,7 +396,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                           <Ball3D 
                             number={drawNumbers[currentDrawIndex]} 
                             size="lg" 
-                            isMatch={selectedNumbers.includes(drawNumbers[currentDrawIndex])} 
+                            isMatch={selectedNumbers.includes(drawNumbers[currentDrawIndex]) || activeTickets.some(t => t.numbers.includes(drawNumbers[currentDrawIndex]))} 
                           />
                         </motion.div>
                       )}
@@ -418,7 +418,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                     const isCurrent = i === currentDrawIndex;
                     const num = (i < currentDrawIndex || (isCurrent && !isBallInHeader)) 
                                  ? drawNumbers[i] : null;
-                    const isMatch = num !== null && selectedNumbers.includes(num);
+                    const isMatch = num !== null && (selectedNumbers.includes(num) || activeTickets.some(t => t.numbers.includes(num)));
                     
                     return (
                       <div 
@@ -570,6 +570,9 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
               <div className="grid grid-cols-10 gap-[5px] p-2 bg-[#202c2c] border-y border-gray-800/20 mt-2">
                 {Array.from({ length: 80 }, (_, i) => i + 1).map(num => {
                   const isSelected = selectedNumbers.includes(num);
+                  const isInActiveTicket = activeTickets.some(t => t.numbers.includes(num));
+                  const isDrawn = drawNumbers.slice(0, currentDrawIndex + 1).includes(num);
+                  const isHit = isDrawn && (isSelected || isInActiveTicket);
                   const isHot = hotNumbers.includes(num);
                   const isCold = coldNumbers.includes(num);
                   
@@ -579,9 +582,13 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                       onClick={() => toggleNumber(num)}
                       className={`
                         aspect-square relative flex items-center justify-center text-[12px] sm:text-[13px] font-black transition-all rounded-lg
-                        ${isSelected 
+                        ${(isSelected || isHit) 
                           ? 'bg-[#2ecc71] text-[#202c2c] z-10 shadow-[0_6px_15px_rgba(46,204,113,0.4),inset_0_2px_4px_rgba(255,255,255,0.4),inset_0_-2px_4px_rgba(0,0,0,0.2)] scale-[1.05]' 
-                          : 'bg-[#354646] text-gray-400 hover:bg-[#405656] border border-white/5 shadow-[0_2px_4px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.05)]'
+                          : isDrawn
+                            ? 'bg-white text-[#202c2c] z-10 shadow-[0_0_15px_rgba(255,255,255,0.5)] scale-[1.02]'
+                            : isInActiveTicket
+                              ? 'bg-[#2ecc71]/40 text-white border border-[#2ecc71]/30'
+                              : 'bg-[#354646] text-gray-400 hover:bg-[#405656] border border-white/5 shadow-[0_2px_4px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.05)]'
                         }
                       `}
                     >

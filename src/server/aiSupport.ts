@@ -31,7 +31,7 @@ async function getEmbedding(text: string): Promise<number[]> {
         body: JSON.stringify({
             model: "jina-embeddings-v3",
             task: "text-matching",
-            dimensions: 1024,
+            dimensions: 768,
             late_chunking: false,
             embedding_type: "float",
             input: [text]
@@ -47,26 +47,84 @@ async function getEmbedding(text: string): Promise<number[]> {
     return result.data[0].embedding;
 }
 
+function dotProduct(a: number[], b: number[]) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return 0;
+    return a.reduce((sum, val, i) => sum + (val * (b[i] || 0)), 0);
+}
+
+function magnitude(a: number[]) {
+    if (!Array.isArray(a)) return 0;
+    return Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+}
+
+function cosineSimilarity(a: number[], b: number[]) {
+    const magA = magnitude(a);
+    const magB = magnitude(b);
+    if (magA === 0 || magB === 0) return 0;
+    return dotProduct(a, b) / (magA * magB);
+}
+
+function parseVector(v: any): number[] {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+        try {
+            return JSON.parse(v);
+        } catch (e) {
+            return v.replace(/[\[\]]/g, '').split(',').map(Number);
+        }
+    }
+    return [];
+}
+
 export async function searchKnowledgeBase(query: string): Promise<string> {
     try {
         const embedding = await getEmbedding(query);
-        // Supabase RPC call to match_knowledge_base
+        
+        // 1. Try Supabase RPC call
         const { data, error } = await supabase.rpc('match_knowledge', {
             query_embedding: embedding,
             match_threshold: 0.5,
             match_count: 5,
         });
 
+        let results = data;
+
+        // 2. Fallback to manual similarity search if RPC fails
         if (error) {
-            console.error("Supabase RPC error (match_knowledge):", error);
-            return "Error searching knowledge base.";
+            if (!error.message.includes("structure of query does not match function result type")) {
+                console.error("Supabase RPC error:", error.message);
+            }
+            
+            const { data: allKnowledge, error: fetchError } = await supabase
+                .from('knowledge_base')
+                .select('content, embedding');
+            
+            if (fetchError) {
+                console.error("Manual fetch error:", fetchError);
+                return "Error searching knowledge base.";
+            }
+
+            if (allKnowledge) {
+                const mapped = allKnowledge
+                    .map(item => {
+                        const itemEmbedding = parseVector(item.embedding);
+                        return {
+                            content: item.content,
+                            similarity: cosineSimilarity(embedding, itemEmbedding)
+                        };
+                    })
+                    .filter(item => item.similarity > 0.5)
+                    .sort((a, b) => b.similarity - a.similarity)
+                    .slice(0, 5);
+                results = mapped;
+            }
         }
 
-        if (!data || data.length === 0) {
+        if (!results || results.length === 0) {
             return "No relevant information found in the knowledge base.";
         }
 
-        return data.map((item: any) => `- ${item.content}`).join("\n\n");
+        return results.map((item: any) => `- ${item.content}`).join("\n\n");
     } catch (err: any) {
         console.error("RAG search error:", err.message);
         return "Failed to retrieve knowledge base information.";
@@ -76,33 +134,28 @@ export async function searchKnowledgeBase(query: string): Promise<string> {
 const chatHistories = new Map<string, any[]>();
 
 export function sanitizeHistory(history: any[]): any[] {
-  const clean: any[] = [];
   if (!Array.isArray(history)) return [];
+  const clean: any[] = [];
+  
   for (const msg of history) {
     if (!msg || typeof msg !== "object") continue;
     
-    let content = "";
-    if (typeof msg.content === "string") {
-      content = msg.content;
-    } else if (Array.isArray(msg.parts) && msg.parts.length > 0 && typeof msg.parts[0].text === "string") {
-      content = msg.parts[0].text;
-    }
-    
-    if (!content) continue;
+    const role = msg.role;
+    const content = msg.content || "";
+    const tool_calls = msg.tool_calls;
+    const tool_call_id = msg.tool_call_id;
+    const name = msg.name;
 
-    const role = (msg.role === "assistant" || msg.role === "model") ? "assistant" : "user";
-    
-    if (clean.length === 0) {
-      if (role === "user") {
-        clean.push({ role, content });
-      }
-    } else {
-      const last = clean[clean.length - 1];
-      if (last.role !== role) {
-        clean.push({ role, content });
-      } else {
-        last.content += "\n" + content;
-      }
+    if (role === "system") {
+      clean.push({ role, content });
+    } else if (role === "user") {
+      clean.push({ role, content });
+    } else if (role === "assistant" || role === "model") {
+      const assistantMsg: any = { role: "assistant", content };
+      if (tool_calls) assistantMsg.tool_calls = tool_calls;
+      clean.push(assistantMsg);
+    } else if (role === "tool") {
+      clean.push({ role, content, tool_call_id, name });
     }
   }
   return clean;
@@ -130,61 +183,41 @@ export async function addKnowledgeChunk(content: string, metadata: any = {}): Pr
 
 export async function handleSupportChat(telegramId: string, message: string, oldHistoryArg: any[], isAdmin: boolean = false): Promise<{ text: string, escalate?: boolean, reason?: string, interactionId?: string, error?: boolean }> {
   try {
-    // 1. Pre-fetch basic user details from Supabase
     let userContext = `\n\nCURRENT USER CONTEXT:\n- Telegram ID: ${telegramId}`;
     let isBlocked = false;
     try {
       const { data: userData } = await supabase.from("users").select("username, balance, is_blocked_bot").eq("id", telegramId).single();
       if (userData) {
-        if (userData.is_blocked_bot) {
-            isBlocked = true;
-        }
+        if (userData.is_blocked_bot) isBlocked = true;
         userContext += `\n- Username: @${userData.username || "N/A"}\n- Current Balance: ${userData.balance || 0} ETB`;
       }
-    } catch (e) {
-      // Ignore pre-fetch errors
-    }
+    } catch (e) {}
 
     if (isBlocked && !isAdmin) {
         return {
-            text: "ይቅርታ፣ እርስዎ ይህን አገልግሎት እንዳይጠቀሙ ታግደዋል። ተጨማሪ መረጃ ከፈለጉ እባክዎን በቀጥታ @scofiled1 ያነጋግሩ።\n\nSorry, you have been blocked from using the AI support bot. For more info, please contact @scofiled1 directly.",
-            error: true,
-            interactionId: "blocked_" + Date.now()
+            text: "ይቅርታ፣ እርስዎ ይህን አገልግሎት እንዳይጠቀሙ ታግደዋል። ተጨማሪ መረጃ ከፈለጉ እባክዎን በቀጥታ @scofiled1 ያነጋግሩ።",
+            error: true
         };
     }
 
-    let systemInstruction = "You are the primary AI Support Assistant for ETB Game Hub. You are a Llama 3.3 model hosted on Groq. Provide helpful, polite, and accurate support in Amharic and English. \n\nAMHARIC GUIDELINES:\n- Use natural, modern Amharic (Ethiopic script).\n- Be respectful and polite (use 'እባክዎ', 'እናመሰግናለን').\n- Ensure technical terms (like 'Deposit', 'Withdraw', 'Balance') are explained clearly or used alongside their English counterparts if common.\n- Avoid robotic translations; sound like a friendly Ethiopian support agent.\n\nRAG INSTRUCTIONS:\n- Use the 'search_knowledge_base' tool whenever the user asks about platform rules, game mechanics, or how to perform actions (deposit, withdraw, etc.).\n- If the knowledge base returns information, summarize it accurately for the user.";
+    let systemInstruction = "You are the AI Support Assistant for ETB Game Hub. Provide helpful, polite support in Amharic and English. Use natural Amharic (Ethiopic script).\n\nTOOLS:\n- Use 'search_knowledge_base' to look up platform rules, game mechanics, etc.\n- ALWAYS call the tool first if you are unsure.";
     try {
       const { data: configData, error: configError } = await supabase.from("bot_config").select("value").eq("key", "ai_system_instruction").single();
-      if (!configError && configData?.value) {
-        systemInstruction = configData.value + "\n\nCRITICAL: Always use the 'search_knowledge_base' tool if you need to look up specific platform rules, deposit steps, or help information to ensure accuracy.";
-      }
-    } catch (dbErr) {
-      console.warn("AI Support warning: Could not fetch system instructions from database, using default:", dbErr);
-    }
+      if (!configError && configData?.value) systemInstruction = configData.value;
+    } catch (dbErr) {}
 
-    if (isAdmin) {
-      systemInstruction += "\n\nADMIN PRIVILEGES: You are talking to an admin. You can use tools to check data for ANY user ID they provide.";
-    }
-
+    if (isAdmin) systemInstruction += "\n\nADMIN: You can check data for ANY user ID.";
     systemInstruction += userContext;
-    systemInstruction += "\n\nCRITICAL: Do NOT ask the user for their Telegram ID if they ask for their balance or history. You already have it. Just call the tools directly.";
 
-    // 2. Setup tools for Groq (OpenAI style)
     const tools: any[] = [
       {
         type: "function",
         function: {
           name: "search_knowledge_base",
-          description: "Searches the ETB Game Hub documentation and knowledge base for answers regarding game rules, platform policies, and general help. Use this whenever the user asks 'how to', 'what is', or about game mechanics.",
+          description: "Searches documentation for game rules, platform policies, and help.",
           parameters: {
             type: "object",
-            properties: {
-              query: {
-                type: "string",
-                description: "The search query in English or Amharic."
-              }
-            },
+            properties: { query: { type: "string" } },
             required: ["query"]
           }
         }
@@ -192,49 +225,11 @@ export async function handleSupportChat(telegramId: string, message: string, old
       {
         type: "function",
         function: {
-          name: "add_to_knowledge_base",
-          description: "ADMIN ONLY. Adds a new piece of information to the knowledge base. Use this to seed documentation or save important FAQs.",
-          parameters: {
-            type: "object",
-            properties: {
-              content: {
-                type: "string",
-                description: "The text information to store."
-              }
-            },
-            required: ["content"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
           name: "get_user_profile",
-          description: "Fetches the current user's balance and registration details. You do NOT need to ask for their ID; you can call this tool directly for the current user.",
+          description: "Fetches user balance and details.",
           parameters: {
             type: "object",
-            properties: {
-              telegram_id: {
-                type: "string",
-                description: "Optional. The Telegram ID of a specific user to check. If omitted, the current user's profile is fetched."
-              }
-            }
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "get_transaction_summary",
-          description: "Fetches recent deposits and withdrawals for the user. You can call this directly for the current user without asking for their ID.",
-          parameters: {
-            type: "object",
-            properties: {
-              telegram_id: {
-                type: "string",
-                description: "Optional. The Telegram ID of a specific user to check."
-              }
-            }
+            properties: { telegram_id: { type: "string" } }
           }
         }
       },
@@ -242,71 +237,26 @@ export async function handleSupportChat(telegramId: string, message: string, old
         type: "function",
         function: {
           name: "escalate_to_human",
-          description: "Triggers a connection to a human support agent.",
+          description: "Connects user to a human agent.",
           parameters: {
             type: "object",
-            properties: {
-              reason: {
-                type: "string",
-                description: "The reason why the user needs human assistance."
-              }
-            },
+            properties: { reason: { type: "string" } },
             required: ["reason"]
           }
         }
       }
     ];
 
-    if (isAdmin) {
-      tools.push({
-        type: "function",
-        function: {
-          name: "block_user_from_bot",
-          description: "Blocks or unblocks a user from using the AI support bot. Only available to admins.",
-          parameters: {
-            type: "object",
-            properties: {
-              telegram_id: { type: "string", description: "The Telegram ID of the user to block/unblock." },
-              block_status: { type: "boolean", description: "True to block, false to unblock." }
-            },
-            required: ["telegram_id", "block_status"]
-          }
-        }
-      });
-    }
-
-    // 3. Retrieve or initialize chat history
     if (!chatHistories.has(telegramId)) {
-      if (Array.isArray(oldHistoryArg) && oldHistoryArg.length > 0) {
-        chatHistories.set(telegramId, oldHistoryArg);
-      } else {
-        chatHistories.set(telegramId, []);
-      }
+      chatHistories.set(telegramId, Array.isArray(oldHistoryArg) ? oldHistoryArg : []);
     }
-    let history = chatHistories.get(telegramId)!;
-
-    // Append user's new prompt
-    history.push({
-      role: "user",
-      content: message
-    });
-
-    // Sanitize to guarantee alternating user/assistant roles and clean format
-    history = sanitizeHistory(history);
-
-    // Keep history bounded
-    if (history.length > 12) {
-      history.splice(0, history.length - 12);
-    }
-
+    let history = sanitizeHistory(chatHistories.get(telegramId)!);
+    history.push({ role: "user", content: message });
+    if (history.length > 10) history.splice(0, history.length - 10);
     chatHistories.set(telegramId, history);
 
-    const messages = [
-      { role: "system", content: systemInstruction },
-      ...history
-    ];
+    const messages = [{ role: "system", content: systemInstruction }, ...history];
 
-    // 4. API Call to Groq
     let response;
     try {
       const groq = getGroqClient();
@@ -315,32 +265,23 @@ export async function handleSupportChat(telegramId: string, message: string, old
         messages: messages as any,
         tools: tools,
         tool_choice: "auto",
-        temperature: 0.7,
+        temperature: 0.6,
       });
     } catch (err: any) {
       console.error("Groq API error:", err.message);
-      if (err.message.includes("401") || err.message.includes("Unauthorized") || err.message.includes("API key")) {
-         return {
-           text: "የ Groq API ቁልፍ (API Key) አልተዘጋጀም ወይም ትክክል አይደለም። እባክዎን በ AI Studio settings ውስጥ 'GROQ_API_KEY' በትክክል መገባቱን ያረጋግጡ።\n\nGroq API Key is missing or invalid. Please check your settings.",
-           error: true
-         };
+      if (err.message.includes("429") || err.status === 429) {
+          return { text: "ሰላም! 💖 የ AI አገልግሎታችን በከፍተኛ ስራ ላይ ስለሆነ ጥቂት ቆይተው ይሞክሩ።", error: true };
       }
-      if (err.message.includes("model_not_found") || err.message.includes("404")) {
-          // Fallback to 3.1 if 3.3 is not found
-          try {
-            const groq = getGroqClient();
-            response = await groq.chat.completions.create({
-              model: "llama-3.1-70b-versatile",
-              messages: messages as any,
-              tools: tools,
-              tool_choice: "auto",
-              temperature: 0.7,
-            });
-          } catch (err2: any) {
-             throw err2;
-          }
-      } else {
-        throw err;
+      // Fallback: Retry without tools
+      try {
+        const groq = getGroqClient();
+        response = await groq.chat.completions.create({
+          model: "llama-3.1-70b-versatile",
+          messages: messages as any,
+          temperature: 0.7,
+        });
+      } catch (err2: any) {
+        throw err2;
       }
     }
 
@@ -348,139 +289,54 @@ export async function handleSupportChat(telegramId: string, message: string, old
     let responseText = choice.message.content || "";
     const toolCalls = choice.message.tool_calls || [];
 
-    // 5. Handle Tool Calls
     if (toolCalls.length > 0) {
       const toolResults: any[] = [];
       let escalate = false;
       let escalateReason = "";
 
       for (const call of toolCalls) {
-        const args = JSON.parse(call.function.arguments);
-        
-        if (call.function.name === "search_knowledge_base") {
-          const results = await searchKnowledgeBase(args.query);
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: results });
-
-        } else if (call.function.name === "add_to_knowledge_base" && isAdmin) {
-          const res = await addKnowledgeChunk(args.content, { added_by: telegramId });
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(res) });
-
-        } else if (call.function.name === "get_user_profile") {
-          const targetIdentifier = args.telegram_id || telegramId;
-          let profileRes: any;
-          try {
-            let query = supabase.from("users").select("id, username, balance, created_at");
-            if (targetIdentifier.startsWith('@')) {
-              query = query.eq('username', targetIdentifier.replace('@', ''));
-            } else {
-              query = query.eq('id', targetIdentifier);
-            }
-            const { data, error } = await query.single();
-            profileRes = error ? { error: "User not found or database error." } : { data };
-          } catch (dbErr: any) {
-            profileRes = { error: `Database query failed: ${dbErr.message || dbErr}` };
+        try {
+          const args = JSON.parse(call.function.arguments);
+          if (call.function.name === "search_knowledge_base") {
+            const content = await searchKnowledgeBase(args.query);
+            toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content });
+          } else if (call.function.name === "get_user_profile") {
+            const tid = args.telegram_id || telegramId;
+            const { data } = await supabase.from("users").select("balance").eq("id", tid).single();
+            toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(data || { error: "Not found" }) });
+          } else if (call.function.name === "escalate_to_human") {
+            escalate = true;
+            escalateReason = args.reason;
+            toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: "Escalated" });
           }
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(profileRes) });
-
-        } else if (call.function.name === "get_transaction_summary") {
-          const targetIdentifier = args.telegram_id || telegramId;
-          let txRes: any;
-          try {
-            let targetId = targetIdentifier;
-            if (targetIdentifier.startsWith('@')) {
-              const { data: user } = await supabase.from('users').select('id').eq('username', targetIdentifier.replace('@', '')).single();
-              if (user) targetId = user.id;
-              else targetId = "";
-            }
-            
-            if (targetId) {
-              const { data, error } = await supabase
-                  .from("transactions")
-                  .select("amount, type, description, created_at")
-                  .eq("user_id", targetId)
-                  .order("created_at", { ascending: false })
-                  .limit(10);
-              txRes = error ? { error: "Could not fetch transactions." } : { transactions: data };
-            } else {
-              txRes = { error: "User not found for transaction history." };
-            }
-          } catch (dbErr: any) {
-            txRes = { error: `Database query failed: ${dbErr.message || dbErr}` };
-          }
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(txRes) });
-
-        } else if (call.function.name === "block_user_from_bot" && isAdmin) {
-          const { telegram_id, block_status } = args;
-          let blockRes: any;
-          try {
-            const { error } = await supabase.from("users").update({ is_blocked_bot: block_status }).eq("id", telegram_id);
-            blockRes = error ? { error: error.message } : { success: true, message: `User ${telegram_id} block status set to ${block_status}` };
-          } catch (dbErr: any) {
-            blockRes = { error: `Database block action failed: ${dbErr.message || dbErr}` };
-          }
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(blockRes) });
-
-        } else if (call.function.name === "escalate_to_human") {
-          escalate = true;
-          escalateReason = args.reason || "User requested human support.";
-          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ success: true }) });
+        } catch (e) {
+          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: "Error" });
         }
       }
 
       if (escalate) {
-        chatHistories.delete(telegramId);
-        return {
-          text: "እሺ፣ አሁን ከሰው ድጋፍ ሰጪ (@scofiled1) ጋር እያገናኘሁዎት ነው። እባክዎን ጥቂት ይጠብቁ።",
-          escalate: true,
-          reason: escalateReason,
-          interactionId: "escalated_" + Date.now()
-        };
+        return { text: "ከሰው ድጋፍ ሰጪ ጋር እያገናኘሁዎት ነው።", escalate: true, reason: escalateReason };
       }
 
-      // Second turn with tool results
       if (toolResults.length > 0) {
-        const followUpMessages = [
-          ...messages,
-          choice.message,
-          ...toolResults
-        ];
-
-        try {
-          const groq = getGroqClient();
-          const followUpResponse = await groq.chat.completions.create({
-            model: response?.model || "llama-3.3-70b-versatile",
-            messages: followUpMessages as any,
-          });
-          responseText = followUpResponse.choices[0].message.content || "";
-        } catch (fuErr: any) {
-          console.error("Groq follow-up error:", fuErr.message);
-          throw fuErr;
-        }
+        const groq = getGroqClient();
+        const followUp = await groq.chat.completions.create({
+          model: "llama-3.1-70b-versatile",
+          messages: [...messages, choice.message, ...toolResults] as any,
+        });
+        responseText = followUp.choices[0].message.content || "";
       }
     }
 
-    const finalResultText = responseText || "ይቅርታ፣ አሁን ላይ ምላሽ መስጠት አልቻልኩም። እባክዎን በቀጥታ @scofiled1 ያነጋግሩ።";
-
-    // Save model's final response to history
-    history.push({
-      role: "assistant",
-      content: finalResultText
-    });
-
-    return {
-      text: finalResultText,
-      interactionId: "turn_" + Date.now()
-    };
+    const finalResultText = responseText || "ይቅርታ፣ አሁን ላይ ምላሽ መስጠት አልቻልኩም።";
+    history.push({ role: "assistant", content: finalResultText });
+    return { text: finalResultText, interactionId: "turn_" + Date.now() };
 
   } catch (error: any) {
     console.error(`[AI Support Error] ${error.message}`);
-    
-    // Hospitality fallback
     return {
-      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። እባክዎን ጥቂት ቆይተው ይሞክሩ ወይም በቀጥታ ለዋናው የድጋፍ ሰጪ አካውንት @scofiled1 መልዕክት ይላኩ። እናመሰግናለን። 🙏",
-      error: true,
-      interactionId: "fallback_" + Date.now()
+      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። እባክዎን ጥቂት ቆይተው ይሞክሩ።",
+      error: true
     };
   }
 }
-

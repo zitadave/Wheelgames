@@ -201,15 +201,11 @@ export class BingoRoom {
         const checkResult = checkBingo(cardNumbers, this.state.calledBalls);
         
         if (checkResult.won) {
-           // Missed Call Rule: Check if the Bingo was already achieved before the last ball was called.
-           // If it was already a win before the last ball, they missed their chance for this specific card.
-           if (this.state.calledBalls.length > 1) {
-              const prevBalls = this.state.calledBalls.slice(0, -1);
-              const prevCheck = checkBingo(cardNumbers, prevBalls);
-              if (prevCheck.won) {
-                 isExpired = true;
-                 continue; // They might have another card that just achieved a fresh Bingo
-              }
+           // Missed Call Rule: A win is only valid if the last ball called is part of a winning pattern.
+           // This allows winning if a subsequent ball completes a new pattern even if an old one was missed.
+           if (!checkResult.isFresh) {
+              isExpired = true;
+              continue; 
            }
            
            won = true;
@@ -242,48 +238,54 @@ export class BingoRoom {
   }
 }
 
-function checkBingo(card: number[][], calledBalls: number[]): { won: boolean; type: string } {
+function checkBingo(card: number[][], calledBalls: number[]): { won: boolean; type: string; isFresh: boolean } {
+  if (calledBalls.length === 0) return { won: false, type: "", isFresh: false };
+  
+  const lastBall = calledBalls[calledBalls.length - 1];
   const marked = card.map(col => col.map(num => num === 0 || calledBalls.includes(num)));
+  
+  let expiredWinType = "";
+  let hasAnyWin = false;
 
-  // Check 4 corners
-  if (marked[0][0] && marked[4][0] && marked[0][4] && marked[4][4]) {
-     return { won: true, type: "4 Corners" };
+  // Helper to check a specific pattern
+  const checkPattern = (coords: [number, number][], type: string) => {
+    if (coords.every(([c, r]) => marked[c][r])) {
+      hasAnyWin = true;
+      // It's a fresh win if the last ball called is part of this specific pattern
+      const isFresh = coords.some(([c, r]) => card[c][r] === lastBall);
+      if (isFresh) return { won: true, type, isFresh: true };
+      if (!expiredWinType) expiredWinType = type;
+    }
+    return null;
+  };
+
+  // 1. Check 4 corners
+  const res4c = checkPattern([[0,0], [4,0], [0,4], [4,4]], "4 Corners");
+  if (res4c) return res4c;
+
+  // 2. Check Horizontal Lines
+  for (let r = 0; r < 5; r++) {
+     const res = checkPattern([[0,r], [1,r], [2,r], [3,r], [4,r]], "Horizontal Line");
+     if (res) return res;
   }
 
-  // Check Horizontal Lines
-  for (let row = 0; row < 5; row++) {
-     let full = true;
-     for (let col = 0; col < 5; col++) {
-        if (!marked[col][row]) {
-           full = false;
-           break;
-        }
-     }
-     if (full) return { won: true, type: "Horizontal Line" };
+  // 3. Check Vertical Lines
+  for (let c = 0; c < 5; c++) {
+     const res = checkPattern([[c,0], [c,1], [c,2], [c,3], [c,4]], "Vertical Line");
+     if (res) return res;
   }
 
-  // Check Vertical Lines
-  for (let col = 0; col < 5; col++) {
-     let full = true;
-     for (let row = 0; row < 5; row++) {
-        if (!marked[col][row]) {
-           full = false;
-           break;
-        }
-     }
-     if (full) return { won: true, type: "Vertical Line" };
+  // 4. Check Diagonals
+  const resD1 = checkPattern([[0,0], [1,1], [2,2], [3,3], [4,4]], "Diagonal Line");
+  if (resD1) return resD1;
+  const resD2 = checkPattern([[0,4], [1,3], [2,2], [3,1], [4,0]], "Diagonal Line");
+  if (resD2) return resD2;
+
+  if (hasAnyWin) {
+     return { won: true, type: expiredWinType, isFresh: false };
   }
 
-  // Check Diagonals
-  let diag1 = true;
-  let diag2 = true;
-  for (let i = 0; i < 5; i++) {
-     if (!marked[i][i]) diag1 = false;
-     if (!marked[i][4 - i]) diag2 = false;
-  }
-  if (diag1 || diag2) return { won: true, type: "Diagonal Line" };
-
-  return { won: false, type: "" };
+  return { won: false, type: "", isFresh: false };
 }
 
 export function initBingoEngine(io: Server) {
