@@ -1,9 +1,6 @@
 import Groq from "groq-sdk";
 import { supabase } from "./supabase.js";
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const JINA_API_KEY = process.env.JINA_API_KEY;
-
 let groqClient: Groq | null = null;
 
 function getGroqClient(): Groq {
@@ -20,7 +17,8 @@ function getGroqClient(): Groq {
 }
 
 async function getEmbedding(text: string): Promise<number[]> {
-    if (!JINA_API_KEY) {
+    const apiKey = process.env.JINA_API_KEY;
+    if (!apiKey) {
         throw new Error("JINA_API_KEY is not set. Required for embeddings.");
     }
     
@@ -28,7 +26,7 @@ async function getEmbedding(text: string): Promise<number[]> {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${JINA_API_KEY}`
+            "Authorization": `Bearer ${apiKey}`
         },
         body: JSON.stringify({
             model: "jina-embeddings-v3",
