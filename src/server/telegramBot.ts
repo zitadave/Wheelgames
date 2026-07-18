@@ -10,7 +10,7 @@ import { txManager } from "./transactionManager.js";
 import * as fs from "fs";
 import * as path from "path";
 import ExcelJS from 'exceljs';
-import { handleSupportChat } from "./aiSupport.js";
+import { handleSupportChat, addKnowledgeChunk, searchKnowledgeBase } from "./aiSupport.js";
 import { handleUsersReport, handleFinancialReport } from "./reports.js";
 import PDFDocument from "pdfkit";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle } from "docx";
@@ -1438,12 +1438,12 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "🤖 Auto Campaigns", callback_data: "control_autocamp" }
         ],
         [
-          { text: "🤖 AI Instructions", callback_data: "control_ai_instructions" },
-          { text: "🔍 User Lookup", callback_data: "control_user_lookup" }
+          { text: "🤖 AI Support Settings", callback_data: "control_ai_instructions" },
+          { text: "📚 Knowledge Base", callback_data: "control_kb_main" }
         ],
         [
-          { text: "🤝 Manage Affiliate", callback_data: "control_manage_affiliate" },
-          { text: "📢 Announcements", callback_data: "control_announcements" }
+          { text: "🔍 User Lookup", callback_data: "control_user_lookup" },
+          { text: "🤝 Manage Affiliate", callback_data: "control_manage_affiliate" }
         ],
         [
           { text: "👥 Users Report", callback_data: "control_users_report" },
@@ -1723,18 +1723,19 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       currentInstruction = "<i>Error loading instructions.</i>";
     }
 
-    const text = `🤖 <b>AI System Instructions</b>\n\n` +
-                 `These instructions define what the AI knows and how it behaves.\n\n` +
-                 `📜 <b>Current Instruction:</b>\n` +
+    const text = `🤖 <b>AI Support Assistant Settings</b>\n\n` +
+                 `Configure how the AI interacts with users and manage the information it knows.\n\n` +
+                 `📜 <b>Current System Instructions:</b>\n` +
                  `----------------------------------------\n` +
                  `${currentInstruction}\n` +
                  `----------------------------------------\n\n` +
-                 `👇 Click the button below to update these instructions.`;
+                 `💡 <b>Tip:</b> Use the Knowledge Base to give the AI specific data about games, rules, and procedures without cluttering these instructions.`;
 
     const keyboard = {
       inline_keyboard: [
-        [{ text: "📝 Edit Instructions", callback_data: "control_ai_edit" }],
-        [{ text: "🔙 Back", callback_data: "control_edit" }]
+        [{ text: "📝 Edit System Instructions", callback_data: "control_ai_edit" }],
+        [{ text: "📚 Manage Knowledge Base (RAG)", callback_data: "control_kb_main" }],
+        [{ text: "🔙 Back to Control Panel", callback_data: "control_back" }]
       ]
     };
 
@@ -1743,6 +1744,31 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
     } else {
       bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
+  async function renderKBPanel(chatId: number, messageId?: number) {
+    try {
+      const { count } = await supabase.from('knowledge_base').select('*', { count: 'exact', head: true });
+      const text = `📚 <b>Knowledge Base (RAG)</b>\n\n` +
+                   `Total chunks in database: <b>${count || 0}</b>\n\n` +
+                   `The AI automatically searches this database when users ask questions. Use the buttons below to manage it.`;
+      
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "➕ Add Knowledge", callback_data: "control_kb_add" }],
+          [{ text: "🔍 Test Search", callback_data: "control_kb_search" }],
+          [{ text: "🔙 Back", callback_data: "control_ai_instructions" }]
+        ]
+      };
+
+      if (messageId) {
+        bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard });
+      } else {
+        bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+      }
+    } catch (err) {
+      bot.sendMessage(chatId, "❌ Error loading knowledge base stats.");
     }
   }
 
@@ -3304,6 +3330,51 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         logBot(`Error updating AI instructions: ${err.message}`);
         await bot.sendMessage(chatId, "❌ Failed to update instructions. Please try again.");
       }
+      return;
+    }
+
+    if (editState && editState.step === 'editing_kb_chunk') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Cancelled.");
+        await renderKBPanel(chatId);
+        return;
+      }
+      
+      await bot.sendMessage(chatId, "⏳ Processing and embedding...");
+      const res = await addKnowledgeChunk(text || "", { added_by: userId, timestamp: new Date().toISOString() });
+      
+      if (res.success) {
+        await bot.sendMessage(chatId, "✅ Information added to Knowledge Base!");
+      } else {
+        await bot.sendMessage(chatId, `❌ Failed to add: ${res.error}`);
+      }
+      userStates.set(userId, { step: 'idle' });
+      await renderKBPanel(chatId);
+      return;
+    }
+
+    if (editState && editState.step === 'searching_kb') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Cancelled.");
+        await renderKBPanel(chatId);
+        return;
+      }
+      
+      await bot.sendMessage(chatId, "🔍 <b>Searching Knowledge Base...</b>", { parse_mode: "HTML" });
+      const results = await searchKnowledgeBase(text || "");
+      await bot.sendMessage(chatId, `📖 <b>Top Matches for "${text}":</b>\n\n${results}`, { parse_mode: "HTML" });
+      userStates.set(userId, { step: 'idle' });
+      await renderKBPanel(chatId);
       return;
     }
 
@@ -5374,6 +5445,38 @@ const withdrawalCooldowns = new Map<string, number>();
       userStates.set(userId, { step: "editing_ai_instructions" });
       await bot.answerCallbackQuery(query.id);
       await bot.sendMessage(chatId, "📝 <b>Edit AI System Instructions</b>\n\nPlease send the new system instructions for the AI Support Assistant.\n\n<i>This will define how the AI behaves, what it knows about the game, and its safety rules.</i>\n\nType /cancel to abort.", { parse_mode: "HTML" });
+      return;
+    }
+
+    if (data === "control_kb_main") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      await renderKBPanel(chatId, messageId);
+      return;
+    }
+
+    if (data === "control_kb_add") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      userStates.set(userId, { step: "editing_kb_chunk" });
+      await bot.answerCallbackQuery(query.id);
+      await bot.sendMessage(chatId, "📝 <b>Add to Knowledge Base</b>\n\nPlease send the text you want the AI to remember.\n\nType /cancel to abort.", { parse_mode: "HTML" });
+      return;
+    }
+
+    if (data === "control_kb_search") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      userStates.set(userId, { step: "searching_kb" });
+      await bot.answerCallbackQuery(query.id);
+      await bot.sendMessage(chatId, "🔍 <b>Test Knowledge Base Search</b>\n\nPlease send a question or keyword to test what the AI finds in the database.\n\nType /cancel to abort.", { parse_mode: "HTML" });
       return;
     }
 

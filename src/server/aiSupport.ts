@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import { supabase } from "./supabase.js";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const JINA_API_KEY = process.env.JINA_API_KEY;
 
 let groqClient: Groq | null = null;
 
@@ -16,6 +17,62 @@ function getGroqClient(): Groq {
     });
   }
   return groqClient;
+}
+
+async function getEmbedding(text: string): Promise<number[]> {
+    if (!JINA_API_KEY) {
+        throw new Error("JINA_API_KEY is not set. Required for embeddings.");
+    }
+    
+    const response = await fetch("https://api.jina.ai/v1/embeddings", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${JINA_API_KEY}`
+        },
+        body: JSON.stringify({
+            model: "jina-embeddings-v3",
+            task: "text-matching",
+            dimensions: 1024,
+            late_chunking: false,
+            embedding_type: "float",
+            input: [text]
+        })
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(`Jina API error: ${JSON.stringify(error)}`);
+    }
+
+    const result = await response.json();
+    return result.data[0].embedding;
+}
+
+export async function searchKnowledgeBase(query: string): Promise<string> {
+    try {
+        const embedding = await getEmbedding(query);
+        // Supabase RPC call to match_knowledge_base
+        const { data, error } = await supabase.rpc('match_knowledge', {
+            query_embedding: embedding,
+            match_threshold: 0.5,
+            match_count: 5,
+        });
+
+        if (error) {
+            console.error("Supabase RPC error (match_knowledge):", error);
+            return "Error searching knowledge base.";
+        }
+
+        if (!data || data.length === 0) {
+            return "No relevant information found in the knowledge base.";
+        }
+
+        return data.map((item: any) => `- ${item.content}`).join("\n\n");
+    } catch (err: any) {
+        console.error("RAG search error:", err.message);
+        return "Failed to retrieve knowledge base information.";
+    }
 }
 
 const chatHistories = new Map<string, any[]>();
@@ -57,6 +114,22 @@ export function clearAiSupportHistory(telegramId: string) {
   chatHistories.delete(telegramId);
 }
 
+export async function addKnowledgeChunk(content: string, metadata: any = {}): Promise<{ success: boolean; error?: string }> {
+    try {
+        const embedding = await getEmbedding(content);
+        const { error } = await supabase.from('knowledge_base').insert({
+            content,
+            embedding,
+            metadata
+        });
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error("Error adding knowledge chunk:", err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 export async function handleSupportChat(telegramId: string, message: string, oldHistoryArg: any[], isAdmin: boolean = false): Promise<{ text: string, escalate?: boolean, reason?: string, interactionId?: string, error?: boolean }> {
   try {
     // 1. Pre-fetch basic user details from Supabase
@@ -82,11 +155,11 @@ export async function handleSupportChat(telegramId: string, message: string, old
         };
     }
 
-    let systemInstruction = "You are the primary AI Support Assistant for ETB Game Hub. You are a Llama 3.3 model hosted on Groq. Provide helpful, polite, and accurate support in Amharic and English.";
+    let systemInstruction = "You are the primary AI Support Assistant for ETB Game Hub. You are a Llama 3.3 model hosted on Groq. Provide helpful, polite, and accurate support in Amharic and English. \n\nAMHARIC GUIDELINES:\n- Use natural, modern Amharic (Ethiopic script).\n- Be respectful and polite (use 'እባክዎ', 'እናመሰግናለን').\n- Ensure technical terms (like 'Deposit', 'Withdraw', 'Balance') are explained clearly or used alongside their English counterparts if common.\n- Avoid robotic translations; sound like a friendly Ethiopian support agent.\n\nRAG INSTRUCTIONS:\n- Use the 'search_knowledge_base' tool whenever the user asks about platform rules, game mechanics, or how to perform actions (deposit, withdraw, etc.).\n- If the knowledge base returns information, summarize it accurately for the user.";
     try {
       const { data: configData, error: configError } = await supabase.from("bot_config").select("value").eq("key", "ai_system_instruction").single();
       if (!configError && configData?.value) {
-        systemInstruction = configData.value;
+        systemInstruction = configData.value + "\n\nCRITICAL: Always use the 'search_knowledge_base' tool if you need to look up specific platform rules, deposit steps, or help information to ensure accuracy.";
       }
     } catch (dbErr) {
       console.warn("AI Support warning: Could not fetch system instructions from database, using default:", dbErr);
@@ -101,6 +174,40 @@ export async function handleSupportChat(telegramId: string, message: string, old
 
     // 2. Setup tools for Groq (OpenAI style)
     const tools: any[] = [
+      {
+        type: "function",
+        function: {
+          name: "search_knowledge_base",
+          description: "Searches the ETB Game Hub documentation and knowledge base for answers regarding game rules, platform policies, and general help. Use this whenever the user asks 'how to', 'what is', or about game mechanics.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "The search query in English or Amharic."
+              }
+            },
+            required: ["query"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "add_to_knowledge_base",
+          description: "ADMIN ONLY. Adds a new piece of information to the knowledge base. Use this to seed documentation or save important FAQs.",
+          parameters: {
+            type: "object",
+            properties: {
+              content: {
+                type: "string",
+                description: "The text information to store."
+              }
+            },
+            required: ["content"]
+          }
+        }
+      },
       {
         type: "function",
         function: {
@@ -252,7 +359,15 @@ export async function handleSupportChat(telegramId: string, message: string, old
       for (const call of toolCalls) {
         const args = JSON.parse(call.function.arguments);
         
-        if (call.function.name === "get_user_profile") {
+        if (call.function.name === "search_knowledge_base") {
+          const results = await searchKnowledgeBase(args.query);
+          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: results });
+
+        } else if (call.function.name === "add_to_knowledge_base" && isAdmin) {
+          const res = await addKnowledgeChunk(args.content, { added_by: telegramId });
+          toolResults.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify(res) });
+
+        } else if (call.function.name === "get_user_profile") {
           const targetIdentifier = args.telegram_id || telegramId;
           let profileRes: any;
           try {
@@ -364,7 +479,7 @@ export async function handleSupportChat(telegramId: string, message: string, old
     
     // Hospitality fallback
     return {
-      text: `ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። እባክዎን ጥቂት ቆይተው ይሞክሩ።\n\n(Debug Error: ${error.message})`,
+      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። እባክዎን ጥቂት ቆይተው ይሞክሩ ወይም በቀጥታ ለዋናው የድጋፍ ሰጪ አካውንት @scofiled1 መልዕክት ይላኩ። እናመሰግናለን። 🙏",
       error: true,
       interactionId: "fallback_" + Date.now()
     };
