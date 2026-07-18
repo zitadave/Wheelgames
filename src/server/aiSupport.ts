@@ -2,13 +2,21 @@ import Groq from "groq-sdk";
 import { supabase } from "./supabase.js";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-if (!GROQ_API_KEY) {
-  console.warn("⚠️ GROQ_API_KEY is not set in environment variables. AI Support will not function.");
-}
 
-const groq = new Groq({
-  apiKey: GROQ_API_KEY || "dummy_key_to_prevent_immediate_crash"
-});
+let groqClient: Groq | null = null;
+
+function getGroqClient(): Groq {
+  if (!groqClient) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error("GROQ_API_KEY is not set. Please add it to your environment variables.");
+    }
+    groqClient = new Groq({
+      apiKey: apiKey,
+    });
+  }
+  return groqClient;
+}
 
 const chatHistories = new Map<string, any[]>();
 
@@ -74,7 +82,7 @@ export async function handleSupportChat(telegramId: string, message: string, old
         };
     }
 
-    let systemInstruction = "You are the primary AI Support Assistant for ETB Game Hub. Provide helpful, polite, and accurate support in Amharic and English.";
+    let systemInstruction = "You are the primary AI Support Assistant for ETB Game Hub. You are a Llama 3.3 model hosted on Groq. Provide helpful, polite, and accurate support in Amharic and English.";
     try {
       const { data: configData, error: configError } = await supabase.from("bot_config").select("value").eq("key", "ai_system_instruction").single();
       if (!configError && configData?.value) {
@@ -196,8 +204,9 @@ export async function handleSupportChat(telegramId: string, message: string, old
     // 4. API Call to Groq
     let response;
     try {
+      const groq = getGroqClient();
       response = await groq.chat.completions.create({
-        model: "llama-3.1-70b-versatile",
+        model: "llama-3.3-70b-versatile",
         messages: messages as any,
         tools: tools,
         tool_choice: "auto",
@@ -205,7 +214,29 @@ export async function handleSupportChat(telegramId: string, message: string, old
       });
     } catch (err: any) {
       console.error("Groq API error:", err.message);
-      throw err;
+      if (err.message.includes("401") || err.message.includes("Unauthorized") || err.message.includes("API key")) {
+         return {
+           text: "የ Groq API ቁልፍ (API Key) አልተዘጋጀም ወይም ትክክል አይደለም። እባክዎን በ AI Studio settings ውስጥ 'GROQ_API_KEY' በትክክል መገባቱን ያረጋግጡ።\n\nGroq API Key is missing or invalid. Please check your settings.",
+           error: true
+         };
+      }
+      if (err.message.includes("model_not_found") || err.message.includes("404")) {
+          // Fallback to 3.1 if 3.3 is not found
+          try {
+            const groq = getGroqClient();
+            response = await groq.chat.completions.create({
+              model: "llama-3.1-70b-versatile",
+              messages: messages as any,
+              tools: tools,
+              tool_choice: "auto",
+              temperature: 0.7,
+            });
+          } catch (err2: any) {
+             throw err2;
+          }
+      } else {
+        throw err;
+      }
     }
 
     const choice = response.choices[0];
@@ -302,8 +333,9 @@ export async function handleSupportChat(telegramId: string, message: string, old
         ];
 
         try {
+          const groq = getGroqClient();
           const followUpResponse = await groq.chat.completions.create({
-            model: "llama-3.1-70b-versatile",
+            model: response?.model || "llama-3.3-70b-versatile",
             messages: followUpMessages as any,
           });
           responseText = followUpResponse.choices[0].message.content || "";
@@ -332,7 +364,7 @@ export async function handleSupportChat(telegramId: string, message: string, old
     
     // Hospitality fallback
     return {
-      text: "ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። ጥያቄዎን ወይም አስተያየትዎን እባክዎ በቀጥታ ለዋናው የድጋፍ ሰጪ አካውንት @scofiled1 ይላኩ። ፈጣን ምላሽ ያገኛሉ! እናመሰግናለን። 🙏",
+      text: `ሰላም! 💖 የእኛ የደንበኞች አገልግሎት ረዳት በአሁኑ ጊዜ እጅግ በጣም ስራ ላይ ነው። እባክዎን ጥቂት ቆይተው ይሞክሩ።\n\n(Debug Error: ${error.message})`,
       error: true,
       interactionId: "fallback_" + Date.now()
     };
