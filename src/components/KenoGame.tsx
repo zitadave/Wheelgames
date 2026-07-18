@@ -576,22 +576,20 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                   const isHot = hotNumbers.includes(num);
                   const isCold = coldNumbers.includes(num);
                   
-                  return (
-                    <button 
-                      key={num}
-                      onClick={() => toggleNumber(num)}
-                      className={`
-                        aspect-square relative flex items-center justify-center text-[12px] sm:text-[13px] font-black transition-all rounded-lg
-                        ${(isSelected || isHit) 
-                          ? 'bg-[#2ecc71] text-[#202c2c] z-10 shadow-[0_6px_15px_rgba(46,204,113,0.4),inset_0_2px_4px_rgba(255,255,255,0.4),inset_0_-2px_4px_rgba(0,0,0,0.2)] scale-[1.05]' 
-                          : isDrawn
-                            ? 'bg-white text-[#202c2c] z-10 shadow-[0_0_15px_rgba(255,255,255,0.5)] scale-[1.02]'
-                            : isInActiveTicket
-                              ? 'bg-[#2ecc71]/40 text-white border border-[#2ecc71]/30'
+                    return (
+                      <button 
+                        key={num}
+                        onClick={() => toggleNumber(num)}
+                        className={`
+                          aspect-square relative flex items-center justify-center text-[12px] sm:text-[13px] font-black transition-all rounded-lg
+                          ${(isSelected || isHit) 
+                            ? 'bg-[#2ecc71] text-[#202c2c] z-10 shadow-[0_6px_15px_rgba(46,204,113,0.4),inset_0_2px_4px_rgba(255,255,255,0.4),inset_0_-2px_4px_rgba(0,0,0,0.2)] scale-[1.05]' 
+                            : isDrawn
+                              ? 'bg-white text-[#202c2c] z-10 shadow-[0_0_15px_rgba(255,255,255,0.5)] scale-[1.02]'
                               : 'bg-[#354646] text-gray-400 hover:bg-[#405656] border border-white/5 shadow-[0_2px_4px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.05)]'
-                        }
-                      `}
-                    >
+                          }
+                        `}
+                      >
                       {num}
                       {/* Hot/Cold Indicators as dots in the corners */}
                       {isHot && (
