@@ -14,6 +14,7 @@ import { handleSupportChat, addKnowledgeChunk, searchKnowledgeBase } from "./aiS
 import { handleUsersReport, handleFinancialReport } from "./reports.js";
 import PDFDocument from "pdfkit";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle } from "docx";
+import { getGameSettingsSync, saveGameSettings, isGameEnabled, getGameConfig } from "./gameSettings.js";
 
 
 let botInfo: any = (globalThis as any).telegramBotInfo || null;
@@ -48,6 +49,9 @@ async function downloadTelegramPhotoLocally(fileId: string, annId: string): Prom
 }
 
 export async function postToChannel(message: string, options?: any) {
+  if (promptsConfig && promptsConfig.tx_channel_posts_enabled === false) {
+    return;
+  }
   const channelId = getChannelId();
   if (!channelId || !botInstance) {
     console.warn("CHANNEL_ID or Bot Instance not found. Cannot post to channel.");
@@ -88,6 +92,7 @@ interface UserState {
   editingPromptId?: string;
   isSupportAI?: boolean;
   aiHistory?: any;
+  gameId?: string;
 }
 
 const userStates = new Map<string, UserState>();
@@ -312,6 +317,7 @@ interface PromptsConfig {
   referral_share_image?: string;
   referral_buttons: CustomButton[][];
   channel_id?: string;
+  tx_channel_posts_enabled?: boolean;
   custom_commands?: {
     [cmd: string]: CustomCommand;
   };
@@ -372,6 +378,7 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
   referral_share_text: "Join me on ETB Game Hub and win big!",
   referral_share_image: "",
   channel_id: "",
+  tx_channel_posts_enabled: true,
   referral_buttons: [
     [
       { text: "📢 Share to Friends", type: "url", value: "https://t.me/share/url?url=https://t.me/{bot_username}?start=ref_{user_id}&text={referral_share_text}" }
@@ -1434,6 +1441,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "📝 Edit Prompts", callback_data: "control_edit" }
         ],
         [
+          { text: "📢 Announcements", callback_data: "control_announcement_menu" }
+        ],
+        [
           { text: "🔗 Command Links", callback_data: "control_links" },
           { text: "🤖 Auto Campaigns", callback_data: "control_autocamp" }
         ],
@@ -1446,8 +1456,90 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "🤝 Manage Affiliate", callback_data: "control_manage_affiliate" }
         ],
         [
+          { text: "🎮 የጨዋታዎች መቆጣጠሪያ (Game Settings)", callback_data: "control_game_settings" }
+        ],
+        [
           { text: "👥 Users Report", callback_data: "control_users_report" },
           { text: "💰 Financial Report", callback_data: "control_financial_report" }
+        ]
+      ]
+    };
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+        .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
+  function renderGameSettingsPanel(chatId: number, messageId?: number) {
+    const settings = getGameSettingsSync();
+    let text = "🎮 <b>የጨዋታዎች መቆጣጠሪያ ፓናል (Game Settings)</b>\n\n" +
+               "በቦቱ ላይ ያሉትን ጨዋታዎች በጊዜያዊነት ማገድ (Toggle on/off)፣ አነስተኛ እና ከፍተኛ የውርርድ መጠን (Min/Max limits) ማስተካከል፣ እንዲሁም የአሸናፊነት ማባዣ ክፍያዎችን (Payout Multipliers) በቀጥታ ከዚህ ማስተካከል ይችላሉ።\n\n" +
+               "<i>የሚፈለገውን ጨዋታ በመምረጥ ማስተካከያ ያድርጉ:</i>";
+               
+    const keyboard = {
+      inline_keyboard: [] as any[]
+    };
+
+    const keys = Object.keys(settings);
+    for (const key of keys) {
+      const g = settings[key];
+      const statusEmoji = g.enabled ? "🟢" : "🔴";
+      keyboard.inline_keyboard.push([
+        { text: `${statusEmoji} ${g.nameAm}`, callback_data: `game_set_select:${g.id}` }
+      ]);
+    }
+
+    keyboard.inline_keyboard.push([
+      { text: "🔙 ወደ ዋናው ማውጫ (Back to Main)", callback_data: "game_set_back_main" }
+    ]);
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+        .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
+  function renderSingleGameSettings(chatId: number, gameId: string, messageId?: number) {
+    const g = getGameConfig(gameId);
+    if (!g) {
+      bot.sendMessage(chatId, "❌ ጨዋታው አልተገኘም።");
+      return;
+    }
+
+    const statusEmoji = g.enabled ? "🟢" : "🔴";
+    const statusTextAm = g.enabled ? "ንቁ (Enabled)" : "የታገደ (Disabled)";
+    
+    const isSlotOrBingo = g.id.startsWith("jackpot_") || g.id.startsWith("bingo_");
+    const labelMin = isSlotOrBingo ? "የቲኬት መግቢያ ዋጋ (Ticket Entry Fee)" : "ዝቅተኛ ውርርድ (Min Bet Limit)";
+    const labelMax = isSlotOrBingo ? "ከፍተኛ የቲኬት ገደብ (Max Limit)" : "ከፍተኛ ውርርድ (Max Bet Limit)";
+    const labelMult = g.id.startsWith("bingo_") ? "የአሸናፊነት ክፍያ ስርጭት (Payout Ratio)" : "የአሸናፊነት ማባዣ (Payout Multiplier)";
+
+    let text = `🎮 <b>የ${g.nameAm} ማስተካከያ ፓናል</b>\n\n` +
+               `👉 <b>ሁኔታ (Status):</b> ${statusEmoji} ${statusTextAm}\n` +
+               `👉 <b>${labelMin}:</b> <code>${g.minBet.toLocaleString()} ETB</code>\n` +
+               `👉 <b>${labelMax}:</b> <code>${g.maxBet.toLocaleString()} ETB</code>\n` +
+               `👉 <b>${labelMult}:</b> <code>${g.multiplier}x</code>\n\n` +
+               `<i>ከታች ያሉትን ቁልፎች በመጠቀም ማስተካከያ ማድረግ ይችላሉ:</i>`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: `${g.enabled ? "🔴 ጨዋታውን እገድ (Disable)" : "🟢 ጨዋታውን አንቃ (Enable)"}`, callback_data: `game_set_toggle:${g.id}` }
+        ],
+        [
+          { text: `📉 ${isSlotOrBingo ? "መግቢያ ዋጋ ቀይር" : "ዝቅተኛ ውርርድ ቀይር"}`, callback_data: `game_set_min:${g.id}` },
+          { text: `📈 ${isSlotOrBingo ? "ከፍተኛ ገደብ ቀይር" : "ከፍተኛ ውርርድ ቀይር"}`, callback_data: `game_set_max:${g.id}` }
+        ],
+        [
+          { text: `✖️ ${g.id.startsWith("bingo_") ? "የክፍያ ስርጭት ቀይር" : "የአሸናፊነት ማባዣ ቀይር"}`, callback_data: `game_set_mult:${g.id}` }
+        ],
+        [
+          { text: "🔙 ወደ ጨዋታዎች ዝርዝር (Back)", callback_data: "game_set_back_list" }
         ]
       ]
     };
@@ -1834,6 +1926,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
       buttons.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }]);
       buttons.push([{ text: "⚙️ Manage Full Announcements Dashboard", callback_data: "control_announcements" }]);
+      buttons.push([{ text: "🔙 Back to Control Panel", callback_data: "control_back" }]);
 
       const keyboard = { inline_keyboard: buttons };
 
@@ -1874,6 +1967,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
 
       rows.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }]);
+      
+      const txPostsStatus = promptsConfig.tx_channel_posts_enabled !== false ? "🟢 ON" : "🔴 OFF";
+      rows.push([{ text: `💳 Tx Channel Posts: ${txPostsStatus}`, callback_data: "ann_toggle_tx_posts" }]);
+
       rows.push([{ text: "➕ Create Custom Announcement", callback_data: "ann_create_start" }]);
       rows.push([{ text: "▶️ Force Run All Scheduler Now", callback_data: "control_test_announcement_all" }]);
       rows.push([{ text: "◀️ Back to Control Panel", callback_data: "control_panel_back" }]);
@@ -3176,6 +3273,100 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const numUserId = msg.from?.id;
     const editState = userStates.get(userId);
     logBot(`AI Support: Processing message from userId=${userId}, editState=${JSON.stringify(editState)}`);
+
+    if (editState && editState.step === 'awaiting_game_min_bet') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        renderSingleGameSettings(chatId, editState.gameId);
+        return;
+      }
+
+      const val = parseInt(text?.trim() || "");
+      if (isNaN(val) || val < 0) {
+        await bot.sendMessage(chatId, "⚠️ እባክዎ ትክክለኛ ቁጥር ያስገቡ። (Please send a valid positive number)");
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      const settings = getGameSettingsSync();
+      const gameId = editState.gameId;
+      if (settings[gameId]) {
+        settings[gameId].minBet = val;
+        await saveGameSettings(settings);
+        await bot.sendMessage(chatId, `✅ <b>የ${settings[gameId].nameAm} አነስተኛ ገደብ ተቀይሯል!</b>\n\nአዲሱ ዋጋ: <code>${val.toLocaleString()} ETB</code>`, { parse_mode: "HTML" });
+      }
+      renderSingleGameSettings(chatId, gameId);
+      return;
+    }
+
+    if (editState && editState.step === 'awaiting_game_max_bet') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        renderSingleGameSettings(chatId, editState.gameId);
+        return;
+      }
+
+      const val = parseInt(text?.trim() || "");
+      if (isNaN(val) || val < 0) {
+        await bot.sendMessage(chatId, "⚠️ እባክዎ ትክክለኛ ቁጥር ያስገቡ። (Please send a valid positive number)");
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      const settings = getGameSettingsSync();
+      const gameId = editState.gameId;
+      if (settings[gameId]) {
+        settings[gameId].maxBet = val;
+        await saveGameSettings(settings);
+        await bot.sendMessage(chatId, `✅ <b>የ${settings[gameId].nameAm} ከፍተኛ ገደብ ተቀይሯል!</b>\n\nአዲሱ ዋጋ: <code>${val.toLocaleString()} ETB</code>`, { parse_mode: "HTML" });
+      }
+      renderSingleGameSettings(chatId, gameId);
+      return;
+    }
+
+    if (editState && editState.step === 'awaiting_game_multiplier') {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        return;
+      }
+
+      if (text === "/cancel") {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        renderSingleGameSettings(chatId, editState.gameId);
+        return;
+      }
+
+      const val = parseFloat(text?.trim() || "");
+      if (isNaN(val) || val <= 0) {
+        await bot.sendMessage(chatId, "⚠️ እባክዎ ትክክለኛ ቁጥር ያስገቡ። (Please send a valid positive multiplier/ratio)");
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      const settings = getGameSettingsSync();
+      const gameId = editState.gameId;
+      if (settings[gameId]) {
+        settings[gameId].multiplier = val;
+        await saveGameSettings(settings);
+        const label = gameId.startsWith("bingo_") ? "የአሸናፊነት ክፍያ ስርጭት" : "የአሸናፊነት ማባዣ";
+        await bot.sendMessage(chatId, `✅ <b>የ${settings[gameId].nameAm} ${label} ተቀይሯል!</b>\n\nአዲሱ ማባዣ: <code>${val}x</code>`, { parse_mode: "HTML" });
+      }
+      renderSingleGameSettings(chatId, gameId);
+      return;
+    }
 
     if (editState && editState.step === 'awaiting_new_app_url_config') {
       if (!isAnyAdmin(userId)) {
@@ -5243,6 +5434,139 @@ const withdrawalCooldowns = new Map<string, number>();
       return;
     }
 
+    if (data === "control_game_settings" || data === "game_set_back_list") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      renderGameSettingsPanel(chatId, messageId);
+      return;
+    }
+
+    if (data === "game_set_back_main") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      renderMainControlPanel(chatId, messageId);
+      return;
+    }
+
+    if (data?.startsWith("game_set_select:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const gameId = data.substring("game_set_select:".length);
+      await bot.answerCallbackQuery(query.id);
+      renderSingleGameSettings(chatId, gameId, messageId);
+      return;
+    }
+
+    if (data?.startsWith("game_set_toggle:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const gameId = data.substring("game_set_toggle:".length);
+      const settings = getGameSettingsSync();
+      if (settings[gameId]) {
+        settings[gameId].enabled = !settings[gameId].enabled;
+        const saved = await saveGameSettings(settings);
+        if (saved) {
+          await bot.answerCallbackQuery(query.id, { text: `✅ ${settings[gameId].nameAm} ${settings[gameId].enabled ? "ተከፍቷል (Enabled)" : "ተዘግቷል (Disabled)"}` });
+        } else {
+          await bot.answerCallbackQuery(query.id, { text: "❌ ማስቀመጥ አልተቻለም (Failed to save)", show_alert: true });
+        }
+        renderSingleGameSettings(chatId, gameId, messageId);
+      } else {
+        await bot.answerCallbackQuery(query.id, { text: "❌ ጨዋታው አልተገኘም (Game not found)", show_alert: true });
+      }
+      return;
+    }
+
+    if (data?.startsWith("game_set_min:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const gameId = data.substring("game_set_min:".length);
+      const g = getGameConfig(gameId);
+      if (!g) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Game not found", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      userStates.set(userId, { step: "awaiting_game_min_bet", gameId });
+      
+      const isSlotOrBingo = gameId.startsWith("jackpot_") || gameId.startsWith("bingo_");
+      const label = isSlotOrBingo ? "የቲኬት መግቢያ ዋጋ (Ticket Entry Fee)" : "ዝቅተኛ ውርርድ (Min Bet Limit)";
+
+      await bot.sendMessage(chatId, 
+        `📉 <b>የ${g.nameAm} ${label} ማስተካከያ</b>\n\n` +
+        `እባክዎ አዲሱን <b>${label}</b> በቁጥር ይላኩ።\n` +
+        `የአሁኑ ዋጋ: <code>${g.minBet.toLocaleString()} ETB</code>\n\n` +
+        `<i>ለማቋረጥ /cancel ብለው ይላኩ።</i>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    if (data?.startsWith("game_set_max:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const gameId = data.substring("game_set_max:".length);
+      const g = getGameConfig(gameId);
+      if (!g) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Game not found", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      userStates.set(userId, { step: "awaiting_game_max_bet", gameId });
+      
+      const isSlotOrBingo = gameId.startsWith("jackpot_") || gameId.startsWith("bingo_");
+      const label = isSlotOrBingo ? "ከፍተኛ የቲኬት ገደብ (Max Limit)" : "ከፍተኛ ውርርድ (Max Bet Limit)";
+
+      await bot.sendMessage(chatId, 
+        `📈 <b>የ${g.nameAm} ${label} ማስተካከያ</b>\n\n` +
+        `እባክዎ አዲሱን <b>${label}</b> በቁጥር ይላኩ።\n` +
+        `የአሁኑ ዋጋ: <code>${g.maxBet.toLocaleString()} ETB</code>\n\n` +
+        `<i>ለማቋረጥ /cancel ብለው ይላኩ።</i>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    if (data?.startsWith("game_set_mult:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const gameId = data.substring("game_set_mult:".length);
+      const g = getGameConfig(gameId);
+      if (!g) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Game not found", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      userStates.set(userId, { step: "awaiting_game_multiplier", gameId });
+      
+      const label = gameId.startsWith("bingo_") ? "የአሸናፊነት ክፍያ ስርጭት (Payout Ratio)" : "የአሸናፊነት ማባዣ (Payout Multiplier)";
+
+      await bot.sendMessage(chatId, 
+        `✖️ <b>የ${g.nameAm} ${label} ማስተካከያ</b>\n\n` +
+        `እባክዎ አዲሱን <b>${label}</b> በቁጥር (ለምሳሌ: 2.0 ወይም 0.8) ይላኩ።\n` +
+        `የአሁኑ ማባዣ: <code>${g.multiplier}x</code>\n\n` +
+        `<i>ለማቋረጥ /cancel ብለው ይላኩ።</i>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
     // Provide immediate "typing..." status for better responsiveness
     bot.sendChatAction(chatId, 'typing').catch(() => {});
 
@@ -5412,8 +5736,19 @@ const withdrawalCooldowns = new Map<string, number>();
         return;
       }
       await bot.answerCallbackQuery(query.id);
-      const composer = { step: 'choose_target' as const };
+      const composer: BroadcastComposer = { step: 'choose_target', target: 'all', template: 'none' };
+      broadcastStates.set(userId, composer);
       await renderBroadcastDashboard(bot, chatId, userId, composer);
+      return;
+    }
+
+    if (data === "control_announcement_menu") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      await renderAnnouncementCmdPanel(chatId, messageId);
       return;
     }
 
@@ -6381,6 +6716,18 @@ const withdrawalCooldowns = new Map<string, number>();
       } else {
         await bot.answerCallbackQuery(query.id, { text: "❌ Announcement not found." });
       }
+      return;
+    }
+
+    if (data === "ann_toggle_tx_posts") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      promptsConfig.tx_channel_posts_enabled = promptsConfig.tx_channel_posts_enabled !== false ? false : true;
+      savePromptsConfig(promptsConfig);
+      await bot.answerCallbackQuery(query.id, { text: `Transaction channel posts are now ${promptsConfig.tx_channel_posts_enabled ? 'Enabled 🟢' : 'Disabled 🔴'}` });
+      await renderAnnouncementsDashboard(chatId, messageId);
       return;
     }
 
@@ -7808,6 +8155,10 @@ const withdrawalCooldowns = new Map<string, number>();
           // ignore
         }
         return;
+      }
+      // Auto-initialize state if missing to prevent unresponsive buttons
+      if (!broadcastStates.has(clickerId)) {
+        broadcastStates.set(clickerId, { step: 'choose_target', target: 'all', template: 'none' });
       }
     }
 

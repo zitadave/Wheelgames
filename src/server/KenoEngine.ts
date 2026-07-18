@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
+import { getGameConfig } from "./gameSettings.js";
 
 export interface KenoBet {
   id: string; // unique ticket/bet ID
@@ -188,8 +189,10 @@ class KenoEngine {
         const count = matched.length;
         
         const multList = PAYOUTS[choiceLength];
-        const multiplier = (multList && count < multList.length) ? multList[count] : 0;
-        const payoutAmount = Math.floor(bet.bet * multiplier);
+        const baseMultiplier = (multList && count < multList.length) ? multList[count] : 0;
+        const config = getGameConfig("keno");
+        const multiplierFactor = config ? config.multiplier : 1.0;
+        const payoutAmount = Math.floor(bet.bet * baseMultiplier * multiplierFactor);
 
         bet.matchedCount = count;
         bet.payoutAmount = payoutAmount;
@@ -275,7 +278,18 @@ class KenoEngine {
     if (!numbers || numbers.length < 1 || numbers.length > 10) {
       return { success: false, message: "እባክዎ ከ 1 እስከ 10 ቁጥሮች ይምረጡ። (Select 1 to 10 numbers)" };
     }
-    if (bet < 5) {
+    const config = getGameConfig("keno");
+    if (config) {
+      if (!config.enabled) {
+        return { success: false, message: "ኬኖ ጨዋታ ለጊዜው ተዘግቷል። (Keno is temporarily disabled by admin)" };
+      }
+      if (bet < config.minBet) {
+        return { success: false, message: `ዝቅተኛው ውርርድ ${config.minBet} ብር ነው። (Minimum bet is ${config.minBet} ETB)` };
+      }
+      if (bet > config.maxBet) {
+        return { success: false, message: `ከፍተኛው ውርርድ ${config.maxBet} ብር ነው። (Maximum bet is ${config.maxBet} ETB)` };
+      }
+    } else if (bet < 5) {
       return { success: false, message: "ዝቅተኛው ውርርድ 5 ብር ነው። (Minimum bet is 5 ETB)" };
     }
 

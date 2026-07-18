@@ -3,6 +3,7 @@ import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { logBot } from "./logger.js";
 import { gridRooms, saveGridState, syncFromSupabase } from "./gridState.js";
+import { getGameConfig } from "./gameSettings.js";
 
 export type Side = "even" | "odd";
 
@@ -329,7 +330,9 @@ class Room {
         
         for (const p of Object.values(this.state.players)) {
           if (p.amount > 0 && p.side === winningSide && p.userId !== "bot_house") {
-            const prize = p.amount * 2;
+            const config = getGameConfig("even_odd");
+            const prizeMult = config ? config.multiplier : 2.0;
+            const prize = p.amount * prizeMult;
             winners.push(p.userId);
             
             // Update balance in Supabase
@@ -391,6 +394,19 @@ class Room {
   public placeBet(userId: string, username: string, amount: number, side: Side, partial: boolean) {
     if (this.state.status !== "betting" || this.state.timeLeft < 5) {
       return { success: false, message: "Betting is closed for this round." };
+    }
+
+    const config = getGameConfig("even_odd");
+    if (config) {
+      if (!config.enabled) {
+        return { success: false, message: "ሞላ/ጎደለ ጨዋታ ለጊዜው ተዘግቷል። (Even/Odd is temporarily disabled by admin)" };
+      }
+      if (amount < config.minBet) {
+        return { success: false, message: `ዝቅተኛው ውርርድ ${config.minBet} ብር ነው። (Minimum bet is ${config.minBet} ETB)` };
+      }
+      if (amount > config.maxBet) {
+        return { success: false, message: `ከፍተኛው ውርርድ ${config.maxBet} ብር ነው። (Maximum bet is ${config.maxBet} ETB)` };
+      }
     }
 
     const existingBet = this.state.players[userId];
@@ -942,29 +958,45 @@ export function initGameEngine(io: Server) {
                     });
 
                     // Payout logic
-                    const config = {
-                      '1-10': { slots: 10, entry: 1000, p1: 9000 },
-                      '1-20': { slots: 20, entry: 1000, p1: 18000 },
-                      'mini': { slots: 50, entry: 2000, p1: 72000, p2: 12600, p3: 5400 },
-                      'grand': { slots: 100, entry: 2000, p1: 144000, p2: 25200, p3: 10800 }
+                    const configMap: Record<string, string> = {
+                      '1-10': 'jackpot_10',
+                      '1-20': 'jackpot_20',
+                      'mini': 'jackpot_mini',
+                      'grand': 'jackpot_grand'
                     };
-                    const roomConfig = (config as any)[data.room];
+                    const dynamicConfigKey = configMap[data.room];
+                    const gameConf = dynamicConfigKey ? getGameConfig(dynamicConfigKey) : null;
+                    
+                    const actualEntry = gameConf ? gameConf.minBet : (data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : 2000);
+                    const actualMult = gameConf ? gameConf.multiplier : (data.room === '1-10' ? 9.0 : data.room === '1-20' ? 18.0 : 1.0);
+                    
+                    let p1 = 0, p2 = 0, p3 = 0;
+                    if (data.room === '1-10' || data.room === '1-20') {
+                        p1 = actualEntry * actualMult;
+                    } else if (data.room === 'mini') {
+                        p1 = 72000 * actualMult;
+                        p2 = 12600 * actualMult;
+                        p3 = 5400 * actualMult;
+                    } else { // grand
+                        p1 = 144000 * actualMult;
+                        p2 = 25200 * actualMult;
+                        p3 = 10800 * actualMult;
+                    }
 
-                    if (roomConfig) {
-                        const winNums = [data.winners[1] || data.winners.first, data.winners[2] || data.winners.second, data.winners[3] || data.winners.third].filter(Boolean);
-                        
-                        for (let i = 0; i < winNums.length; i++) {
-                            const wNum = winNums[i];
-                            const winner = room.claimedSlots[wNum];
-                            if (winner) {
-                                let prize = 0;
-                                if (data.room === 'mini' || data.room === 'grand') {
-                                    if (i === 0) prize = roomConfig.p1;
-                                    else if (i === 1) prize = roomConfig.p2;
-                                    else prize = roomConfig.p3;
-                                } else {
-                                    prize = roomConfig.p1;
-                                }
+                    const winNums = [data.winners[1] || data.winners.first, data.winners[2] || data.winners.second, data.winners[3] || data.winners.third].filter(Boolean);
+                    
+                    for (let i = 0; i < winNums.length; i++) {
+                        const wNum = winNums[i];
+                        const winner = room.claimedSlots[wNum];
+                        if (winner) {
+                            let prize = 0;
+                            if (data.room === 'mini' || data.room === 'grand') {
+                                if (i === 0) prize = p1;
+                                else if (i === 1) prize = p2;
+                                else prize = p3;
+                            } else {
+                                prize = p1;
+                            }
 
                                 if (prize > 0) {
                                     const { txManager } = await import("./transactionManager.js");
@@ -982,7 +1014,6 @@ export function initGameEngine(io: Server) {
                             }
                         }
                     }
-                }
             } catch (err) {
                 console.error("Failed to save grid game result or payout to Supabase:", err);
             }
@@ -1002,7 +1033,19 @@ export function initGameEngine(io: Server) {
       try {
         await syncFromSupabase();
         const room = gridRooms[data.room];
-        const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
+        const configMap: Record<string, string> = {
+          '1-10': 'jackpot_10',
+          '1-20': 'jackpot_20',
+          'mini': 'jackpot_mini',
+          'grand': 'jackpot_grand'
+        };
+        const configKey = configMap[data.room];
+        const config = configKey ? getGameConfig(configKey) : null;
+        if (config && !config.enabled) {
+          if (callback) callback({ success: false, message: "ይህ ጃክፖት ጨዋታ ለጊዜው ተዘግቷል። (This jackpot room is temporarily disabled by admin)" });
+          return;
+        }
+        const entryFee = config ? config.minBet : (data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : 2000);
         const { supabase } = await import("./supabase.js");
         if (!supabase || !data.userId) {
           if (callback) callback({ success: false, message: "Unauthenticated session." });
@@ -1041,7 +1084,15 @@ export function initGameEngine(io: Server) {
     socket.on("grid_releaseSlot", async (data: { room: string, num: number, userId: string }, callback) => {
       await syncFromSupabase();
       const room = gridRooms[data.room];
-      const entryFee = data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : data.room === 'mini' ? 2000 : 2000;
+      const configMap: Record<string, string> = {
+        '1-10': 'jackpot_10',
+        '1-20': 'jackpot_20',
+        'mini': 'jackpot_mini',
+        'grand': 'jackpot_grand'
+      };
+      const configKey = configMap[data.room];
+      const config = configKey ? getGameConfig(configKey) : null;
+      const entryFee = config ? config.minBet : (data.room === '1-10' ? 1000 : data.room === '1-20' ? 1000 : 2000);
 
       if (room && room.claimedSlots[data.num]?.userId === data.userId) {
          try {

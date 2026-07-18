@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { initGameEngine } from "./src/server/GameEngine.js";
 import { initBingoEngine } from "./src/server/BingoEngine.js";
 import { initKenoEngine } from "./src/server/KenoEngine.js";
+import { loadGameSettings } from "./src/server/gameSettings.js";
 import { initTelegramBot, getBotUsername, triggerBotFlow } from "./src/server/telegramBot.js";
 import { getBotLogs, logBot } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
@@ -46,6 +47,9 @@ async function startServer() {
     pingInterval: 25000,
     pingTimeout: 60000,
   });
+
+  // Load Game Settings & Constraints
+  await loadGameSettings().catch(err => console.error("Failed to load game settings:", err));
 
   // Initialize Game Engine with Socket.IO
   initGameEngine(io);

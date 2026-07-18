@@ -3,6 +3,7 @@ import { BingoRoomState } from "../types";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { getDeterministicCard } from "../utils/bingo.js";
+import { getGameConfig } from "./gameSettings.js";
 
 const LOBBY_TIME = 50;
 const CALL_INTERVAL = 4000; // 4 seconds per ball
@@ -227,7 +228,10 @@ export class BingoRoom {
         });
         
         const totalPool = totalCardsInRound * this.state.betAmount;
-        const winAmount = Math.floor(totalPool * 0.8); // 20% house fee (80% distribution)
+        const configKey = this.state.id === "bingo-10" ? "bingo_10" : "bingo_20";
+        const config = getGameConfig(configKey);
+        const distFactor = config ? config.multiplier : 0.8;
+        const winAmount = Math.floor(totalPool * distFactor);
 
         this.state.winners.push({ userId, username: player.username, type: winType, winAmount, cardId: winningCardId, cards: player.cards });
         this.showResult();
@@ -309,6 +313,16 @@ export function initBingoEngine(io: Server) {
       socket.on("bingo_join", async (data: { roomId: string, userId: string, username: string, cards: number[], photoUrl?: string }, callback) => {
          const room = bingoRooms[data.roomId];
          if (room) {
+            const configKey = data.roomId === "bingo-10" ? "bingo_10" : "bingo_20";
+            const config = getGameConfig(configKey);
+            if (config) {
+               if (!config.enabled) {
+                  if (callback) callback({ success: false, message: "ቢንጎ ጨዋታ ለጊዜው ተዘግቷል። (Bingo is temporarily disabled by admin)" });
+                  return;
+               }
+               room.state.betAmount = config.minBet;
+            }
+
             if (room.state.status !== 'lobby') {
                if (callback) callback({ success: false, message: "Game in progress" });
                return;
