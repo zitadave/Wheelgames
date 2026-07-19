@@ -6039,7 +6039,7 @@ const withdrawalCooldowns = new Map<string, number>();
     }
     if (data === "control_unpin_all") {
       logBot(`Unpin all requested by chatId=${chatId}, userId=${userId}`);
-      if (!isStartingAdmin(chatId)) {
+      if (!isStartingAdmin(Number(chatId))) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
         return;
       }
