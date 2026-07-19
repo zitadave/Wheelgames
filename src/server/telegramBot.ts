@@ -11,7 +11,7 @@ import * as fs from "fs";
 import * as path from "path";
 import ExcelJS from 'exceljs';
 import { handleSupportChat, addKnowledgeChunk, searchKnowledgeBase } from "./aiSupport.js";
-import { handleUsersReport, handleFinancialReport } from "./reports.js";
+import { handleUsersReport, handleFinancialReport, generateDummyUsersExcelBuffer } from "./reports.js";
 import PDFDocument from "pdfkit";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle } from "docx";
 import { getGameSettingsSync, saveGameSettings, isGameEnabled, getGameConfig } from "./gameSettings.js";
@@ -93,6 +93,7 @@ interface UserState {
   isSupportAI?: boolean;
   aiHistory?: any;
   gameId?: string;
+  targetUserId?: string;
 }
 
 const userStates = new Map<string, UserState>();
@@ -323,12 +324,14 @@ interface PromptsConfig {
   };
 
   weekly_jackpot_amount?: number;
+  automated_jackpot_broadcast_enabled?: boolean;
   banks: {
     [bankId: string]: BankConfig;
   };
 }
 
 const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
+  automated_jackpot_broadcast_enabled: true,
   deposit_start_msg: "💰 *ማስገባት የሚፈልጉትን መጠን ከ10 ብር ጀምሮ ያስገቡ።*\n\n_(Please type the amount of ETB you want to deposit, minimum 10 ETB):_",
   deposit_success_msg: "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
   deposit_approved_msg: "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
@@ -861,6 +864,17 @@ function isOwner(userId: number | undefined): boolean {
 
 function isStartingAdmin(userId: number | undefined): boolean {
   if (!userId) return false;
+  if (OWNER_IDS.has(userId)) return true;
+  
+  const envId = process.env.ADMIN_ID;
+  if (envId && parseInt(envId, 10) === userId) return true;
+  
+  const adminEnv = process.env.TELEGRAM_ADMIN_IDS;
+  if (adminEnv) {
+    const ids = adminEnv.split(',').map(id => parseInt(id.trim(), 10));
+    if (ids.includes(userId)) return true;
+  }
+  
   return userId === getPrimaryOwnerId();
 }
 
@@ -1420,6 +1434,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
 
   function renderMainControlPanel(chatId: number, messageId?: number) {
+    if (!isStartingAdmin(chatId)) {
+      bot.sendMessage(chatId, "❌ <b>Access Denied.</b>\n\nThis panel is restricted to the starting administrator of this bot.", { parse_mode: "HTML" });
+      return;
+    }
     const channelId = getChannelId() || "⚠️ <b>NOT CONFIGURED</b>";
     const currentAppUrl = globalAppUrl || "⚠️ <b>NOT CONFIGURED</b>";
     const text = `🛠️ <b>Main Control Panel</b>\n\n` +
@@ -1441,7 +1459,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: "📝 Edit Prompts", callback_data: "control_edit" }
         ],
         [
-          { text: "📢 Announcements", callback_data: "control_announcement_menu" }
+          { text: "📢 Announcements", callback_data: "control_announcement_menu" },
+          { text: "📌 Unpin All Broadcasts", callback_data: "control_unpin_all" }
         ],
         [
           { text: "🔗 Command Links", callback_data: "control_links" },
@@ -1760,18 +1779,27 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       userStates.set(String(chatId), { step: 'idle' });
 
       const isBlocked = !!user.is_blocked_bot;
-      const inline_keyboard = [
-        [
-          { text: user.is_admin ? "👤 Demote Admin" : "👑 Promote Admin", callback_data: `lookup_toggle_admin_${targetId}` },
+      const inline_keyboard: any[][] = [];
+      const isAnyAdm = isAnyAdmin(chatId);
+
+      if (isAnyAdm) {
+        inline_keyboard.push([
+          { text: user.is_admin ? "👤 Demote Admin" : "👑 Promote Admin", callback_data: `lookup_toggle_admin_${targetId}` }
+        ]);
+        inline_keyboard.push([
           { text: isBlocked ? "✅ Unblock Bot" : "🚫 Block Bot", callback_data: `lookup_toggle_block_${targetId}` }
-        ],
-        [
+        ]);
+        inline_keyboard.push([
           { text: isAffiliateBanned ? "🟢 Unban Affiliate" : "🔴 Ban Affiliate", callback_data: `lookup_toggle_affiliate_${targetId}` }
-        ],
-        [
-          { text: "⬅️ Back to User Lookup", callback_data: "control_user_lookup" }
-        ]
-      ];
+        ]);
+        inline_keyboard.push([
+          { text: "💰 የሂሳብ ማስተካከያ (Adjust Balance)", callback_data: `lookup_adjust_bal_${targetId}` }
+        ]);
+      }
+
+      inline_keyboard.push([
+        { text: "⬅️ Back to User Lookup", callback_data: "control_user_lookup" }
+      ]);
 
       if (messageId) {
         await bot.editMessageText(report, {
@@ -1924,7 +1952,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       text += `\n🎯 <b>Target Channel:</b> <code>${currentId}</code>\n` +
               `<i>(Ensure the bot is an administrator in this channel)</i>`;
 
-      buttons.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }]);
+      buttons.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }, { text: "📌 Unpin All Broadcasts", callback_data: "control_unpin_all" }]);
       buttons.push([{ text: "⚙️ Manage Full Announcements Dashboard", callback_data: "control_announcements" }]);
       buttons.push([{ text: "🔙 Back to Control Panel", callback_data: "control_back" }]);
 
@@ -2138,13 +2166,16 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
             `⚠️ <i>Per rules, you must announce the reward amount 30 minutes before final distribution!</i>\n\n`;
         }
         
+        const isAutoJackpotEnabled = promptsConfig.automated_jackpot_broadcast_enabled !== false;
+
         let text = `🤝 <b>House Affiliate Report</b>\n\n` +
           `Current Commission Rate: <b>1% of Bet Amount</b>\n\n` +
           `👥 <b>Weekly New Referrals:</b> <b>${stats.totalPlatformVolume}</b>\n` +
           `👥 <b>Total All-Time Referrals:</b> <b>${totalHouseReferrals || 0}</b>\n` +
           `💵 <b>Total Payouts to Influencers:</b> ${totalHousePaidOut.toLocaleString()} ETB\n\n` +
           `🏆 <b>Current Promoter Jackpot Pool:</b> <b>${stats.promoterJackpot.toLocaleString()} ETB</b>\n` +
-          `<i>(Manually set by Admin)</i>\n\n` +
+          `<i>(Manually set by Admin)</i>\n` +
+          `🔔 <b>Auto Weekly Broadcast:</b> ${isAutoJackpotEnabled ? "🟢 ENABLED (30m before turn of week)" : "🔴 DISABLED"}\n\n` +
           announcementStatusText;
           
         const inline_keyboard: any[][] = [];
@@ -2163,6 +2194,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         inline_keyboard.push([{ text: "📊 Referrers Referee Report (Excel)", callback_data: "affiliate_referrers_report" }]);
         inline_keyboard.push([{ text: "💰 Set Weekly Jackpot Amount", callback_data: "affiliate_set_jackpot" }]);
         inline_keyboard.push([{ text: "📢 Announce Jackpot Pool", callback_data: "affiliate_payout_announce" }]);
+        inline_keyboard.push([{ text: "👥 Debug: List Users", callback_data: "debug_list_users" }]);
+        inline_keyboard.push([{ text: "🗑️ Debug: List Dummy Users", callback_data: "debug_list_dummy_users" }]);
+        inline_keyboard.push([{ text: isAutoJackpotEnabled ? "🔴 Disable Weekly Auto Broadcast" : "🟢 Enable Weekly Auto Broadcast", callback_data: "affiliate_toggle_auto_broadcast" }]);
+        inline_keyboard.push([{ text: "🧹 Retract Recent Broadcasts (Clean Spam)", callback_data: "affiliate_retract_broadcasts" }]);
         inline_keyboard.push([{ text: isReadyToPayout ? "🎁 Distribute Promoter Jackpot (Unlocked ✅)" : "🎁 Distribute Promoter Jackpot (Locked 🔒)", callback_data: "affiliate_payout_weekly" }]);
         inline_keyboard.push([{ text: "🔙 Back", callback_data: "control_panel_back" }]);
           
@@ -2184,6 +2219,50 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         }
     } catch (e: any) {
         bot.sendMessage(chatId, `Error loading affiliate stats: ${e.message}`);
+    }
+  }
+
+
+  function renderRetractMenu(chatId: number, messageId?: number) {
+    const campaigns = loadCampaigns();
+    const text = `🧹 <b>Retract Telegram Messages / Broadcasts</b>\n\n` +
+      `Select a past broadcast campaign below to retract (delete) it from <b>all users'</b> inboxes. This deletes the message from their private chats.\n\n` +
+      `You can also use the special automated spam cleaner to clear the recent duplicate weekly jackpot messages.`;
+
+    const inline_keyboard: any[][] = [];
+
+    // Special quick action to clean the recent jackpot spam of 34 broadcasts
+    inline_keyboard.push([{ text: "🧹 Clean Past Jackpot Spam (34 duplicates)", callback_data: "affiliate_retract_flood_jackpot" }]);
+
+    if (campaigns.length > 0) {
+      inline_keyboard.push([{ text: "📋 --- Select Broadcast to Retract ---", callback_data: "noop" }]);
+      campaigns.slice(0, 12).forEach((camp) => {
+        const timeStr = new Date(camp.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + 
+          " " + new Date(camp.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const snippet = camp.textSnippet || "Broadcast";
+        const label = `🗑️ [${timeStr}] ${snippet.slice(0, 18)}`;
+        inline_keyboard.push([{ text: label, callback_data: `bcast_retract_execute_${camp.id}` }]);
+      });
+    } else {
+      inline_keyboard.push([{ text: "<i>No other recent broadcasts found.</i>", callback_data: "noop" }]);
+    }
+
+    inline_keyboard.push([
+      { text: "🧹 Last 10", callback_data: "affiliate_retract_range:10" },
+      { text: "🧹 Last 15", callback_data: "affiliate_retract_range:15" },
+      { text: "🧹 Last 30", callback_data: "affiliate_retract_range:30" },
+      { text: "🧹 Last 60", callback_data: "affiliate_retract_range:60" }
+    ]);
+
+    inline_keyboard.push([{ text: "🔙 Back to Affiliate Management", callback_data: "control_manage_affiliate" }]);
+
+    const keyboard = { inline_keyboard };
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+        .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
     }
   }
 
@@ -3068,6 +3147,20 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         await renderBroadcastDashboard(bot, chatId, userIdNum, composer);
         return;
       }
+      if (cmdName === "debug_list_users") {
+        if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
+        const { data: users, error } = await supabase.from('users').select('id, username, first_name').limit(50);
+        if (error) {
+          logBot(`Error fetching users: ${error.message}`);
+          return bot.sendMessage(chatId, "❌ Error fetching users.");
+        }
+        let userList = `👥 <b>First 50 Users (Debug):</b>\n\n`;
+        users?.forEach(u => {
+          userList += `• ID: <code>${u.id}</code> | User: ${u.username || 'N/A'} | Name: ${u.first_name || 'N/A'}\n`;
+        });
+        await bot.sendMessage(chatId, userList, { parse_mode: "HTML" });
+        return;
+      }
       if (cmdName === "analysis") {
         if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, `❌ <b>Access Denied.</b>`, { parse_mode: "HTML" });
         await bot.sendMessage(chatId, "📊 <b>Select Timeframe:</b>", {
@@ -3096,7 +3189,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         const isAdmin = isAnyAdmin(userIdNum);
         
         if (cmdName === "control") {
-           if (isAdmin) {
+           if (isActuallyStartingAdmin) {
              renderMainControlPanel(chatId);
            } else {
              // Security Alert for non-admins trying to access control
@@ -3104,7 +3197,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
              const startingAdminId = getPrimaryOwnerId();
              const alertMsg = `🚨 <b>Security Alert!</b>\n\nNon-admin user <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
              await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
-             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to administrators of this bot.`, { parse_mode: "HTML" });
+             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the starting administrator of this bot.`, { parse_mode: "HTML" });
            }
         } else if (cmdName === "reload_config") {
            if (isAnyAdmin(userId)) {
@@ -3273,6 +3366,58 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const numUserId = msg.from?.id;
     const editState = userStates.get(userId);
     logBot(`AI Support: Processing message from userId=${userId}, editState=${JSON.stringify(editState)}`);
+
+    if (editState && (editState.step === 'awaiting_bal_add' || editState.step === 'awaiting_bal_sub')) {
+      if (!isAnyAdmin(userId)) {
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Only admins are authorized.");
+        return;
+      }
+
+      if (text === "/cancel") {
+        const targetId = editState.targetUserId;
+        userStates.set(userId, { step: 'idle' });
+        await bot.sendMessage(chatId, "❌ Setup cancelled.");
+        if (targetId) {
+          await processUserLookup(chatId, targetId);
+        }
+        return;
+      }
+
+      const val = parseFloat(text?.trim() || "");
+      if (isNaN(val) || val <= 0) {
+        await bot.sendMessage(chatId, "⚠️ እባክዎ ትክክለኛ ቁጥር ያስገቡ። (Please send a valid positive number)");
+        return;
+      }
+
+      userStates.set(userId, { step: 'idle' });
+      const targetUserId = editState.targetUserId;
+      if (targetUserId) {
+        const isAdd = editState.step === 'awaiting_bal_add';
+        const amountChange = isAdd ? val : -val;
+
+        const actionText = isAdd ? "ጭማሪ (Increase)" : "ቅናሽ (Deduction)";
+        const txType = isAdd ? "deposit_adjustment" : "withdrawal_adjustment";
+        const desc = `Manual balance adjustment (${actionText}) by Starting Admin (${userId})`;
+
+        const result = await txManager.modifyBalance(targetUserId, amountChange, txType, desc);
+        if (result.success) {
+          const formattedChange = (isAdd ? "+" : "-") + val.toLocaleString() + " ETB";
+          const successMsg = `✅ <b>የሂሳብ ማስተካከያ በተሳካ ሁኔታ ተጠናቋል!</b>\n\n` +
+                             `👤 <b>ተጠቃሚ (User ID):</b> <code>${targetUserId}</code>\n` +
+                             `📈 <b>ማስተካከያ:</b> <code>${formattedChange}</code>\n` +
+                             `💳 <b>አዲስ ሂሳብ (New Balance):</b> <code>${result.newBalance.toLocaleString()} ETB</code>`;
+          await bot.sendMessage(chatId, successMsg, { parse_mode: "HTML" });
+
+        } else {
+          await bot.sendMessage(chatId, `❌ ማስተካከያውን ማድረግ አልተቻለም: ${result.error || "Database error"}`, { parse_mode: "HTML" });
+        }
+        await processUserLookup(chatId, targetUserId);
+      } else {
+        await bot.sendMessage(chatId, "❌ Error: Target user not set in state.");
+      }
+      return;
+    }
 
     if (editState && editState.step === 'awaiting_game_min_bet') {
       if (!isAnyAdmin(userId)) {
@@ -5395,6 +5540,7 @@ const withdrawalCooldowns = new Map<string, number>();
     const userId = query.from.id.toString();
     const data = query.data;
     const messageId = query.message?.message_id;
+    logBot(`callback_query received: userId=${userId}, chatId=${chatId}, data=${data}`);
 
     // Deduplicate callback queries to prevent duplicate responses
     if (processedCallbacks.has(query.id)) {
@@ -5420,18 +5566,20 @@ const withdrawalCooldowns = new Map<string, number>();
     const ownerOnlyPrefixes = ['edit_section_', 'edit_bank', 'edit_key_', 'setadmin_'];
     const generalAdminPrefixes = ['analysis_', 'broadcast_'];
 
-    if (ownerOnlyPrefixes.some(p => data?.startsWith(p)) && !isAnyAdmin(userId)) {
-      try {
-        await bot.answerCallbackQuery(query.id, { text: "❌ Owner Only Access", show_alert: true });
-      } catch (e) {}
-      return;
-    }
+    const isControlCallback = data?.startsWith("control_") || 
+                              data?.startsWith("game_set_") ||
+                              data?.startsWith("autocamp_") ||
+                              data?.startsWith("cmd_") ||
+                              ownerOnlyPrefixes.some(p => data?.startsWith(p)) ||
+                              generalAdminPrefixes.some(p => data?.startsWith(p));
 
-    if (generalAdminPrefixes.some(p => data?.startsWith(p)) && !isAnyAdmin(userId)) {
-      try {
-        await bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
-      } catch (e) {}
-      return;
+    if (isControlCallback) {
+      if (!isStartingAdmin(parseInt(userId, 10))) {
+        try {
+          await bot.answerCallbackQuery(query.id, { text: "❌ ይህ ፈቃድ ለዋናው አድሚን ብቻ የተፈቀደ ነው! (Only starting admin is authorized!)", show_alert: true });
+        } catch (e) {}
+        return;
+      }
     }
 
     if (data === "control_game_settings" || data === "game_set_back_list") {
@@ -5752,6 +5900,165 @@ const withdrawalCooldowns = new Map<string, number>();
       return;
     }
 
+    if (data === "debug_list_users") {
+        if (!isAnyAdmin(userId)) {
+            bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+            return;
+        }
+        await bot.answerCallbackQuery(query.id);
+        const { data: users, error } = await supabase.from('users').select('id, username, first_name').limit(50);
+        if (error) {
+            logBot(`Error fetching users: ${error.message}`);
+            return bot.sendMessage(chatId, "❌ Error fetching users.");
+        }
+        let userList = `👥 <b>First 50 Users (Debug):</b>\n\n`;
+        users?.forEach(u => {
+            userList += `• ID: <code>${u.id}</code> | User: ${u.username || 'N/A'} | Name: ${u.first_name || 'N/A'}\n`;
+        });
+        await bot.sendMessage(chatId, userList, { parse_mode: "HTML" });
+        return;
+    }
+
+    if (data === "debug_list_dummy_users") {
+        if (!isAnyAdmin(userId)) {
+            bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+            return;
+        }
+        await bot.answerCallbackQuery(query.id);
+        
+        // Query users matching dummy criteria
+        const { data: users, error } = await supabase.from('users')
+            .select('id, username, first_name')
+            .or('first_name.eq.N/A,username.ilike.Player_%');
+            
+        if (error) {
+            logBot(`Error fetching dummy users: ${error.message}`);
+            return bot.sendMessage(chatId, "❌ Error fetching dummy users.");
+        }
+        
+        if (!users || users.length === 0) {
+            return bot.sendMessage(chatId, "✅ No dummy users found.");
+        }
+
+        let userList = `🗑️ <b>Dummy Users Found (${users.length}):</b>\n\n`;
+        const displayedUsers = users.slice(0, 30);
+        displayedUsers.forEach(u => {
+            userList += `• ID: <code>${u.id}</code> | User: ${u.username || 'N/A'} | Name: ${u.first_name || 'N/A'}\n`;
+        });
+        if (users.length > 30) {
+            userList += `\n...and ${users.length - 30} more.`;
+        }
+        userList += `\n\nDo you want to delete all ${users.length} of these users? (This action is irreversible)`;
+        
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: `🔥 Confirm Delete All ${users.length} Dummy Users`, callback_data: "debug_delete_dummy_users_confirm" },
+                 { text: "📊 Export to Excel", callback_data: "debug_export_dummy_users" }]
+            ]
+        };
+        
+        await bot.sendMessage(chatId, userList, { parse_mode: "HTML", reply_markup: keyboard });
+        return;
+    }
+
+    if (data === "debug_export_dummy_users") {
+        if (!isAnyAdmin(userId)) {
+            bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+            return;
+        }
+        await bot.answerCallbackQuery(query.id, { text: "📊 Generating Excel..." });
+        
+        const { data: users, error } = await supabase.from('users')
+            .select('id, username, first_name')
+            .or('first_name.eq.N/A,username.ilike.Player_%');
+            
+        if (error || !users) {
+            logBot(`Error fetching dummy users for export: ${error?.message}`);
+            return bot.sendMessage(chatId, "❌ Error fetching dummy users for export.");
+        }
+        
+        const excelBuf = await generateDummyUsersExcelBuffer(users);
+        await bot.sendDocument(chatId, excelBuf, {}, {
+            filename: `Dummy_Users_Report_${new Date().toISOString().split('T')[0]}.xlsx`,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+        return;
+    }
+    
+    if (data === "debug_delete_dummy_users_confirm") {
+        if (!isAnyAdmin(userId)) {
+            bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+            return;
+        }
+        await bot.answerCallbackQuery(query.id, { text: "🔥 Deleting dummy users..." });
+        
+        // Query users matching dummy criteria
+        const { data: users, error } = await supabase.from('users')
+            .select('id, first_name')
+            .or('first_name.eq.N/A,username.ilike.Player_%');
+            
+        if (error) {
+            logBot(`Error fetching dummy users for deletion: ${error.message}`);
+            return bot.sendMessage(chatId, "❌ Error fetching dummy users for deletion.");
+        }
+        
+        if (!users || users.length === 0) {
+            return bot.sendMessage(chatId, "✅ No dummy users found to delete.");
+        }
+        
+        // Filter out Dave / ሞላ/ጎደል (by name or other info if available)
+        const dummyUsers = users.filter(u => u.first_name !== 'Dave' && u.first_name !== 'ሞላ/ጎደል');
+        const idsToDelete = dummyUsers.map(u => u.id);
+        
+        if (idsToDelete.length === 0) {
+            return bot.sendMessage(chatId, "✅ No dummy users found to delete (after excluding protected users).");
+        }
+        
+        // Delete related transactions first
+        const { error: deleteTransactionsError } = await supabase.from('transactions')
+            .delete()
+            .in('user_id', idsToDelete);
+            
+        if (deleteTransactionsError) {
+            logBot(`Error deleting transactions for dummy users: ${deleteTransactionsError.message}`);
+            return bot.sendMessage(chatId, `❌ Error deleting transactions: ${deleteTransactionsError.message}`);
+        }
+
+        // Delete
+        const { error: deleteError } = await supabase.from('users')
+            .delete()
+            .in('id', idsToDelete);
+            
+        if (deleteError) {
+            logBot(`Error deleting dummy users: ${deleteError.message}`);
+            return bot.sendMessage(chatId, `❌ Error deleting dummy users: ${deleteError.message}`);
+        }
+        
+        await bot.sendMessage(chatId, `✅ Successfully deleted ${idsToDelete.length} dummy users.`);
+        return;
+    }
+    if (data === "control_unpin_all") {
+      logBot(`Unpin all requested by chatId=${chatId}, userId=${userId}`);
+      if (!isStartingAdmin(chatId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const channelId = getChannelId();
+      logBot(`Channel ID: ${channelId}`);
+      if (!channelId || channelId === "⚠️ <b>NOT CONFIGURED</b>") {
+         bot.answerCallbackQuery(query.id, { text: "❌ Channel not configured" });
+         return;
+      }
+      try {
+        await bot.unpinAllChatMessages(channelId);
+        await bot.answerCallbackQuery(query.id, { text: "✅ All messages unpinned" });
+      } catch (e) {
+        logBot(`Error unpinning: ${e}`);
+        await bot.answerCallbackQuery(query.id, { text: "❌ Error unpinning" });
+      }
+      return;
+    }
+
     if (data === "control_autocamp") {
       if (!isAnyAdmin(userId)) {
         bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
@@ -5834,7 +6141,10 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     if (data?.startsWith("lookup_toggle_admin_")) {
-      if (!adminChatIds.has(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ ይህ ፈቃድ ለአድሚን ብቻ የተፈቀደ ነው! (Only admins are authorized!)", show_alert: true });
+        return;
+      }
       const targetId = data.substring("lookup_toggle_admin_".length);
       
       const { data: user } = await supabase.from('users').select('is_admin').eq('id', targetId).maybeSingle();
@@ -5859,7 +6169,10 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     if (data?.startsWith("lookup_toggle_block_")) {
-      if (!adminChatIds.has(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ ይህ ፈቃድ ለአድሚን ብቻ የተፈቀደ ነው! (Only admins are authorized!)", show_alert: true });
+        return;
+      }
       const targetId = data.substring("lookup_toggle_block_".length);
       
       const { data: user } = await supabase.from('users').select('is_blocked_bot').eq('id', targetId).maybeSingle();
@@ -5884,7 +6197,10 @@ const withdrawalCooldowns = new Map<string, number>();
     }
 
     if (data?.startsWith("lookup_toggle_affiliate_")) {
-      if (!adminChatIds.has(parseInt(userId, 10))) return;
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ ይህ ፈቃድ ለአድሚን ብቻ የተፈቀደ ነው! (Only admins are authorized!)", show_alert: true });
+        return;
+      }
       const targetId = data.substring("lookup_toggle_affiliate_".length);
       
       const { data: txs } = await supabase.from('transactions').select('*').eq('user_id', targetId);
@@ -5912,6 +6228,79 @@ const withdrawalCooldowns = new Map<string, number>();
           await bot.answerCallbackQuery(query.id, { text: `Error: ${error.message}`, show_alert: true });
         }
       }
+      return;
+    }
+
+    if (data?.startsWith("lookup_adjust_bal_")) {
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ ይህ ፈቃድ ለአድሚን ብቻ የተፈቀደ ነው! (Only admins are authorized!)", show_alert: true });
+        return;
+      }
+      const targetId = data.substring("lookup_adjust_bal_".length);
+      await bot.answerCallbackQuery(query.id);
+      
+      const { data: targetUser } = await supabase.from('users').select('*').eq('id', targetId).maybeSingle();
+      if (!targetUser) {
+        await bot.sendMessage(chatId, "❌ ተጠቃሚው አልተገኘም (User not found).");
+        return;
+      }
+
+      const text = `💰 <b>የሂሳብ ማስተካከያ (Balance Adjustment Panel)</b>\n\n` +
+                   `👤 <b>ተጠቃሚ (User ID):</b> <code>${targetId}</code>\n` +
+                   `👤 <b>የተጠቃሚ ስም (Username):</b> @${targetUser.username || 'N/A'}\n` +
+                   `💳 <b>የአሁኑ ሂሳብ (Current Balance):</b> <code>${Number(targetUser.balance).toLocaleString()} ETB</code>\n\n` +
+                   `👉 <b>እባክዎ ምን ማድረግ እንደሚፈልጉ ይምረጡ:</b>\n` +
+                   `<i>⚠️ ማሳሰቢያ: ይህ ማስተካከያ ከፍተኛ ጥንቃቄ ስለሚያስፈልገው እባክዎ በትክክል ያረጋግጡ!</i>`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: "➕ ገንዘብ ጨምር (Increase Balance)", callback_data: `lookup_bal_add:${targetId}` }
+          ],
+          [
+            { text: "➖ ገንዘብ ቀንስ (Decrease Balance)", callback_data: `lookup_bal_sub:${targetId}` }
+          ],
+          [
+            { text: "🔙 ወደ ተጠቃሚው መረጃ (Back)", callback_data: `lookup_user:${targetId}` }
+          ]
+        ]
+      };
+
+      if (messageId) {
+        await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+          .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+      } else {
+        await bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+      }
+      return;
+    }
+
+    if (data?.startsWith("lookup_bal_add:") || data?.startsWith("lookup_bal_sub:")) {
+      if (!isAnyAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Only admins are authorized!", show_alert: true });
+        return;
+      }
+      const isAdd = data.startsWith("lookup_bal_add:");
+      const targetId = data.substring(isAdd ? "lookup_bal_add:".length : "lookup_bal_sub:".length);
+      await bot.answerCallbackQuery(query.id);
+
+      userStates.set(userId, { step: isAdd ? "awaiting_bal_add" : "awaiting_bal_sub", targetUserId: targetId });
+
+      const actionText = isAdd ? "ገንዘብ ለመጨመር (Increase Balance)" : "ገንዘብ ለመቀነስ (Decrease Balance)";
+      const actionSymbol = isAdd ? "➕" : "➖";
+
+      const { data: targetUser } = await supabase.from('users').select('*').eq('id', targetId).maybeSingle();
+      const currentBal = targetUser ? Number(targetUser.balance).toLocaleString() : "0";
+
+      await bot.sendMessage(chatId,
+        `${actionSymbol} <b>የተጠቃሚ ሂሳብ ማስተካከያ (${actionText})</b>\n\n` +
+        `👤 <b>ተጠቃሚ (User ID):</b> <code>${targetId}</code>\n` +
+        `💳 <b>የአሁኑ ሂሳብ (Current Balance):</b> <code>${currentBal} ETB</code>\n\n` +
+        `እባክዎ <b>የሚጨመረውን/የሚቀነሰውን መጠን በቁጥር</b> ይላኩ:\n` +
+        `<i>(ለምሳሌ: 250)</i>\n\n` +
+        `<i>ለማቋረጥ /cancel ብለው ይላኩ።</i>`,
+        { parse_mode: "HTML" }
+      );
       return;
     }
 
@@ -6902,6 +7291,177 @@ const withdrawalCooldowns = new Map<string, number>();
         
       userStates.set(String(chatId), { step: 'waiting_for_jackpot_amount' });
       bot.sendMessage(chatId, promptText, { parse_mode: "HTML" });
+      return;
+    }
+
+    if (data === "affiliate_toggle_auto_broadcast") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      promptsConfig.automated_jackpot_broadcast_enabled = !promptsConfig.automated_jackpot_broadcast_enabled;
+      savePromptsConfig(promptsConfig);
+      await bot.answerCallbackQuery(query.id, { text: promptsConfig.automated_jackpot_broadcast_enabled ? "🟢 Auto Broadcast Enabled" : "🔴 Auto Broadcast Disabled" });
+      renderManageAffiliate(chatId, messageId);
+      return;
+    }
+
+    if (data === "affiliate_retract_broadcasts") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      renderRetractMenu(chatId, messageId);
+      return;
+    }
+
+    if (data === "affiliate_retract_flood_jackpot") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id, { text: "🧹 Starting Jackpot Spam Clean-up..." });
+
+      try {
+        const statusMsg = await bot.sendMessage(chatId, "⏳ <b>Scanning active player chats for duplicate jackpot alerts...</b>\n\nThis will scan all registered users, find duplicate jackpot alerts, and retract them to clean up their private inbox. This can take up to 30 seconds. Please wait.", { parse_mode: "HTML" });
+
+        const { data: allUsers } = await supabase.from('users').select('id');
+        if (!allUsers || allUsers.length === 0) {
+          await bot.editMessageText("❌ No registered users found.", { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" });
+          return;
+        }
+
+        let totalDeletedCount = 0;
+        let processedUsers = 0;
+        let activeUsersCount = 0;
+
+        for (let i = 0; i < allUsers.length; i++) {
+          const u = allUsers[i];
+          if (!u.id || u.id === 'system_jackpot') continue;
+          processedUsers++;
+          try {
+            // Send a silent message to get the current message reference ID
+            const tempRef = await bot.sendMessage(u.id, "🧹 <i>Clearing duplicate announcements...</i>", { parse_mode: "HTML", disable_notification: true });
+            const refMsgId = tempRef.message_id;
+
+            // Delete the tracking message immediately
+            await bot.deleteMessage(u.id, tempRef.message_id).catch(() => {});
+            activeUsersCount++;
+
+            // Deep scan up to 100 preceding messages to find and delete the duplicate announcements.
+            // This guarantees we hit all 34 duplicates even if other messages were received in between.
+            for (let targetId = refMsgId - 1; targetId >= refMsgId - 100; targetId--) {
+              // Skip deleting the admin status tracker message or active admin controls panel message if we are in admin's chat
+              if (String(u.id) === String(chatId)) {
+                if (targetId === statusMsg.message_id || (messageId && targetId === messageId)) {
+                  continue;
+                }
+              }
+              try {
+                await bot.deleteMessage(u.id, targetId);
+                totalDeletedCount++;
+              } catch (delErr) {
+                // Ignore errors (e.g. message doesn't exist, already deleted, or not sent by bot)
+              }
+            }
+          } catch (userErr) {
+            // Ignore individual user chat errors (e.g., bot blocked/not started)
+          }
+
+          // Update progress in admin screen every 15 users
+          if (processedUsers % 15 === 0 || processedUsers === allUsers.length) {
+            await bot.editMessageText(`⏳ <b>Scanning active player chats...</b>\n\n` +
+              `• Processed: <code>${processedUsers}/${allUsers.length}</code> registered users\n` +
+              `• Active Chats Reached: <code>${activeUsersCount}</code>\n` +
+              `• Total Messages Deleted: <code>${totalDeletedCount}</code>`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" }).catch(() => {});
+          }
+
+          // Small sleep to prevent hitting Telegram rate limits
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        const successText = `✅ <b>Spam Clean-up Complete!</b>\n\n` +
+          `• Total Registered Users Processed: <code>${processedUsers}</code>\n` +
+          `• Active Chats Reached: <code>${activeUsersCount}</code> (users with active bot)\n` +
+          `• Duplicate Jackpot Messages Retracted: <b>${totalDeletedCount}</b>\n\n` +
+          `<i>Your player chats are now clean and spam-free!</i>`;
+
+        try {
+          await bot.editMessageText(successText, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" });
+        } catch (editErr) {
+          await bot.sendMessage(chatId, successText, { parse_mode: "HTML" });
+        }
+      } catch (err: any) {
+        logBot(`Error in jackpot flood retract: ${err.message}`);
+        bot.sendMessage(chatId, `❌ <b>Spam clean-up failed:</b> ${err.message}`);
+      }
+      return;
+    }
+
+    if (data.startsWith("affiliate_retract_range:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const rangeVal = parseInt(data.split(":")[1]) || 5;
+      await bot.answerCallbackQuery(query.id, { text: `🧹 Retracting last ${rangeVal} messages...` });
+
+      try {
+        const statusMsg = await bot.sendMessage(chatId, `⏳ <b>Retracting last ${rangeVal} broadcasts...</b>\n\nThis scans all users and removes the last ${rangeVal} messages sent by the bot. Please wait.`, { parse_mode: "HTML" });
+
+        const { data: allUsers } = await supabase.from('users').select('id');
+        if (!allUsers || allUsers.length === 0) {
+          await bot.editMessageText("❌ No registered users found.", { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" });
+          return;
+        }
+
+        let totalDeletedCount = 0;
+        let processedUsers = 0;
+        let activeUsersCount = 0;
+
+        for (const u of allUsers) {
+          if (!u.id || u.id === 'system_jackpot') continue;
+          processedUsers++;
+          try {
+            // Send a silent message to get the current message reference ID
+            const tempRef = await bot.sendMessage(u.id, "🧹 <i>Clearing duplicate announcements...</i>", { parse_mode: "HTML", disable_notification: true });
+            const refMsgId = tempRef.message_id;
+
+            // Delete the tracking message immediately
+            await bot.deleteMessage(u.id, refMsgId).catch(() => {});
+            activeUsersCount++;
+
+            // Delete up to rangeVal preceding messages to find and delete the duplicate announcements.
+            // Since they were sent recently, they will have sequential message IDs just before the reference ID.
+            for (let targetId = refMsgId - 1; targetId >= refMsgId - rangeVal; targetId--) {
+              // Skip deleting the admin status tracker message or active admin controls panel message if we are in admin's chat
+              if (String(u.id) === String(chatId)) {
+                if (targetId === statusMsg.message_id || (messageId && targetId === messageId)) {
+                  continue;
+                }
+              }
+              try {
+                await bot.deleteMessage(u.id, targetId);
+                totalDeletedCount++;
+              } catch (delErr) {
+                // Ignore errors (e.g. message doesn't exist, already deleted, or not sent by bot)
+              }
+            }
+          } catch (userErr) {
+            // Ignore individual user chat errors (e.g., bot blocked)
+          }
+        }
+
+        try {
+          await bot.editMessageText(`✅ <b>Retraction Complete!</b>\n\nProcessed: <code>${processedUsers}</code> registered users\nActive chats reached: <code>${activeUsersCount}</code>\nTotal messages cleared: <code>${totalDeletedCount}</code>`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" });
+        } catch (editErr) {
+          await bot.sendMessage(chatId, `✅ <b>Retraction Complete!</b>\n\nProcessed: <code>${processedUsers}</code> registered users\nActive chats reached: <code>${activeUsersCount}</code>\nTotal messages cleared: <code>${totalDeletedCount}</code>`, { parse_mode: "HTML" });
+        }
+      } catch (err: any) {
+        logBot(`Error in retract: ${err.message}`);
+        bot.sendMessage(chatId, `❌ <b>Retraction failed:</b> ${err.message}`);
+      }
       return;
     }
 
@@ -9660,13 +10220,43 @@ export function startAutoCampaignScheduler(bot: any) {
 
 export function startAutomatedJackpotScheduler(bot: any) {
   logBot("🤖 Automated Jackpot Scheduler started successfully!");
+
+  const announcedWeeks = new Set<string>();
+
+  // Ensure system_jackpot user row exists to prevent foreign key constraint errors when recording announcements
+  if (supabase) {
+    supabase.from('users').upsert({
+      id: 'system_jackpot',
+      username: 'system_jackpot',
+      first_name: 'System',
+      last_name: 'Jackpot',
+      balance: 0
+    }, { onConflict: 'id' }).then(({ error }) => {
+      if (error) {
+        logBot(`[AutomatedJackpot] Error initializing system_jackpot user row: ${error.message}`);
+      } else {
+        logBot(`[AutomatedJackpot] system_jackpot user initialized in users table.`);
+      }
+    });
+  }
+
   setInterval(async () => {
     try {
       if (!supabase) return;
 
+      // Respect the administrator switch to disable automatic weekly jackpot announcements
+      if (promptsConfig.automated_jackpot_broadcast_enabled === false) {
+        return;
+      }
+
       const now = Date.now();
       const startOfWeek = getStartOfWeekUTC();
       const startOfWeekISO = startOfWeek.toISOString();
+
+      if (announcedWeeks.has(startOfWeekISO)) {
+        return;
+      }
+
       const endOfWeek = new Date(startOfWeek.getTime() + 7 * 24 * 3600 * 1000);
       const announcementTime = new Date(endOfWeek.getTime() - 30 * 60 * 1000);
 
@@ -9685,8 +10275,15 @@ export function startAutomatedJackpotScheduler(bot: any) {
           return;
         }
 
+        if (annList && annList.length > 0) {
+          announcedWeeks.add(startOfWeekISO);
+          return;
+        }
+
         if (!annList || annList.length === 0) {
           logBot(`[AutomatedJackpot] Time to announce jackpot for week starting ${startOfWeekISO}. Running...`);
+          
+          announcedWeeks.add(startOfWeekISO);
           
           const stats = await fetchLeaderboardData(promptsConfig.weekly_jackpot_amount || 0);
           const totalJackpot = stats.promoterJackpot;
@@ -9717,11 +10314,16 @@ export function startAutomatedJackpotScheduler(bot: any) {
           // Broadcast to all users
           const { data: allUsers } = await supabase.from('users').select('id');
           let successCount = 0;
+          const sentMessagesList: CampaignMessage[] = [];
           if (allUsers) {
             for (const u of allUsers) {
               if (!u.id || u.id === 'system_jackpot') continue;
               try {
-                await bot.sendMessage(u.id, msgText, { parse_mode: "HTML" });
+                const sentMsg = await bot.sendMessage(u.id, msgText, { parse_mode: "HTML" });
+                sentMessagesList.push({
+                  chat_id: u.id,
+                  message_id: sentMsg.message_id
+                });
                 successCount++;
               } catch (broadcastErr) {
                 // Ignore blocked/deleted chats
@@ -9729,6 +10331,19 @@ export function startAutomatedJackpotScheduler(bot: any) {
             }
           }
           logBot(`[AutomatedJackpot] Successfully broadcasted weekly jackpot announcement to ${successCount} users.`);
+
+          // Save successfully sent message IDs to our persistent local campaign tracker
+          if (sentMessagesList.length > 0) {
+            saveCampaign({
+              id: `auto_jackpot_${Date.now()}`,
+              timestamp: Date.now(),
+              type: 'Automated Jackpot Alert',
+              target: 'All Users',
+              template: 'jackpot_announcement',
+              textSnippet: `🏆 Auto Jackpot Alert: ${totalJackpot.toLocaleString()} ETB`,
+              sent_messages: sentMessagesList
+            });
+          }
         }
       }
     } catch (err: any) {

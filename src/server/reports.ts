@@ -2,6 +2,18 @@ import PDFDocument from 'pdfkit';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle, AlignmentType } from 'docx';
 import ExcelJS from 'exceljs';
 
+export async function generateDummyUsersExcelBuffer(users: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Dummy Users');
+    worksheet.columns = [
+        { header: 'ID', key: 'id', width: 20 },
+        { header: 'Username', key: 'username', width: 20 },
+        { header: 'First Name', key: 'first_name', width: 20 }
+    ];
+    users.forEach(u => worksheet.addRow({ id: u.id, username: u.username || 'N/A', first_name: u.first_name || 'N/A' }));
+    return await workbook.xlsx.writeBuffer() as Buffer;
+}
+
 // Helper to draw a horizontal line in PDF
 function drawPDFLine(doc: any, y: number) {
     doc.moveTo(30, y).lineTo(580, y).strokeColor('#E2E8F0').lineWidth(1).stroke();
