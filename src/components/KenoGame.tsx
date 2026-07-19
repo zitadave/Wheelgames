@@ -798,13 +798,17 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                         </div>
                         <div className="flex justify-between items-center text-[11px] font-black uppercase px-1">
                           <span className="text-gray-500">Bet {ticket.bet}</span>
-                          {gameState === 'betting' ? (
-                            <span className="text-yellow-500 italic">Waiting</span>
+                          {gameState === 'betting' || gameState === 'draw' ? (
+                            <span className="text-yellow-500 italic">
+                              {gameState === 'draw' && stats.matchedNumbers.length > 0 
+                                ? `${stats.matchedNumbers.length} Hits` 
+                                : 'Waiting'}
+                            </span>
                           ) : (
                             <span className={isWinning ? 'text-[#2ecc71] font-bold' : 'text-yellow-500 italic'}>
                               {isWinning 
                                 ? (stats.payoutMult * ticket.bet).toLocaleString()
-                                : (gameState === 'result' ? 'No Win' : 'Waiting')
+                                : 'No Win'
                               }
                             </span>
                           )}

@@ -6044,17 +6044,18 @@ const withdrawalCooldowns = new Map<string, number>();
         return;
       }
       const channelId = getChannelId();
-      logBot(`Channel ID: ${channelId}`);
+      logBot(`DEBUG: Unpinning all messages in Channel ID: '${channelId}' (type: ${typeof channelId})`);
       if (!channelId || channelId === "⚠️ <b>NOT CONFIGURED</b>") {
          bot.answerCallbackQuery(query.id, { text: "❌ Channel not configured" });
          return;
       }
       try {
         await bot.unpinAllChatMessages(channelId);
+        logBot(`DEBUG: Successfully unpinned all messages in Channel ID: '${channelId}'`);
         await bot.answerCallbackQuery(query.id, { text: "✅ All messages unpinned" });
       } catch (e) {
         logBot(`Error unpinning: ${e}`);
-        await bot.answerCallbackQuery(query.id, { text: "❌ Error unpinning" });
+        await bot.answerCallbackQuery(query.id, { text: `❌ Error unpinning: ${e}` });
       }
       return;
     }
