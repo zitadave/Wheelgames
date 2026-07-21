@@ -18,30 +18,30 @@ interface KenoGameProps {
 
 const PAYOUTS: Record<number, number[]> = {
   // Matches: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-  1: [0, 3.5],
-  2: [0, 1, 10],
-  3: [0, 0, 2, 50],
-  4: [0, 0, 1.5, 10, 80],
-  5: [0, 0, 1, 3, 30, 150],
-  6: [0, 0, 0, 2, 15, 60, 500],
-  7: [1, 0, 0, 2, 4, 20, 80, 1000],
-  8: [1, 0, 0, 0, 5, 15, 50, 200, 2000],
-  9: [2, 0, 0, 0, 2, 10, 25, 125, 1000, 5000],
-  10: [2, 0, 0, 0, 0, 5, 30, 100, 300, 2000, 10000]
+  1: [0, 2.5],
+  2: [0, 0, 6],
+  3: [0, 0, 1, 20],
+  4: [0, 0, 1, 5, 40],
+  5: [0, 0, 0, 2, 12, 80],
+  6: [0, 0, 0, 1.5, 6, 30, 250],
+  7: [1, 0, 0, 2, 4, 20, 80, 500],
+  8: [1, 0, 0, 0, 3, 10, 40, 150, 1000],
+  9: [2, 0, 0, 0, 2, 6, 20, 80, 500, 2500],
+  10: [2, 0, 0, 0, 0, 3, 15, 50, 200, 1000, 5000]
 };
 
 const AMHARIC_PAYOUT_MATRIX = [
   { match: 0, pays: [null, null, null, null, null, null, 1, 1, 2, 2] },
-  { match: 1, pays: [3.5, 1, null, null, null, null, null, null, null, null] },
-  { match: 2, pays: [null, 10, 2, 1.5, 1, null, null, null, null, null] },
-  { match: 3, pays: [null, null, 50, 10, 3, 2, 2, null, null, null] },
-  { match: 4, pays: [null, null, null, 80, 30, 15, 4, 5, 2, null] },
-  { match: 5, pays: [null, null, null, null, 150, 60, 20, 15, 10, 5] },
-  { match: 6, pays: [null, null, null, null, null, 500, 80, 50, 25, 30] },
-  { match: 7, pays: [null, null, null, null, null, null, 1000, 200, 125, 100] },
-  { match: 8, pays: [null, null, null, null, null, null, null, 2000, 1000, 300] },
-  { match: 9, pays: [null, null, null, null, null, null, null, null, 5000, 2000] },
-  { match: 10, pays: [null, null, null, null, null, null, null, null, null, 10000] }
+  { match: 1, pays: [2.5, null, null, null, null, null, null, null, null, null] },
+  { match: 2, pays: [null, 6, 1, 1, null, null, null, null, null, null] },
+  { match: 3, pays: [null, null, 20, 5, 2, 1.5, 2, null, null, null] },
+  { match: 4, pays: [null, null, null, 40, 12, 6, 4, 3, 2, null] },
+  { match: 5, pays: [null, null, null, null, 80, 30, 20, 10, 6, 3] },
+  { match: 6, pays: [null, null, null, null, null, 250, 80, 40, 15, 15] },
+  { match: 7, pays: [null, null, null, null, null, null, 500, 150, 80, 50] },
+  { match: 8, pays: [null, null, null, null, null, null, null, 1000, 500, 200] },
+  { match: 9, pays: [null, null, null, null, null, null, null, null, 2500, 1000] },
+  { match: 10, pays: [null, null, null, null, null, null, null, null, null, 5000] }
 ];
 
 const getMinRequiredMatches = (length: number): number => {

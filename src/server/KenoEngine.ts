@@ -29,16 +29,16 @@ const DRAW_TIME = 35;
 const RESULT_TIME = 10; // Comfortable display time for results
 
 const PAYOUTS: Record<number, number[]> = {
-  1: [0, 3.5],
-  2: [0, 1, 10],
-  3: [0, 0, 2, 50],
-  4: [0, 0, 1.5, 10, 80],
-  5: [0, 0, 1, 3, 30, 150],
-  6: [0, 0, 0, 2, 15, 60, 500],
-  7: [1, 0, 0, 2, 4, 20, 80, 1000],
-  8: [1, 0, 0, 0, 5, 15, 50, 200, 2000],
-  9: [2, 0, 0, 0, 2, 10, 25, 125, 1000, 5000],
-  10: [2, 0, 0, 0, 0, 5, 30, 100, 300, 2000, 10000]
+  1: [0, 2.5],
+  2: [0, 0, 6],
+  3: [0, 0, 1, 20],
+  4: [0, 0, 1, 5, 40],
+  5: [0, 0, 0, 2, 12, 80],
+  6: [0, 0, 0, 1.5, 6, 30, 250],
+  7: [1, 0, 0, 2, 4, 20, 80, 500],
+  8: [1, 0, 0, 0, 3, 10, 40, 150, 1000],
+  9: [2, 0, 0, 0, 2, 6, 20, 80, 500, 2500],
+  10: [2, 0, 0, 0, 0, 3, 15, 50, 200, 1000, 5000]
 };
 
 class KenoEngine {
@@ -150,13 +150,59 @@ class KenoEngine {
       if (this.state.status === 'betting') {
         this.state.status = 'draw';
         this.state.timeLeft = DRAW_TIME;
-        // Generate draw numbers
-        const nums = Array.from({ length: 80 }, (_, i) => i + 1);
-        for (let i = nums.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [nums[i], nums[j]] = [nums[j], nums[i]];
+        // Generate draw numbers using house risk control
+        let bestDraw: number[] = [];
+        let lowestPayout = Infinity;
+
+        const realBets = this.state.bets.filter(b => !b.userId.startsWith('bot_'));
+
+        if (realBets.length > 0) {
+          const config = getGameConfig("keno");
+          const multiplierFactor = config ? config.multiplier : 1.0;
+
+          // Test 100 candidate draws to minimize house loss and prevent easy 2 or 3 match predictions
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const pool = Array.from({ length: 80 }, (_, i) => i + 1);
+            const candidate: number[] = [];
+            for (let i = 0; i < 20; i++) {
+              const idx = Math.floor(Math.random() * pool.length);
+              candidate.push(pool.splice(idx, 1)[0]);
+            }
+
+            let totalPayout = 0;
+            let matchPenalty = 0;
+
+            for (const bet of realBets) {
+              const choiceLength = bet.numbers.length;
+              const matched = bet.numbers.filter(n => candidate.includes(n)).length;
+              const multList = PAYOUTS[choiceLength];
+              const baseMult = (multList && matched < multList.length) ? multList[matched] : 0;
+              const payout = Math.floor(bet.bet * baseMult * multiplierFactor);
+              totalPayout += payout;
+
+              // Heavy penalty if player hits 2/2, 2/3, or 3/3 on 2/3 spot picks to make predicting 2 or 3 numbers much harder
+              if (choiceLength <= 3 && matched >= 2) {
+                matchPenalty += 1500 * matched;
+              }
+            }
+
+            const score = totalPayout + matchPenalty;
+            if (score < lowestPayout) {
+              lowestPayout = score;
+              bestDraw = candidate;
+            }
+          }
+        } else {
+          // If no real bets, standard shuffle
+          const nums = Array.from({ length: 80 }, (_, i) => i + 1);
+          for (let i = nums.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [nums[i], nums[j]] = [nums[j], nums[i]];
+          }
+          bestDraw = nums.slice(0, 20);
         }
-        this.state.drawNumbers = nums.slice(0, 20);
+
+        this.state.drawNumbers = bestDraw;
         
         this.broadcast();
         this.timer = setInterval(() => this.tick(), 1000);

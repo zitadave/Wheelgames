@@ -20,8 +20,8 @@ const BANK_DETAILS: Record<string, { name: string; account: string; owner: strin
   "Dashen": { name: "Dashen Bank (🏦)", account: "555444332", owner: "Tsion Mekonnen" }
 };
 
-const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || window.location.origin;
-const SOCKET_URL = BACKEND_URL;
+const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || '';
+const SOCKET_URL = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 interface HistoryItem {
   roundId: number;
@@ -46,26 +46,24 @@ export default function App() {
   const openWallet = () => {
     setIsWalletOpen(true);
     // Refresh bank details whenever wallet is opened to ensure fresh data
-    if (BACKEND_URL) {
-      fetch(`${BACKEND_URL}/api/config/banks`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.banks) {
-            const formatted: any = {};
-            Object.entries(data.banks).forEach(([id, b]: [string, any]) => {
-              formatted[id] = {
-                name: b.name || id,
-                account: b.account || "",
-                owner: b.owner_name || ""
-              };
-            });
-            if (Object.keys(formatted).length > 0) {
-              setDynamicBanks(formatted);
-            }
+    fetch(`${BACKEND_URL}/api/config/banks`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.banks) {
+          const formatted: any = {};
+          Object.entries(data.banks).forEach(([id, b]: [string, any]) => {
+            formatted[id] = {
+              name: b.name || id,
+              account: b.account || "",
+              owner: b.owner_name || ""
+            };
+          });
+          if (Object.keys(formatted).length > 0) {
+            setDynamicBanks(formatted);
           }
-        })
-        .catch(err => console.error("Error refreshing banks config:", err));
-    }
+        }
+      })
+      .catch(err => console.error("Error refreshing banks config:", err));
   };
   
   const [userId] = useState(() => tgUser?.id ? tgUser.id.toString() : 'user_' + Math.floor(Math.random() * 100000));
@@ -436,8 +434,6 @@ export default function App() {
       startParam = (window.Telegram.WebApp.initDataUnsafe as any)?.start_param || "";
     }
 
-    if (!BACKEND_URL) return;
-
     fetch(`${BACKEND_URL}/api/init`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -489,8 +485,6 @@ export default function App() {
   const [copiedId, setCopiedId] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!BACKEND_URL) return;
-    
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
@@ -514,7 +508,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!BACKEND_URL) return;
     fetch(`${BACKEND_URL}/api/config/banks`)
       .then(res => res.json())
       .then(data => {
@@ -552,7 +545,6 @@ export default function App() {
   const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(false);
 
   const fetchLeaderboard = () => {
-    if (!BACKEND_URL) return;
     setIsLeaderboardLoading(true);
     fetch(`${BACKEND_URL}/api/leaderboard`)
       .then(res => res.json())

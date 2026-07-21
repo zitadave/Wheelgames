@@ -274,14 +274,34 @@ class Room {
     // Determine winner early for animation
     let isEvenWinner = Math.random() > 0.5;
 
+    // To improve perceived randomness and prevent long predictable streaks, check recent history
+    const historySides = this.state.history.slice(0, 3).map(h => (h.winner % 2 === 0 ? 'even' : 'odd'));
+    const isStreak = historySides.length >= 3 && historySides.every(s => s === historySides[0]);
+    const streakSide = isStreak ? historySides[0] : null;
+
     if (botBetPlaced && botSide) {
-      // Bot has a 75% chance to win, and player has 25% chance to win.
-      // If botSide is 'even', bot wins if isEvenWinner is true. We want this to happen 75% of the time.
-      const botShouldWin = Math.random() < 0.75; // 75% chance bot wins
+      // Restored house win rate to 75% as requested.
+      let winProb = 0.75; 
+      
+      // To address the "predictability" of streaks while maintaining high margin,
+      // we only break streaks of 3+ by lowering the bot win prob to 40% when it would continue a streak.
+      if (isStreak && botSide === streakSide) {
+        winProb = 0.40; 
+      }
+
+      const botShouldWin = Math.random() < winProb;
       if (botSide === 'even') {
         isEvenWinner = botShouldWin;
       } else {
         isEvenWinner = !botShouldWin;
+      }
+    } else if (isStreak) {
+      // In P2P mode, slightly favor breaking long streaks (3+) for better distribution feel
+      const breakProb = 0.55; 
+      if (streakSide === 'even' && Math.random() < breakProb) {
+        isEvenWinner = false;
+      } else if (streakSide === 'odd' && Math.random() < breakProb) {
+        isEvenWinner = true;
       }
     }
 

@@ -9,7 +9,7 @@ import { initGameEngine } from "./src/server/GameEngine.js";
 import { initBingoEngine } from "./src/server/BingoEngine.js";
 import { initKenoEngine } from "./src/server/KenoEngine.js";
 import { loadGameSettings } from "./src/server/gameSettings.js";
-import { initTelegramBot, getBotUsername, triggerBotFlow } from "./src/server/telegramBot.js";
+import { initTelegramBot, getBotUsername, triggerBotFlow, getPromptsConfig } from "./src/server/telegramBot.js";
 import { getBotLogs, logBot } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
 import crypto from "crypto";
@@ -399,7 +399,6 @@ async function startServer() {
 
   app.get("/api/config/banks", async (req, res) => {
     try {
-      const { getPromptsConfig } = await import("./src/server/telegramBot.js");
       const config = await getPromptsConfig();
       res.json({ success: true, banks: config.banks });
     } catch (err: any) {
@@ -431,7 +430,6 @@ async function startServer() {
       // 2. Try Automatic Parsing & Verification
       const { parseReceiptSMS } = await import("./src/server/transactionManager.js");
       const { extractSenderName } = await import("./src/server/smsParser.js");
-      const { getPromptsConfig } = await import("./src/server/telegramBot.js");
 
       const { txId, amount: parsedAmount } = parseReceiptSMS(receiptText);
       const targetAmount = parsedAmount || Number(amount);

@@ -1722,34 +1722,31 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       const jackpotGrandWins = txs?.filter(t => t.type === 'win' && t.description?.includes('in grand')) || [];
       const jackpotGrandWon = jackpotGrandWins.reduce((s, t) => s + Number(t.amount), 0);
 
-      const totalRoundsPlayed = evenOddBets.length + bingo10Bets.length + bingo20Bets.length + fast10Bets.length + fast20Bets.length + jackpotMiniBets.length + jackpotGrandBets.length;
+      // Keno (ኬኖ)
+      const kenoTxs = txs?.filter(t => (t.type === 'bet' || t.type === 'refund') && t.description?.includes('Keno Bet')) || [];
+      const kenoBets = kenoTxs.filter(t => t.type === 'bet');
+      const kenoWagered = Math.abs(kenoTxs.reduce((s, t) => s + Number(t.amount), 0));
+      const kenoWins = txs?.filter(t => t.type === 'win' && t.description?.includes('Keno Win')) || [];
+      const kenoWon = kenoWins.reduce((s, t) => s + Number(t.amount), 0);
+
+      const totalRoundsPlayed = evenOddBets.length + bingo10Bets.length + bingo20Bets.length + fast10Bets.length + fast20Bets.length + jackpotMiniBets.length + jackpotGrandBets.length + kenoBets.length;
       const directReferralsCount = (await supabase.from('users').select('id', { count: 'exact', head: true }).eq('referrer_id', targetId)).count || 0;
 
-      const totalWon = totalEvenOddWins + bingo10Won + bingo20Won + fast10Won + fast20Won + jackpotMiniWon + jackpotGrandWon;
-      const totalWagered = totalEvenOddWagered + bingo10Wagered + bingo20Wagered + fast10Wagered + fast20Wagered + jackpotMiniWagered + jackpotGrandWagered;
+      const totalWon = totalEvenOddWins + bingo10Won + bingo20Won + fast10Won + fast20Won + jackpotMiniWon + jackpotGrandWon + kenoWon;
+      const totalWagered = totalEvenOddWagered + bingo10Wagered + bingo20Wagered + fast10Wagered + fast20Wagered + jackpotMiniWagered + jackpotGrandWagered + kenoWagered;
       
       const playerProfit = totalWon - totalWagered;
       const netHouseGGR = totalWagered - totalWon;
 
-      let referrerStr = 'None';
-      if (user.referrer_id) {
-        try {
-          const { data: refUser } = await supabase.from('users').select('username').eq('id', user.referrer_id).maybeSingle();
-          referrerStr = refUser?.username ? `@${refUser.username} (ID: <code>${user.referrer_id}</code>)` : `ID: <code>${user.referrer_id}</code>`;
-        } catch (e) {
-          referrerStr = `ID: <code>${user.referrer_id}</code>`;
-        }
-      }
-
       let report = `👤 <b>Admin User Report:</b> <code>${targetId}</code>\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                    `👤 <b>Username:</b> @${user.username || 'N/A'}\n` +
-                   `🏷️ <b>Full Name:</b> ${escapeHTML(`${user.first_name || ''} ${user.last_name || ''}`.trim() || 'N/A')}\n` +
-                   `📞 <b>Phone Number:</b> <code>${user.phone || 'N/A'}</code>\n` +
-                   `🌐 <b>Language Preference:</b> <code>${user.language || 'en'}</code>\n` +
-                   `🤝 <b>Referred By:</b> ${referrerStr}\n` +
-                   `👑 <b>Admin Status:</b> ${user.is_admin ? '👑 Yes' : '👤 Regular Player'}\n` +
-                   `🚫 <b>Bot Access Status:</b> ${user.is_blocked_bot ? '🔴 BLOCKED FROM BOT' : '🟢 Active/Allowed'}\n` +
+                   `🏷️ <b>Full Name:</b> ${escapeHTML(user.full_name || 'N/A')}\n` +
+                   `📞 <b>Phone Number:</b> ${user.phone_number || 'N/A'}\n` +
+                   `🌐 <b>Language Preference:</b> ${user.language_code || 'en'}\n` +
+                   `🤝 <b>Referred By:</b> ${user.referrer_id || 'None'}\n` +
+                   `👑 <b>Admin Status:</b> ${user.is_admin ? '👑 Administrator' : '👤 Regular Player'}\n` +
+                   `🚫 <b>Bot Access Status:</b> ${user.is_blocked_bot ? '🔴 BLOCKED BY BOT' : '🟢 Active/Allowed'}\n` +
                    `🛡️ <b>Affiliate Status:</b> ${isAffiliateBanned ? '🔴 BANNED (' + escapeHTML(affiliateBanDesc) + ')' : '🟢 Active'}\n` +
                    `📅 <b>Joined:</b> ${new Date(user.created_at).toLocaleString('en-US')}\n` +
                    `🕒 <b>Last Seen:</b> ${user.last_seen ? new Date(user.last_seen).toLocaleString('en-US') : '<i>Never</i>'}\n` +
@@ -1772,6 +1769,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
                    `🎱 <b>ቢንጎ (Bingo):</b>\n` +
                    `  └ ባለ 10: <code>${bingo10Wagered.toLocaleString()} ETB</code> (${bingo10Bets.length} plays, Wins: <code>${bingo10Won.toLocaleString()} ETB</code>)\n` +
                    `  └ ባለ 20: <code>${bingo20Wagered.toLocaleString()} ETB</code> (${bingo20Bets.length} plays, Wins: <code>${bingo20Won.toLocaleString()} ETB</code>)\n` +
+                   `🎱 <b>ኬኖ (Keno):</b>\n` +
+                   `  └ Total: <code>${kenoWagered.toLocaleString()} ETB</code> (${kenoBets.length} plays, Wins: <code>${kenoWon.toLocaleString()} ETB</code>)\n` +
                    `📈 <b>Net Player Profit:</b> <code>${playerProfit > 0 ? '+' : ''}${playerProfit.toLocaleString()} ETB</code>\n` +
                    `📉 <b>House GGR (Revenue):</b> <code>${netHouseGGR > 0 ? '+' : ''}${netHouseGGR.toLocaleString()} ETB</code>\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
@@ -1917,6 +1916,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       }
       if (bingo) {
         text += `🎱 <b>Bingo Promo</b>: ${bingo.enabled ? "🟢" : "🔴"}\n`;
+      }
+      const kenoAnn = anns.find(a => a.id === "ann_keno");
+      if (kenoAnn) {
+        text += `🎰 <b>Keno Promo</b>: ${kenoAnn.enabled ? "🟢" : "🔴"}\n`;
       }
       if (mola) {
         text += `⚖️ <b>Mola/Godele Promo</b>: ${mola.enabled ? "🟢" : "🔴"}\n`;
