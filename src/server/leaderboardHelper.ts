@@ -81,8 +81,10 @@ export async function fetchLeaderboardData(jackpotAmount: number = 0): Promise<L
   const leaderboardList: LeaderboardEntry[] = [];
   let totalWeekReferrals = 0;
   referrerCountMap.forEach((count, referrer_id) => {
-    leaderboardList.push({ referrer_id, volume: count, referral_count: count });
-    totalWeekReferrals += count;
+    if (referrer_id !== 'system_jackpot' && referrer_id !== 'system_keno' && referrer_id !== 'bot_house') {
+      leaderboardList.push({ referrer_id, volume: count, referral_count: count });
+      totalWeekReferrals += count;
+    }
   });
 
   leaderboardList.sort((a, b) => b.volume - a.volume);

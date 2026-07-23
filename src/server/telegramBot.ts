@@ -5932,7 +5932,7 @@ const withdrawalCooldowns = new Map<string, number>();
         // Query users matching dummy criteria
         const { data: users, error } = await supabase.from('users')
             .select('id, username, first_name')
-            .or('first_name.eq.N/A,username.ilike.Player_%');
+            .or('first_name.eq.N/A,username.ilike.Player_%,username.ilike.mock_%,username.ilike.test_%,id.ilike.user_%');
             
         if (error) {
             logBot(`Error fetching dummy users: ${error.message}`);
@@ -5973,7 +5973,7 @@ const withdrawalCooldowns = new Map<string, number>();
         
         const { data: users, error } = await supabase.from('users')
             .select('id, username, first_name')
-            .or('first_name.eq.N/A,username.ilike.Player_%');
+            .or('first_name.eq.N/A,username.ilike.Player_%,username.ilike.mock_%,username.ilike.test_%,id.ilike.user_%');
             
         if (error || !users) {
             logBot(`Error fetching dummy users for export: ${error?.message}`);
@@ -5998,7 +5998,7 @@ const withdrawalCooldowns = new Map<string, number>();
         // Query users matching dummy criteria
         const { data: users, error } = await supabase.from('users')
             .select('id, first_name')
-            .or('first_name.eq.N/A,username.ilike.Player_%');
+            .or('first_name.eq.N/A,username.ilike.Player_%,username.ilike.mock_%,username.ilike.test_%,id.ilike.user_%');
             
         if (error) {
             logBot(`Error fetching dummy users for deletion: ${error.message}`);

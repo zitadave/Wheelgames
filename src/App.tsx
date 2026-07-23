@@ -94,7 +94,7 @@ export default function App() {
   // Smooth local timer for Bingo
 
 
-  const [username] = useState(() => tgUser?.username || tgUser?.first_name || 'Player_' + Math.floor(Math.random() * 1000));
+  const [username] = useState(() => tgUser?.username || tgUser?.first_name || (tgUser?.id ? `User_${tgUser.id}` : 'Guest'));
   const [photoUrl] = useState(() => tgUser?.photo_url || null);
   const [firstName] = useState(() => tgUser?.first_name || '');
   const [lastName] = useState(() => tgUser?.last_name || '');

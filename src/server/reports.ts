@@ -36,13 +36,14 @@ export async function handleUsersReport(bot: any, chatId: number, supabase: any)
 
         if (error) throw error;
 
-        // Filter out mock accounts (id starting with user_ or username starting with player_ or non-numeric id)
+        // Filter out system and mock accounts (system_jackpot, system_keno, bot_house, player_*, etc.)
         const users = (rawUsers || []).filter(u => {
             const isNumeric = /^\d+$/.test(u.id);
+            const isSystemId = u.id === 'system_jackpot' || u.id === 'system_keno' || u.id === 'bot_house';
+            const isSystemUsername = u.username && (u.username.toLowerCase().startsWith("system_") || u.username.toLowerCase().startsWith("bot_"));
+            const isMockUsername = u.username && (u.username.toLowerCase().startsWith("player_") || u.username.toLowerCase().startsWith("mock_"));
             const isMockId = u.id && u.id.startsWith("user_");
-            const isMockUsername = u.username && u.username.toLowerCase().startsWith("player_");
-            const isJackpot = u.id === 'system_jackpot';
-            return (isNumeric || isJackpot) && !isMockId && !isMockUsername;
+            return isNumeric && !isSystemId && !isSystemUsername && !isMockUsername && !isMockId;
         });
 
         // Count metrics for summary
@@ -314,13 +315,14 @@ export async function handleFinancialReport(bot: any, chatId: number, supabase: 
 
         if (userError) throw userError;
 
-        // Filter out mock accounts
+        // Filter out system and mock accounts
         const users = (rawUsers || []).filter(u => {
             const isNumeric = /^\d+$/.test(u.id);
+            const isSystemId = u.id === 'system_jackpot' || u.id === 'system_keno' || u.id === 'bot_house';
+            const isSystemUsername = u.username && (u.username.toLowerCase().startsWith("system_") || u.username.toLowerCase().startsWith("bot_"));
+            const isMockUsername = u.username && (u.username.toLowerCase().startsWith("player_") || u.username.toLowerCase().startsWith("mock_"));
             const isMockId = u.id && u.id.startsWith("user_");
-            const isMockUsername = u.username && u.username.toLowerCase().startsWith("player_");
-            const isJackpot = u.id === 'system_jackpot';
-            return (isNumeric || isJackpot) && !isMockId && !isMockUsername;
+            return isNumeric && !isSystemId && !isSystemUsername && !isMockUsername && !isMockId;
         });
 
         // Fetch transactions
