@@ -220,7 +220,7 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
     if (!selectedRoomId) return;
     socket?.emit('bingo_claim', { roomId: selectedRoomId, userId }, (res: any) => {
       if (res.success) {
-        showNotification(`BINGO! You won ${res.winAmount} ETB`, "success");
+        showNotification(res.message || "BINGO! Waiting for others...", "success");
       } else {
         if (res.code === 'EXPIRED') {
            showNotification("አልፎአል", "info");

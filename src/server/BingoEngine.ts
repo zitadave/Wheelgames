@@ -16,6 +16,7 @@ export class BingoRoom {
   private broadcastTimeout: NodeJS.Timeout | null = null;
   private ballSequence: number[] = [];
   private ballIndex = 0;
+  public pendingWinners: any[] = [];
 
   constructor(id: string, io: Server, betAmount: number) {
     this.io = io;
@@ -53,6 +54,7 @@ export class BingoRoom {
   private startLobby() {
     this.clearTimer();
     
+    this.pendingWinners = [];
     this.state.status = "lobby";
     this.state.timeLeft = LOBBY_TIME;
     this.state.players = {};
@@ -98,6 +100,11 @@ export class BingoRoom {
 
   private callNextBall() {
     this.clearTimer();
+
+    if (this.pendingWinners.length > 0) {
+       this.processWinners();
+       return;
+    }
 
     if (this.ballIndex >= this.ballSequence.length || this.state.winners.length > 0) {
        this.showResult();
@@ -191,24 +198,20 @@ export class BingoRoom {
      const player = this.state.players[userId];
      if (!player) return { success: false, message: "Player not found" };
 
-     // Check each card
      let won = false;
      let isExpired = false;
      let winType = "";
      let winningCardId = player.cards[0];
-     
+
      for (const cardId of player.cards) {
         const cardNumbers = getDeterministicCard(cardId);
         const checkResult = checkBingo(cardNumbers, this.state.calledBalls);
         
         if (checkResult.won) {
-           // Missed Call Rule: A win is only valid if the last ball called is part of a winning pattern.
-           // This allows winning if a subsequent ball completes a new pattern even if an old one was missed.
            if (!checkResult.isFresh) {
               isExpired = true;
               continue; 
            }
-           
            won = true;
            winType = checkResult.type;
            winningCardId = cardId;
@@ -220,25 +223,61 @@ export class BingoRoom {
         return { success: false, message: "አልፎአል (Expired)", code: "EXPIRED" };
      }
 
-     if (won) {
-        // Calculate win amount based on total cards in play
-        let totalCardsInRound = 0;
-        Object.values(this.state.players).forEach(p => {
-           totalCardsInRound += p.cards.length;
-        });
-        
-        const totalPool = totalCardsInRound * this.state.betAmount;
-        const configKey = this.state.id === "bingo-10" ? "bingo_10" : "bingo_20";
-        const config = getGameConfig(configKey);
-        const distFactor = config ? config.multiplier : 0.8;
-        const winAmount = Math.floor(totalPool * distFactor);
-
-        this.state.winners.push({ userId, username: player.username, type: winType, winAmount, cardId: winningCardId, cards: player.cards });
-        this.showResult();
-        return { success: true, winAmount };
+     if (!won) {
+        return { success: false, message: "Not a valid Bingo yet! Need a Line or 4 Corners." };
      }
 
-     return { success: false, message: "Not a valid Bingo yet! Need a Line or 4 Corners." };
+     if (!this.pendingWinners.find(w => w.userId === userId)) {
+         this.pendingWinners.push({
+             userId,
+             username: player.username,
+             type: winType,
+             cardId: winningCardId,
+             cards: player.cards
+         });
+     }
+
+     return { success: true, message: "Bingo claim accepted! Waiting for round to end..." };
+  }
+
+  private async processWinners() {
+     let totalCardsInRound = 0;
+     Object.values(this.state.players).forEach(p => {
+         totalCardsInRound += p.cards.length;
+     });
+     
+     const totalPool = totalCardsInRound * this.state.betAmount;
+     const configKey = this.state.id === "bingo-10" ? "bingo_10" : "bingo_20";
+     const config = getGameConfig(configKey);
+     const distFactor = config ? config.multiplier : 0.8;
+     
+     const totalWinAmount = Math.floor(totalPool * distFactor);
+     const splitAmount = Math.floor(totalWinAmount / this.pendingWinners.length);
+
+     for (const pw of this.pendingWinners) {
+         const winner = { ...pw, winAmount: splitAmount };
+         this.state.winners.push(winner);
+         
+         try {
+             if (supabase) {
+                 const txRes = await txManager.modifyBalance(winner.userId, splitAmount, "win", `Bingo Win (${this.state.id})`);
+                 await supabase.from("game_logs").insert({
+                     user_id: winner.userId,
+                     game_type: `Bingo | ${this.state.gameId}`,
+                     result: "Win",
+                     win_amount: splitAmount
+                 });
+                 if (txRes.success) {
+                     this.io.to(`user_${winner.userId}`).emit("syncBalance", txRes.newBalance);
+                 }
+             }
+         } catch (e) {
+             console.error("Bingo payout error:", e);
+         }
+     }
+
+     this.pendingWinners = [];
+     this.showResult();
   }
 }
 
@@ -401,26 +440,6 @@ export function initBingoEngine(io: Server) {
          const room = bingoRooms[data.roomId];
          if (room) {
             const res = room.claimBingo(data.userId);
-            
-            if (res.success && res.winAmount) {
-               try {
-                  if (supabase) {
-                     const txRes = await txManager.modifyBalance(data.userId, res.winAmount, "win", `Bingo Win (${room.state.id})`);
-                     await supabase.from("game_logs").insert({
-                        user_id: data.userId,
-                        game_type: `Bingo | ${room.state.gameId}`,
-                        result: "Win",
-                        win_amount: res.winAmount
-                     });
-                     if (txRes.success) {
-                        io.to(`user_${data.userId}`).emit("syncBalance", txRes.newBalance);
-                     }
-                  }
-               } catch (e) {
-                  console.error("Bingo payout error:", e);
-               }
-            }
-            
             if (callback) callback(res);
          }
       });
