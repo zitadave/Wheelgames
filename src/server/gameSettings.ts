@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS: SystemGameSettings = {
     nameAm: "ኬኖ (Keno)",
     nameEn: "Keno",
     enabled: true,
-    minBet: 5,
+    minBet: 2,
     maxBet: 50000,
     multiplier: 1.0
   },

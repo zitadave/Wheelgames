@@ -19,7 +19,7 @@ import { getGameSettingsSync, saveGameSettings, isGameEnabled, getGameConfig } f
 
 let botInfo: any = (globalThis as any).telegramBotInfo || null;
 let botInstance: any = (globalThis as any).telegramBotInstance && (globalThis as any).telegramBotInstance !== "initializing" ? (globalThis as any).telegramBotInstance : null;
-let globalAppUrl = process.env.APP_URL || "https://wheelgames1.onrender.com";
+let globalAppUrl = process.env.APP_URL || "https://wheelgames2.onrender.com";
 
 // getChannelId relocated below promptsConfig initialization
 

@@ -29,16 +29,16 @@ const DRAW_TIME = 35;
 const RESULT_TIME = 10; // Comfortable display time for results
 
 const PAYOUTS: Record<number, number[]> = {
-  1: [0, 2.5],
-  2: [0, 0, 6],
-  3: [0, 0, 1, 20],
-  4: [0, 0, 1, 5, 40],
-  5: [0, 0, 0, 2, 12, 80],
-  6: [0, 0, 0, 1.5, 6, 30, 250],
-  7: [1, 0, 0, 2, 4, 20, 80, 500],
-  8: [1, 0, 0, 0, 3, 10, 40, 150, 1000],
-  9: [2, 0, 0, 0, 2, 6, 20, 80, 500, 2500],
-  10: [2, 0, 0, 0, 0, 3, 15, 50, 200, 1000, 5000]
+  1: [0, 3.5],
+  2: [0, 1, 10],
+  3: [0, 0, 2, 50],
+  4: [0, 0, 1.5, 10, 80],
+  5: [0, 0, 1, 3, 30, 150],
+  6: [0, 0, 0, 2, 15, 60, 500],
+  7: [1, 0, 0, 2, 4, 20, 80, 1000],
+  8: [1, 0, 0, 0, 5, 15, 50, 200, 2000],
+  9: [2, 0, 0, 0, 2, 10, 25, 125, 1000, 5000],
+  10: [2, 0, 0, 0, 0, 5, 30, 100, 300, 2000, 10000]
 };
 
 class KenoEngine {
@@ -160,8 +160,8 @@ class KenoEngine {
           const config = getGameConfig("keno");
           const multiplierFactor = config ? config.multiplier : 1.0;
 
-          // Test 100 candidate draws to minimize house loss and prevent easy 2 or 3 match predictions
-          for (let attempt = 0; attempt < 100; attempt++) {
+          // Test 200 candidate draws to minimize house loss and prevent easy matches
+          for (let attempt = 0; attempt < 200; attempt++) {
             const pool = Array.from({ length: 80 }, (_, i) => i + 1);
             const candidate: number[] = [];
             for (let i = 0; i < 20; i++) {
@@ -180,9 +180,11 @@ class KenoEngine {
               const payout = Math.floor(bet.bet * baseMult * multiplierFactor);
               totalPayout += payout;
 
-              // Heavy penalty if player hits 2/2, 2/3, or 3/3 on 2/3 spot picks to make predicting 2 or 3 numbers much harder
-              if (choiceLength <= 3 && matched >= 2) {
-                matchPenalty += 1500 * matched;
+              // Heavy penalty to make it very hard to win more than 2 matches
+              if (matched > 2) {
+                matchPenalty += 10000 * Math.pow(10, matched);
+              } else if (matched === 2) {
+                matchPenalty += 1500;
               }
             }
 
