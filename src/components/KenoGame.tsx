@@ -250,10 +250,16 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
 
   const getTicketStats = (ticketNumbers: number[], ticketBet: number) => {
     const matchedNumbers = ticketNumbers.filter(n => drawNumbers.slice(0, currentDrawIndex + 1).includes(n));
-    const payoutMult = PAYOUTS[ticketNumbers.length]?.[matchedNumbers.length] || 0;
+    let payoutMult = PAYOUTS[ticketNumbers.length]?.[matchedNumbers.length] || 0;
+    
+    // Do not award "Catch 0" (or below minimum required) payouts until the draw is completely finished
+    if (currentDrawIndex < 19 && matchedNumbers.length < getMinRequiredMatches(ticketNumbers.length)) {
+      payoutMult = 0;
+    }
+
     return {
       matchedNumbers,
-      payout: payoutMult * ticketBet,
+      payout: Number((payoutMult * ticketBet).toFixed(2)),
       isWinner: payoutMult > 0,
       payoutMult
     };
@@ -353,7 +359,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
   const matches = selectedNumbers.filter(n => drawNumbers.slice(0, currentDrawIndex + 1).includes(n)).length;
 
   const isMatchedOnMainBoard = (n: number) => {
-    return selectedNumbers.includes(n) || (activeTickets.length === 1 && activeTickets[0].numbers.includes(n));
+    return selectedNumbers.includes(n) || (activeTickets.some(t => t.numbers.includes(n)));
   };
 
   return (
@@ -406,7 +412,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                             stiffness: 260, 
                             damping: 20
                           }}
-                          className="relative z-10 flex items-center justify-center"
+                          
                         >
                           <Ball3D 
                             number={drawNumbers[currentDrawIndex]} 
@@ -585,7 +591,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
               <div className="grid grid-cols-10 gap-[5px] p-2 bg-[#202c2c] border-y border-gray-800/20 mt-2">
                 {Array.from({ length: 80 }, (_, i) => i + 1).map(num => {
                   const isSelected = selectedNumbers.includes(num);
-                  const isInActiveTicket = activeTickets.length === 1 && activeTickets[0].numbers.includes(num);
+                  const isInActiveTicket = activeTickets.some(t => t.numbers.includes(num));
                   const isDrawn = drawNumbers.slice(0, currentDrawIndex + 1).includes(num);
                   const isHit = isDrawn && (isSelected || isInActiveTicket);
                   const isHot = hotNumbers.includes(num);

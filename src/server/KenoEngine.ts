@@ -177,7 +177,7 @@ class KenoEngine {
               const matched = bet.numbers.filter(n => candidate.includes(n)).length;
               const multList = PAYOUTS[choiceLength];
               const baseMult = (multList && matched < multList.length) ? multList[matched] : 0;
-              const payout = Math.floor(bet.bet * baseMult * multiplierFactor);
+              const payout = Number((bet.bet * baseMult * multiplierFactor).toFixed(2));
               totalPayout += payout;
 
               // Heavy penalty to make it very hard to win more than 2 matches
@@ -240,7 +240,7 @@ class KenoEngine {
         const baseMultiplier = (multList && count < multList.length) ? multList[count] : 0;
         const config = getGameConfig("keno");
         const multiplierFactor = config ? config.multiplier : 1.0;
-        const payoutAmount = Math.floor(bet.bet * baseMultiplier * multiplierFactor);
+        const payoutAmount = Number((bet.bet * baseMultiplier * multiplierFactor).toFixed(2));
 
         bet.matchedCount = count;
         bet.payoutAmount = payoutAmount;
