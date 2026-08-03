@@ -337,8 +337,8 @@ class KenoEngine {
       if (bet > config.maxBet) {
         return { success: false, message: `ከፍተኛው ውርርድ ${config.maxBet} ብር ነው። (Maximum bet is ${config.maxBet} ETB)` };
       }
-    } else if (bet < 5) {
-      return { success: false, message: "ዝቅተኛው ውርርድ 5 ብር ነው። (Minimum bet is 5 ETB)" };
+    } else if (bet < 2) {
+      return { success: false, message: "ዝቅተኛው ውርርድ 2 ብር ነው። (Minimum bet is 2 ETB)" };
     }
 
     // Deduct user balance

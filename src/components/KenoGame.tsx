@@ -248,12 +248,12 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
   const payoutAddedRef = useRef(false);
   const drawIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const getTicketStats = (ticketNumbers: number[]) => {
+  const getTicketStats = (ticketNumbers: number[], ticketBet: number) => {
     const matchedNumbers = ticketNumbers.filter(n => drawNumbers.slice(0, currentDrawIndex + 1).includes(n));
     const payoutMult = PAYOUTS[ticketNumbers.length]?.[matchedNumbers.length] || 0;
     return {
       matchedNumbers,
-      payout: payoutMult * betAmount,
+      payout: payoutMult * ticketBet,
       isWinner: payoutMult > 0,
       payoutMult
     };
@@ -265,6 +265,12 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
       drawStartedRef.current = true;
       payoutAddedRef.current = false;
       startDraw(serverDrawNumbers);
+    } else if (gameState === 'result') {
+      // If user reloads during result phase, immediately show all numbers
+      drawStartedRef.current = true;
+      setDrawNumbers(serverDrawNumbers);
+      setCurrentDrawIndex(19);
+      setIsBallInHeader(false);
     } else if (gameState === 'betting') {
       drawStartedRef.current = false;
       payoutAddedRef.current = false;
@@ -357,14 +363,14 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                     animate={{ scale: 1, opacity: 1 }}
                     className="flex flex-col items-center z-20"
                   >
-                    {activeTickets.some(t => getTicketStats(t.numbers).payoutMult > 0) ? (
+                    {activeTickets.some(t => getTicketStats(t.numbers, t.bet).payoutMult > 0) ? (
                       <>
                         <div className="text-[#2ecc71] text-3xl font-black uppercase tracking-[0.2em] drop-shadow-[0_0_12px_rgba(46,204,113,0.6)] mb-1">
                           YOU WIN
                         </div>
                         <div className="text-[#2ecc71] text-4xl font-black drop-shadow-[0_0_10px_rgba(46,204,113,0.5)]">
                           {activeTickets.reduce((sum, t) => {
-                            const stats = getTicketStats(t.numbers);
+                            const stats = getTicketStats(t.numbers, t.bet);
                             return sum + (stats.payoutMult * t.bet);
                           }, 0).toLocaleString()}
                         </div>
@@ -738,7 +744,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                       })
                     : activeTickets.map((t, i) => ({ ...t, isMine: true, displayId: activeTickets.length - i }))
                   ).map((ticket, idx) => {
-                    const stats = getTicketStats(ticket.numbers);
+                    const stats = getTicketStats(ticket.numbers, ticket.bet);
                     
                     // Highlight as green if and only if ticket hits the required match target to win (which is difficult, especially needing >3 matches)
                     const minRequired = getMinRequiredMatches(ticket.numbers.length);
@@ -1010,7 +1016,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                         <span className="font-bold text-white">የቁጥሮች ጥምር መምረጥ፦</span> ከ1 እስከ 80 ባለው ሰሌዳ ላይ የሚፈልጉትን ከ1 እስከ 10 ቁጥሮች ይምረጡ።
                       </li>
                       <li>
-                        <span className="font-bold text-white">የውርርድ መጠን መወሰን፦</span> ለመወራረድ የሚፈልጉትን መጠን ያስገቡ (ቢያንስ 5)።
+                        <span className="font-bold text-white">የውርርድ መጠን መወሰን፦</span> ለመወራረድ የሚፈልጉትን መጠን ያስገቡ (ቢያንስ 2)።
                       </li>
                       <li>
                         <span className="font-bold text-white">"Bet" መጫን፦</span> ምርጫዎን ካጠናቀቁ በኋላ ውርርድዎን ለማስገባት <span className="text-[#2ecc71] font-black">"BET"</span> የሚለውን ቁልፍ ይጫኑ።
