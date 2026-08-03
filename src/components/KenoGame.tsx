@@ -264,7 +264,8 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
     if (gameState === 'draw' && serverDrawNumbers.length === 20 && !drawStartedRef.current) {
       drawStartedRef.current = true;
       payoutAddedRef.current = false;
-      startDraw(serverDrawNumbers);
+      const elapsed = Math.max(0, 35 - countdown);
+      startDraw(serverDrawNumbers, elapsed);
     } else if (gameState === 'result') {
       // If user reloads during result phase, immediately show all numbers
       drawStartedRef.current = true;
@@ -298,13 +299,17 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
     }
   }, [gameState, activeTickets, serverDrawNumbers]);
 
-  const startDraw = (nums: number[]) => {
+  const startDraw = (nums: number[], elapsedSecs = 0) => {
     setGameState('draw');
     setDrawNumbers(nums);
-    setCurrentDrawIndex(-1);
+    
+    let index = Math.floor(elapsedSecs / 1.6);
+    if (index < 0) index = 0;
+    if (index > 20) index = 20;
+
+    setCurrentDrawIndex(index - 1);
     setIsBallInHeader(false);
     
-    let index = 0;
     if (drawIntervalRef.current) clearInterval(drawIntervalRef.current);
     drawIntervalRef.current = setInterval(() => {
       setCurrentDrawIndex(index);
@@ -346,6 +351,10 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
   };
 
   const matches = selectedNumbers.filter(n => drawNumbers.slice(0, currentDrawIndex + 1).includes(n)).length;
+
+  const isMatchedOnMainBoard = (n: number) => {
+    return selectedNumbers.includes(n) || (activeTickets.length === 1 && activeTickets[0].numbers.includes(n));
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#202c2c] text-white font-sans overflow-hidden w-full">
@@ -402,7 +411,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                           <Ball3D 
                             number={drawNumbers[currentDrawIndex]} 
                             size="lg" 
-                            isMatch={selectedNumbers.includes(drawNumbers[currentDrawIndex]) || activeTickets.some(t => t.numbers.includes(drawNumbers[currentDrawIndex]))} 
+                            isMatch={isMatchedOnMainBoard(drawNumbers[currentDrawIndex])} 
                           />
                         </motion.div>
                       )}
@@ -424,7 +433,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
                     const isCurrent = i === currentDrawIndex;
                     const num = (i < currentDrawIndex || (isCurrent && !isBallInHeader)) 
                                  ? drawNumbers[i] : null;
-                    const isMatch = num !== null && (selectedNumbers.includes(num) || activeTickets.some(t => t.numbers.includes(num)));
+                    const isMatch = num !== null && (isMatchedOnMainBoard(num));
                     
                     return (
                       <div 
@@ -576,7 +585,7 @@ export function KenoGame({ balance, userId, username, onPlaceBet, socket, countd
               <div className="grid grid-cols-10 gap-[5px] p-2 bg-[#202c2c] border-y border-gray-800/20 mt-2">
                 {Array.from({ length: 80 }, (_, i) => i + 1).map(num => {
                   const isSelected = selectedNumbers.includes(num);
-                  const isInActiveTicket = activeTickets.some(t => t.numbers.includes(num));
+                  const isInActiveTicket = activeTickets.length === 1 && activeTickets[0].numbers.includes(num);
                   const isDrawn = drawNumbers.slice(0, currentDrawIndex + 1).includes(num);
                   const isHit = isDrawn && (isSelected || isInActiveTicket);
                   const isHot = hotNumbers.includes(num);
