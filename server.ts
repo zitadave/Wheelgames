@@ -32,6 +32,15 @@ async function startServer() {
       req.rawBody = buf.toString();
     }
   }));
+  // Catch invalid JSON (caused by multi-line SMS in Universal Webhook App)
+  app.use((err: any, req: any, res: any, next: any) => {
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+      req.rawBody = err.body; // Save the raw broken string
+      req.body = err.body;    // Pass it down as a string so our custom parser can handle it
+      return next();
+    }
+    next();
+  });
   app.use(express.urlencoded({ extended: true }));
   app.use(express.text({ type: 'text/plain' }));
   const PORT = 3000;
@@ -147,11 +156,22 @@ async function startServer() {
       try {
         payload = JSON.parse(req.body);
       } catch (e) {
-        // Try parsing custom plain text format
-        const phoneMatch = req.body.match(/PHONE:\s*(.*?)\n/i);
+        // Fallback 1: Custom text format
+        const phoneMatch = req.body.match(/PHONE:\s*(.*?)\r?\n/i);
         const textMatch = req.body.match(/TEXT:\s*([\s\S]*)/i);
+        
+        // Fallback 2: Broken JSON with newlines (extract phone and raw_message)
+        const brokenJsonPhone = req.body.match(/"sender_phone"\s*:\s*"([^"]*)"/i);
+        const brokenJsonRaw = req.body.match(/"raw_message"\s*:\s*"([\s\S]*?)"\s*}/i);
+        
         if (phoneMatch && textMatch) {
           payload = { phone: phoneMatch[1].trim(), raw_message: textMatch[1].trim() };
+        } else if (brokenJsonPhone && brokenJsonRaw) {
+          payload = { phone: brokenJsonPhone[1].trim(), raw_message: brokenJsonRaw[1].trim() };
+        } else {
+          // Absolute last resort: if it's just raw text containing the SMS
+          const maybePhone = req.body.match(/\b(889|127|CBE)\b/i) ? req.body.match(/\b(889|127|CBE)\b/i)[1] : "";
+          payload = { phone: maybePhone, raw_message: req.body.trim() };
         }
       }
     }
