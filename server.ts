@@ -13,7 +13,7 @@ import { initTelegramBot, getBotUsername, triggerBotFlow, getPromptsConfig } fro
 import { getBotLogs, logBot } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
 import crypto from "crypto";
-import { parseBankSMS } from "./src/server/smsParser.js";
+import { parseBankSMS, extractSenderName } from "./src/server/smsParser.js";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { generateToken, setShareToken, getShareToken, setPendingReferral } from "./src/server/redisClient.js";
@@ -259,9 +259,9 @@ async function startServer() {
       }
       
       res.json({ success: true });
-    } catch (err) {
+    } catch (err: any) {
       console.error("❌ Error processing SMS webhook:", err);
-      res.status(500).json({ error: "Internal server error" });
+      res.status(500).json({ error: "Internal server error: " + err.message, stack: err.stack });
     }
   });
 
