@@ -653,16 +653,10 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
   // 1. Merge primitive/simple keys
   const simpleKeys = Object.keys(defaults).filter(k => k !== 'banks' && k !== 'custom_commands' && k !== 'welcome_buttons' && k !== 'referral_buttons') as (keyof PromptsConfig)[];
   for (const key of simpleKeys) {
-    const localVal = local[key];
-    const dbVal = db[key];
-    const defaultVal = defaults[key];
-
-    if (localVal !== undefined && !isEqual(localVal, defaultVal)) {
-      if (!isEqual(localVal, dbVal)) {
-        logBot(`[CONFIG-MERGE] Prompt key '${key}' customized locally. Merging local value.`);
-        (merged as any)[key] = JSON.parse(JSON.stringify(localVal));
-        changed = true;
-      }
+    if (merged[key] === undefined && local[key] !== undefined) {
+      logBot(`[CONFIG-MERGE] Prompt key '${key}' missing in DB. Adding from local.`);
+      (merged as any)[key] = JSON.parse(JSON.stringify(local[key]));
+      changed = true;
     }
   }
 
@@ -675,43 +669,10 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
   ]));
 
   for (const bankId of allBankIds) {
-    const localBank = local.banks?.[bankId];
-    const dbBank = db.banks?.[bankId];
-    const defaultBank = defaults.banks?.[bankId];
-
-    if (localBank === undefined) {
-      // Bank was deleted or not present locally
-      if (dbBank !== undefined && defaultBank !== undefined) {
-        // If it was a default bank, and developer removed it locally, delete from merged
-        logBot(`[CONFIG-MERGE] Default bank '${bankId}' was removed locally. Deleting from DB.`);
-        delete merged.banks[bankId];
-        changed = true;
-      }
-      continue;
-    }
-
-    if (dbBank === undefined) {
-      // New bank added locally
-      logBot(`[CONFIG-MERGE] New bank '${bankId}' added locally. Syncing to DB.`);
-      merged.banks[bankId] = JSON.parse(JSON.stringify(localBank));
+    if (merged.banks[bankId] === undefined && local.banks?.[bankId] !== undefined) {
+      logBot(`[CONFIG-MERGE] New bank '${bankId}' missing in DB. Adding from local.`);
+      merged.banks[bankId] = JSON.parse(JSON.stringify(local.banks[bankId]));
       changed = true;
-      continue;
-    }
-
-    // Bank exists in both, merge properties (name, account, owner_name, withdraw_prompt)
-    const props = ['name', 'account', 'owner_name', 'withdraw_prompt'];
-    for (const prop of props) {
-      const localPropVal = (localBank as any)[prop];
-      const dbPropVal = (dbBank as any)[prop];
-      const defaultPropVal = defaultBank ? (defaultBank as any)[prop] : undefined;
-
-      if (localPropVal !== undefined && !isEqual(localPropVal, defaultPropVal)) {
-        if (!isEqual(localPropVal, dbPropVal)) {
-          logBot(`[CONFIG-MERGE] Bank '${bankId}' prop '${prop}' customized locally. Merging.`);
-          (merged.banks[bankId] as any)[prop] = localPropVal;
-          changed = true;
-        }
-      }
     }
   }
 
@@ -722,20 +683,9 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
     ...Object.keys(db.custom_commands || {})
   ]));
   for (const cmd of allCmds) {
-    const localCmd = local.custom_commands?.[cmd];
-    const dbCmd = db.custom_commands?.[cmd];
-
-    if (localCmd === undefined) continue;
-    if (dbCmd === undefined) {
-      logBot(`[CONFIG-MERGE] New custom command '${cmd}' added locally. Syncing.`);
-      merged.custom_commands[cmd] = JSON.parse(JSON.stringify(localCmd));
-      changed = true;
-      continue;
-    }
-
-    if (!isEqual(localCmd, dbCmd)) {
-      logBot(`[CONFIG-MERGE] Custom command '${cmd}' modified locally. Merging.`);
-      merged.custom_commands[cmd] = JSON.parse(JSON.stringify(localCmd));
+    if (merged.custom_commands[cmd] === undefined && local.custom_commands?.[cmd] !== undefined) {
+      logBot(`[CONFIG-MERGE] New custom command '${cmd}' missing in DB. Adding from local.`);
+      merged.custom_commands[cmd] = JSON.parse(JSON.stringify(local.custom_commands[cmd]));
       changed = true;
     }
   }
@@ -743,16 +693,10 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
   // 4. Merge buttons
   const buttonKeys = ['welcome_buttons', 'referral_buttons'] as (keyof PromptsConfig)[];
   for (const key of buttonKeys) {
-    const localVal = local[key];
-    const dbVal = db[key];
-    const defaultVal = defaults[key];
-
-    if (localVal !== undefined && !isEqual(localVal, defaultVal)) {
-      if (!isEqual(localVal, dbVal)) {
-        logBot(`[CONFIG-MERGE] Button group '${key}' customized locally. Merging.`);
-        (merged as any)[key] = JSON.parse(JSON.stringify(localVal));
-        changed = true;
-      }
+    if (merged[key] === undefined && local[key] !== undefined) {
+      logBot(`[CONFIG-MERGE] Button group '${key}' missing in DB. Adding from local.`);
+      (merged as any)[key] = JSON.parse(JSON.stringify(local[key]));
+      changed = true;
     }
   }
 
