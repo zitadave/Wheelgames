@@ -4611,7 +4611,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       } else if (!targetAmount || isNaN(targetAmount)) {
         autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
       } else {
-        const cleanUserTxId = txId.trim().toUpperCase();
+        const cleanUserTxId = txId.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, '').toUpperCase().trim();
 
         // 1. Check if the reference ID has already been used in transactions list
         const { data: duplicateTxsCheck } = await supabase
