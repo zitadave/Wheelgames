@@ -470,6 +470,10 @@ async function startServer() {
         autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
       } else if (!targetAmount || isNaN(targetAmount) || targetAmount < 10) {
         autoVerifyFailedReason = `Amount not valid. Minimum deposit is 10 ETB (Target Amount: ${targetAmount}).`;
+      } else if (!isReceiverVerified) {
+        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
       }
 
       if (txId && txId.length >= 6 && targetAmount && targetAmount >= 10) {
@@ -498,39 +502,42 @@ async function startServer() {
           return res.status(400).json({ error: `❌ Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been used and claimed.` });
         }
 
-        // 3. Check if there is an unused gateway SMS in deposit_pool
-        const { data: unusedSmsRecord } = await supabase
-          .from('deposit_pool')
-          .select('*')
-          .ilike('transaction_id', cleanUserTxId)
-          .eq('status', 'unused')
-          .maybeSingle();
+        // 3. Strict Check: Verify against SMS Gateway deposit_pool (retry up to 3 times with 1.5s delay)
+        let smsRecordFound: any = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { data: unusedSmsRecord } = await supabase
+            .from('deposit_pool')
+            .select('*')
+            .ilike('transaction_id', cleanUserTxId)
+            .eq('status', 'unused')
+            .maybeSingle();
 
-        if (unusedSmsRecord) {
-          const smsAmount = Number(unusedSmsRecord.amount);
-          const realDepositorName = unusedSmsRecord.sender_name || extractSenderName(unusedSmsRecord.raw_message);
-          nameVerificationMsg = realDepositorName ? `Payer: ${realDepositorName}` : "Payer: Verified via SMS";
-          await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', unusedSmsRecord.transaction_id);
-          console.log(`✅ [Deposit] Matched gateway pool for Ref: ${cleanUserTxId}, Amount: ${smsAmount}`);
-        } else {
-          // Telebirr unique reference auto-verification:
-          // Because Telebirr issues unique reference numbers per transfer, and we have confirmed
-          // it is never claimed before in the database, we can auto-verify and mark it used.
-          nameVerificationMsg = "Telebirr Ref Verified";
-          try {
-            await supabase.from('deposit_pool').insert({
-              transaction_id: cleanUserTxId,
-              amount: targetAmount,
-              status: 'used',
-              raw_message: receiptText,
-              sender_name: fullName
-            });
-          } catch (e) {
-            // Ignore if insert fails, duplicate check in transactions table handles concurrency
+          if (unusedSmsRecord) {
+            smsRecordFound = unusedSmsRecord;
+            break;
+          }
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 1500));
           }
         }
 
-        isVerifiedBySMS = true;
+        if (smsRecordFound) {
+          const smsAmount = Number(smsRecordFound.amount);
+          if (Math.abs(smsAmount - targetAmount) < 0.01) {
+            const realDepositorName = smsRecordFound.sender_name || extractSenderName(smsRecordFound.raw_message);
+            nameVerificationMsg = realDepositorName ? `Payer: ${realDepositorName}` : "Payer: Verified via SMS Gateway";
+            await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecordFound.transaction_id);
+            console.log(`✅ [Deposit] Matched gateway pool for Ref: ${cleanUserTxId}, Amount: ${smsAmount}`);
+            isVerifiedBySMS = true;
+          } else {
+            console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
+            autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
+          }
+        } else {
+          if (!autoVerifyFailedReason) {
+            autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+          }
+        }
       }
 
       // 3. Auto-approve verified transaction

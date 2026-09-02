@@ -4639,6 +4639,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
       } else if (!targetAmount || isNaN(targetAmount) || targetAmount < 10) {
         autoVerifyFailedReason = `Amount not valid. Minimum deposit is 10 ETB (Target Amount: ${targetAmount}).`;
+      } else if (!isReceiverVerified) {
+        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
       } else {
         const cleanUserTxId = txId.trim().toUpperCase();
 
@@ -4675,35 +4679,39 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           return;
         }
 
-        // 3. Check if there is an unused gateway SMS in deposit_pool
-        const { data: smsRecord } = await supabase
-          .from('deposit_pool')
-          .select('*')
-          .ilike('transaction_id', cleanUserTxId)
-          .eq('status', 'unused')
-          .maybeSingle();
+        // 3. Strict Check: Verify against SMS Gateway deposit_pool (retry up to 3 times with 1.5s delay)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { data: unusedSms } = await supabase
+            .from('deposit_pool')
+            .select('*')
+            .ilike('transaction_id', cleanUserTxId)
+            .eq('status', 'unused')
+            .maybeSingle();
 
-        if (smsRecord) {
-          smsRecordFound = smsRecord;
-          const smsAmount = Number(smsRecord.amount);
-          isVerifiedBySMS = true;
-          const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
-          nameVerificationMsg = realSenderName ? `Payer: ${realSenderName}` : "Payer: Verified via SMS";
-          await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-          logBot(`✅ [Bot-Deposit] Matched gateway pool for Ref: ${cleanUserTxId}, Amount: ${smsAmount}`);
+          if (unusedSms) {
+            smsRecordFound = unusedSms;
+            break;
+          }
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 1500));
+          }
+        }
+
+        if (smsRecordFound) {
+          const smsAmount = Number(smsRecordFound.amount);
+          if (Math.abs(smsAmount - targetAmount) < 0.01) {
+            isVerifiedBySMS = true;
+            const realSenderName = smsRecordFound.sender_name || extractSenderName(smsRecordFound.raw_message);
+            nameVerificationMsg = realSenderName ? `Payer: ${realSenderName}` : "Payer: Verified via SMS Gateway";
+            await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecordFound.transaction_id);
+            logBot(`✅ [Bot-Deposit] Matched gateway pool for Ref: ${cleanUserTxId}, Amount: ${smsAmount}`);
+          } else {
+            autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
+          }
         } else {
-          // Telebirr unique reference auto-verification
-          isVerifiedBySMS = true;
-          nameVerificationMsg = "Telebirr Ref Verified";
-          try {
-            await supabase.from('deposit_pool').insert({
-              transaction_id: cleanUserTxId,
-              amount: targetAmount,
-              status: 'used',
-              raw_message: text,
-              sender_name: fullName
-            });
-          } catch (e) {}
+          if (!autoVerifyFailedReason) {
+            autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
+          }
         }
       }
 
