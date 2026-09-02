@@ -1,5 +1,4 @@
 {
-  "automated_jackpot_broadcast_enabled": false,
   "deposit_start_msg": "💰 *ማስገባት የሚፈልጉትን መጠን ከ10 ብር ጀምሮ ያስገቡ።*",
   "deposit_success_msg": "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
   "deposit_approved_msg": "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
@@ -53,7 +52,6 @@
   "referral_share_text": "Join me on ፈጣን ዕጣ Game Hub and win Big!🏆🍾",
   "referral_share_image": "",
   "channel_id": "-1004331899872",
-  "tx_channel_posts_enabled": false,
   "referral_buttons": [
     [
       {
@@ -64,7 +62,6 @@
     ]
   ],
   "custom_commands": {},
-  "weekly_jackpot_amount": 1000,
   "banks": {
     "Telebirr": {
       "name": "📱 Telebirr",

@@ -159,11 +159,6 @@ class TransactionManager {
 
 export const txManager = new TransactionManager();
 
-function cleanTransactionId(id: string): string {
-  if (!id) return "";
-  return id.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, '').toUpperCase().trim();
-}
-
 export function parseReceiptSMS(text: string): { txId: string | null; amount: number | null } {
   if (!text) return { txId: null, amount: null };
   
@@ -172,17 +167,11 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
 
   // 1. Try to find a transaction ID.
   const txIdPatterns = [
-    /cbe\.com\.et\/([a-zA-Z0-9_-]+)/i,
-    /mbreciept\.cbe\.com\.et\/([a-zA-Z0-9_-]+)/i,
     /\b(MT[A-Z0-9.]{8,22})\b/i,
     /\b(FT[A-Z0-9.]{8,22})\b/i,
     /\b(TXN[A-Z0-9.]{8,22})\b/i,
     /\b(DG[A-Z0-9.]{8,22})\b/i,
-    /\b(DI[A-Z0-9.]{8,22})\b/i,
-    /\b(DH[A-Z0-9.]{8,22})\b/i,
-    /(?:የማመሳከሪያ\s*ቁጥር|የግብይት\s*መለያ\s*ቁጥር|የግብይት\s*መለያ)(?::|\s+is)?[:\s#]*([A-Z0-9._-]{8,24})/i,
-    /(?:ref|reference|transaction\s*id|transaction\s*number|Ref\s*No)(?::|\s+is)?[:\s#]*([A-Z0-9._-]{8,24})/i,
-    /(?:መለያ|ቁጥር)(?::|\s+is)?[:\s#]*([A-Z0-9._-]{8,24})/i,
+    /(?:ref|reference|transaction\s*id|transaction\s*number|Ref\s*No|የማመሳከሪያ\s*ቁጥር|መለያ|ቁጥር)(?::|\s+is)?[:\s#]*([A-Z0-9.]{8,22})/i,
     /\b([A-Z0-9]{8,22})\b/
   ];
 
@@ -190,9 +179,9 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
   for (const pattern of txIdPatterns) {
     const match = cleanText.match(pattern);
     if (match && match[1]) {
-      const candidate = cleanTransactionId(match[1]);
-      // Exclude common non-ref uppercase words in SMS
-      if (candidate.length >= 6 && !["CUSTOMER", "TELEBIRR", "PAYMENT", "ACCOUNT", "MERCHANT", "TRANSFER", "ETHIOTELECOM", "ETHIO"].includes(candidate)) {
+      const candidate = match[1].toUpperCase().trim();
+      // Exclude some common non-ref uppercase strings in SMS
+      if (!["CUSTOMER", "TELEBIRR", "PAYMENT", "ACCOUNT", "MERCHANT", "TRANSFER"].includes(candidate)) {
         txId = candidate;
         break;
       }
@@ -203,8 +192,7 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
   const amountPatterns = [
     // CBE: credited with Birr 500.00
     /(?:credited\s*with|transferred|sent|received|deposited)\s*(?:birr|etb|br|ብር)?\s*([0-9,]+(?:\.[0-9]{2})?)/i,
-    // CBE/Telebirr Amharic: ብር 500.00 ገቢ ሆኗል / ተቀብለዋል
-    /(?:ብር|ብር\s* መጠን|ETB|Birr)\s*([0-9,]+(?:\.[0-9]{2})?)\s*(?:ገቢ|ተቀብለዋል|ተላልፏል)/i,
+    // CBE/Telebirr Amharic: ብር 500.00 ገቢ ሆኗል
     /(?:ብር|ብር\s* መጠን)\s*([0-9,]+(?:\.[0-9]{2})?)/i,
     // Telebirr: You have received 500.00 Birr
     /([0-9,]+(?:\.[0-9]{2})?)\s*(?:birr|etb|br|ብር)/i,

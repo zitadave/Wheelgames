@@ -1,22 +1,8 @@
 {
   "1-10": {
-    "claimedSlots": {
-      "8": {
-        "isSelf": false,
-        "userId": "336997351",
-        "username": "scofiled1",
-        "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
-      }
-    },
-    "roundId": 1003,
+    "claimedSlots": {},
+    "roundId": 1002,
     "history": [
-      {
-        "roundId": 1002,
-        "winners": {
-          "1": 5,
-          "2": 3
-        }
-      },
       {
         "roundId": 1001,
         "winners": {
@@ -124,71 +110,41 @@
   },
   "grand": {
     "claimedSlots": {
-      "6": {
-        "isSelf": false,
-        "userId": "5039836755",
-        "username": "ZiHorra",
-        "photoUrl": "https://t.me/i/userpic/320/eB8_os4c2GhkVvz7r6nJMH-t3_D4aDQwB8Vm3umDy0NPTKVsVxnFvMm-iY3X8nMc.svg"
-      },
-      "34": {
+      "1": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
       },
-      "40": {
+      "24": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
       },
-      "53": {
+      "25": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
       },
-      "56": {
+      "31": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
       },
-      "58": {
+      "35": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
       },
-      "69": {
+      "100": {
         "isSelf": false,
         "userId": "336997351",
         "username": "scofiled1",
         "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
-      },
-      "71": {
-        "isSelf": false,
-        "userId": "336997351",
-        "username": "scofiled1",
-        "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
-      },
-      "75": {
-        "isSelf": false,
-        "userId": "5039836755",
-        "username": "ZiHorra",
-        "photoUrl": "https://t.me/i/userpic/320/eB8_os4c2GhkVvz7r6nJMH-t3_D4aDQwB8Vm3umDy0NPTKVsVxnFvMm-iY3X8nMc.svg"
-      },
-      "86": {
-        "isSelf": false,
-        "userId": "336997351",
-        "username": "scofiled1",
-        "photoUrl": "https://t.me/i/userpic/320/CO9HZPVBsVG557FhEAJOhmFMnXNmRGuPlkQ-9UmLjD8.svg"
-      },
-      "97": {
-        "isSelf": false,
-        "userId": "5039836755",
-        "username": "ZiHorra",
-        "photoUrl": "https://t.me/i/userpic/320/eB8_os4c2GhkVvz7r6nJMH-t3_D4aDQwB8Vm3umDy0NPTKVsVxnFvMm-iY3X8nMc.svg"
       }
     },
     "roundId": 1004,

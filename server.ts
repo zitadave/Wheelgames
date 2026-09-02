@@ -13,7 +13,7 @@ import { initTelegramBot, getBotUsername, triggerBotFlow, getPromptsConfig } fro
 import { getBotLogs, logBot } from "./src/server/logger.js";
 import { fetchLeaderboardData } from "./src/server/leaderboardHelper.js";
 import crypto from "crypto";
-import { parseBankSMS, extractSenderName } from "./src/server/smsParser.js";
+import { parseBankSMS } from "./src/server/smsParser.js";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import { generateToken, setShareToken, getShareToken, setPendingReferral } from "./src/server/redisClient.js";
@@ -32,17 +32,7 @@ async function startServer() {
       req.rawBody = buf.toString();
     }
   }));
-  // Catch invalid JSON (caused by multi-line SMS in Universal Webhook App)
-  app.use((err: any, req: any, res: any, next: any) => {
-    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-      req.rawBody = err.body; // Save the raw broken string
-      req.body = err.body;    // Pass it down as a string so our custom parser can handle it
-      return next();
-    }
-    next();
-  });
   app.use(express.urlencoded({ extended: true }));
-  app.use(express.text({ type: 'text/plain' }));
   const PORT = 3000;
   
   const httpServer = createServer(app);
@@ -76,8 +66,8 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // SMS Webhook for Automated Deposit Verification (Supports POST and GET from SMS Forwarder apps)
-  const handleSmsWebhook = async (req: express.Request, res: express.Response) => {
+  // SMS Webhook for Automated Deposit Verification
+  app.post("/api/webhook/sms", async (req, res) => {
     const signature = req.headers['x-signature'] as string;
     const secret = process.env.SMS_WEBHOOK_SECRET;
 
@@ -151,31 +141,6 @@ async function startServer() {
       }
     }
 
-    let payload = req.body || {};
-    if (typeof req.body === 'string') {
-      try {
-        payload = JSON.parse(req.body);
-      } catch (e) {
-        // Fallback 1: Custom text format
-        const phoneMatch = req.body.match(/PHONE:\s*(.*?)\r?\n/i);
-        const textMatch = req.body.match(/TEXT:\s*([\s\S]*)/i);
-        
-        // Fallback 2: Broken JSON with newlines (extract phone and raw_message)
-        const brokenJsonPhone = req.body.match(/"sender_phone"\s*:\s*"([^"]*)"/i);
-        const brokenJsonRaw = req.body.match(/"raw_message"\s*:\s*"([\s\S]*?)"\s*}/i);
-        
-        if (phoneMatch && textMatch) {
-          payload = { phone: phoneMatch[1].trim(), raw_message: textMatch[1].trim() };
-        } else if (brokenJsonPhone && brokenJsonRaw) {
-          payload = { phone: brokenJsonPhone[1].trim(), raw_message: brokenJsonRaw[1].trim() };
-        } else {
-          // Absolute last resort: if it's just raw text containing the SMS
-          const maybePhone = req.body.match(/\b(889|127|CBE)\b/i) ? req.body.match(/\b(889|127|CBE)\b/i)[1] : "";
-          payload = { phone: maybePhone, raw_message: req.body.trim() };
-        }
-      }
-    }
-
     const { 
       from, 
       text, 
@@ -187,20 +152,17 @@ async function startServer() {
       body,
       msg,
       sender_name,
-      senderName,
-      address,
-      content
-    } = payload;
-    const { from: queryFrom, text: queryText, sender: qSender, message: qMessage, address: qAddress, content: qContent } = req.query || {};
+      senderName
+    } = req.body || {};
+    const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query || {};
 
-    const sender = (from || bodySender || sender_phone || phone || address || queryFrom || qSender || qAddress || "Unknown").toString();
-    const smsText = (text || bodyMessage || raw_message || body || msg || content || queryText || qMessage || qContent || "").toString();
+    const sender = (from || bodySender || sender_phone || phone || queryFrom || qSender || "Unknown").toString();
+    const smsText = (text || bodyMessage || raw_message || body || msg || queryText || qMessage || "").toString();
 
     // Prioritize pre-parsed data from JSON if present
-    let rawTxId = (payload.transaction_id || payload.transactionId || "").toString().trim();
-    let finalTxId = rawTxId.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, '').toUpperCase().trim();
-    let finalAmount = Number(payload.amount);
-    let finalBank = (payload.bank || payload.bank_name || "").toString().trim();
+    let finalTxId = (req.body?.transaction_id || req.body?.transactionId || "").toString().trim().toUpperCase();
+    let finalAmount = Number(req.body?.amount);
+    let finalBank = (req.body?.bank || req.body?.bank_name || "").toString().trim();
     let finalSenderName = (sender_name || senderName || "").toString().trim();
 
     let isFullyParsed = !!(finalTxId && !isNaN(finalAmount) && finalAmount > 0);
@@ -221,7 +183,7 @@ async function startServer() {
         // Fallback to parsing raw text using regex
         const parsed = parseBankSMS(smsText, normalizedSender);
         if (parsed) {
-          finalTxId = parsed.transactionId.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, '').toUpperCase().trim();
+          finalTxId = parsed.transactionId.trim().toUpperCase();
           finalAmount = parsed.amount;
           finalBank = parsed.bankName;
           isFullyParsed = true;
@@ -262,14 +224,11 @@ async function startServer() {
       }
       
       res.json({ success: true });
-    } catch (err: any) {
+    } catch (err) {
       console.error("❌ Error processing SMS webhook:", err);
-      res.status(500).json({ error: "Internal server error: " + err.message, stack: err.stack });
+      res.status(500).json({ error: "Internal server error" });
     }
-  };
-
-  app.post("/api/webhook/sms", handleSmsWebhook);
-  app.get("/api/webhook/sms", handleSmsWebhook);
+  });
 
   // Rate limiter for Mini App Initialization Endpoint (max 10 per minute per user/IP)
   const initLimiter = rateLimit({
@@ -506,17 +465,21 @@ async function startServer() {
       let isVerifiedBySMS = false;
       let nameVerificationMsg = "";
       let autoVerifyFailedReason = "";
-      let verifiedCreditAmount = targetAmount;
-      let smsRecordFound: any = null;
 
       if (!txId) {
         autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
       } else if (!targetAmount || isNaN(targetAmount)) {
         autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
-      } else {
-        const cleanUserTxId = txId.replace(/^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/g, '').toUpperCase().trim();
+      } else if (!isReceiverVerified) {
+        const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
+        const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
+        autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
+      }
 
-        // 1. Check if the reference ID has already been used in transactions list
+      if (txId && targetAmount && isReceiverVerified) {
+        const cleanUserTxId = txId.trim().toUpperCase();
+
+        // Check if the reference ID has already been used in transactions list
         const { data: duplicateTxsCheck } = await supabase
           .from('transactions')
           .select('id')
@@ -526,7 +489,7 @@ async function startServer() {
         if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
           autoVerifyFailedReason = `Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been processed and claimed.`;
         } else {
-          // 2. Check if this reference ID is in deposit_pool but marked as 'used'
+          // Check if this reference ID is in deposit_pool but marked as 'used'
           const { data: usedPoolCheck } = await supabase
             .from('deposit_pool')
             .select('*')
@@ -537,7 +500,8 @@ async function startServer() {
           if (usedPoolCheck) {
             autoVerifyFailedReason = `Reference ID is already used. The gateway has already processed the SMS for transaction ID "${cleanUserTxId}".`;
           } else {
-            // 3. Retry logic: Wait for the SMS gateway for up to 45 seconds (15 attempts x 3s)
+            let smsRecordFound = null;
+            // Retry logic: Wait for the SMS gateway for up to 45 seconds (15 attempts x 3s)
             for (let attempt = 0; attempt < 15; attempt++) {
               console.log(`🔍 [Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/15)...`);
               
@@ -553,16 +517,22 @@ async function startServer() {
                 const smsAmount = Number(smsRecord.amount);
                 console.log(`📊 [Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
                 
-                // Use the authoritative gateway bank SMS amount
-                verifiedCreditAmount = smsAmount || targetAmount;
-                const realDepositorName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
-                
-                isVerifiedBySMS = true;
-                nameVerificationMsg = realDepositorName ? `Payer Name: ${realDepositorName}` : "Payer Name: Not Provided";
-                
-                await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-                console.log(`✅ [Deposit] Verified by gateway on attempt ${attempt + 1}. Payer: ${realDepositorName}, Amount: ${verifiedCreditAmount}`);
-                break;
+                if (Math.abs(smsAmount - targetAmount) < 0.01) {
+                  // Skip Telegram-versus-bank name matching restriction, since Telegram users rarely use their legal/official bank names.
+                  // Just retrieve/extract the real depositor name for reference and audit logging.
+                  const realDepositorName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
+                  
+                  isVerifiedBySMS = true;
+                  nameVerificationMsg = realDepositorName ? `Payer Name: ${realDepositorName}` : "Payer Name: Not Provided";
+                  
+                  await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+                  console.log(`✅ [Deposit] Verified by gateway (reference and amount matched) on attempt ${attempt + 1}. Payer: ${realDepositorName}`);
+                  break;
+                } else {
+                  console.warn(`⚠️ [Deposit] Amount mismatch for ${cleanUserTxId}. Expected ${targetAmount}, got ${smsAmount}`);
+                  autoVerifyFailedReason = `Amount Mismatch. Your request is for ${targetAmount} ETB, but the gateway bank SMS states ${smsAmount} ETB.`;
+                  break;
+                }
               }
 
               if (attempt < 14) {
@@ -571,23 +541,15 @@ async function startServer() {
               }
             }
 
-            if (!smsRecordFound) {
-              if (!isReceiverVerified) {
-                const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
-                const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
-                autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
-              } else {
-                autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
-              }
+            if (!smsRecordFound && !autoVerifyFailedReason) {
+              autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
             }
           }
         }
       }
 
       // 3. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
-      if (isVerifiedBySMS && txId && smsRecordFound) {
-        const creditAmount = verifiedCreditAmount;
-
+      if (isVerifiedBySMS && txId && targetAmount && Math.abs(targetAmount - Number(amount)) < 0.01) {
         // Double-check duplicates in DB
         const { data: duplicateTxs, error: dupError } = await supabase
           .from('transactions')
@@ -602,7 +564,7 @@ async function startServer() {
         // Auto approve!
         const result = await txManager.modifyBalance(
           userId.toString(),
-          creditAmount,
+          targetAmount,
           'reward',
           `Deposit Auto-Approved (Ref: ${txId})`
         );
@@ -613,16 +575,16 @@ async function startServer() {
           const escapedUsername = escapeHTML(username);
           
           const gatewayBadge = " [Gateway ✅]";
-          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${creditAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
+          await postToChannel(`✅ <b>Auto-Deposit Verified!</b>${gatewayBadge}\n\n👤 <b>User:</b> @${escapedUsername}\n💰 <b>Amount:</b> <code>${targetAmount.toLocaleString()} ETB</code>\n🧾 <b>Ref:</b> <code>${txId}</code>\n👤 <b>Sender Name:</b> <code>${nameVerificationMsg}</code>`);
 
           // Notify admins
           const bot = getBotInstance();
           if (bot) {
-            const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
+            const verificationBadge = `🛡️ <b>VERIFIED BY SMS GATEWAY & NAME MATCH</b>\n👤 <b>Depositor Match:</b> ${nameVerificationMsg}`;
             const adminMsg = `⚡ <b>AUTO-VERIFIED DEPOSIT</b>\n\n` +
               `👤 <b>User:</b> @${escapedUsername} (${escapeHTML(fullName)})\n` +
               `🆔 <b>User ID:</b> <code>${userId}</code>\n` +
-              `💰 <b>Amount:</b> <b>${creditAmount.toLocaleString()} ETB</b>\n` +
+              `💰 <b>Amount:</b> <b>${targetAmount.toLocaleString()} ETB</b>\n` +
               `🏦 <b>Bank:</b> <b>${escapeHTML(bank)}</b>\n` +
               `🧾 <b>Ref ID:</b> <code>${txId}</code>\n` +
               `${verificationBadge}\n\n` +
@@ -644,7 +606,7 @@ async function startServer() {
             success: true,
             autoApproved: true,
             newBalance: result.newBalance,
-            message: `🎉 Automatic verification successful! ${creditAmount} ETB has been instantly credited to your wallet.`
+            message: `🎉 Automatic verification successful! ${targetAmount} ETB has been instantly credited to your wallet.`
           });
         }
       }
