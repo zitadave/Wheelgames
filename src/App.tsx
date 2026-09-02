@@ -231,7 +231,13 @@ export default function App() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setWalletSuccessMessage(data.message || (data.autoApproved ? "Deposit auto-approved instantly!" : "Deposit request submitted!"));
+        if (data.autoApproved) {
+          setWalletSuccessType('approved');
+          setWalletSuccessMessage(data.message || "🎉 ተቀማጭ ገንዘብዎ ወዲያውኑ ተረጋግጦ በሂሳብዎ ገብቷል! (Deposit auto-approved instantly!)");
+        } else {
+          setWalletSuccessType('pending');
+          setWalletSuccessMessage(data.message || "⏳ የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ። (Wait one minute, your deposit has been sent to admins for confirmation.)");
+        }
         setWalletSuccessStep(true);
         if (data.newBalance !== undefined) {
           setBalance(data.newBalance);
@@ -239,8 +245,8 @@ export default function App() {
         setDepositAmount('');
         setDepositReceiptText('');
         
-        // Auto-close success screen after 5 seconds
-        setTimeout(() => setWalletSuccessStep(false), 5000);
+        // Auto-close success screen after 6 seconds
+        setTimeout(() => setWalletSuccessStep(false), 6000);
       } else {
         showNotification(data.error || "Failed to submit deposit. Please try again.", "error");
       }
@@ -463,6 +469,7 @@ export default function App() {
   const [walletTab, setWalletTab] = useState<'deposit' | 'withdraw' | 'history'>('deposit');
   const [walletSuccessStep, setWalletSuccessStep] = useState<boolean>(false);
   const [walletSuccessMessage, setWalletSuccessMessage] = useState<string>("");
+  const [walletSuccessType, setWalletSuccessType] = useState<'approved' | 'pending'>('approved');
   const [dynamicBanks, setDynamicBanks] = useState<Record<string, { name: string; account: string; owner: string }>>(BANK_DETAILS);
   const [depositAmount, setDepositAmount] = useState<string>('');
   const [depositBank, setDepositBank] = useState<string>('Telebirr');
@@ -1921,11 +1928,21 @@ export default function App() {
                         initial={{ scale: 0 }}
                         animate={{ scale: 1 }}
                         transition={{ type: 'spring', damping: 12, stiffness: 200, delay: 0.1 }}
-                        className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-green-500/20"
+                        className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 shadow-lg ${
+                          walletSuccessType === 'pending'
+                            ? 'bg-amber-500 shadow-amber-500/20'
+                            : 'bg-green-500 shadow-green-500/20'
+                        }`}
                       >
-                        <Check className="w-10 h-10 text-white stroke-[3px]" />
+                        {walletSuccessType === 'pending' ? (
+                          <Clock className="w-10 h-10 text-white stroke-[3px]" />
+                        ) : (
+                          <Check className="w-10 h-10 text-white stroke-[3px]" />
+                        )}
                       </motion.div>
-                      <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">ተሳክቷል! (Success)</h2>
+                      <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">
+                        {walletSuccessType === 'pending' ? 'በመጠባበቅ ላይ (Pending Review)' : 'ተሳክቷል! (Success)'}
+                      </h2>
                       <p className="text-xs font-medium text-gray-600 dark:text-gray-300 max-w-[280px] leading-relaxed">
                         {walletSuccessMessage}
                       </p>

@@ -667,7 +667,7 @@ async function startServer() {
       return res.json({
         success: true,
         autoApproved: false,
-        message: "📥 Your request has been sent to our verification agents. It will be approved within 1 minute!"
+        message: "⏳ የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ። (Wait one minute, your deposit has been sent to admins for confirmation.)"
       });
 
     } catch (err: any) {

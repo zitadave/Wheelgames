@@ -333,7 +333,7 @@ interface PromptsConfig {
 const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
   automated_jackpot_broadcast_enabled: true,
   deposit_start_msg: "💰 *ማስገባት የሚፈልጉትን መጠን ከ10 ብር ጀምሮ ያስገቡ።*\n\n_(Please type the amount of ETB you want to deposit, minimum 10 ETB):_",
-  deposit_success_msg: "✅ *Your deposit Request have been sent to admins please wait 1 min.*",
+  deposit_success_msg: "⏳ *የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ።*\n\n_(Wait one minute, your deposit has been sent to admins for confirmation.)_",
   deposit_approved_msg: "✅ *Your deposit of {amount} ETB is confirmed.*\n🧾 *Ref:* `{ref}`",
   deposit_declined_msg: "❌ *Your deposit of {amount} ETB is Declined.*",
   deposit_payment_instructions_msg: "1. ከታች ባለው የ*{bank_name}* አካውንት *{amount} ብር* ያስገቡ\n    *Account/Phone:* `{account}`\n    *Name:* `{owner_name}`\n\n2. የከፈሉበትን አጭር የጹሁፍ መልዕክት(message) copy በማድረግ እዚ ላይ Past አድረገው ያስገቡና ይላኩት👇👇👇\n\n_(Please copy and paste the SMS transaction receipt text as response)_",
@@ -4812,7 +4812,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       await savePendingRequestsToDB().catch(e => logBot(`Error saving pending request: ${e.message}`));
 
       // Send Confirmation to User
-      bot.sendMessage(chatId, "✅ *የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ።*\n\n_(Your deposit Request have been sent to admins please wait 1 min.)_", { parse_mode: "Markdown" });
+      const pendingDepMsg = (promptsConfig.deposit_success_msg || "⏳ *የማስገባት ጥያቄዎ ለአስተዳዳሪዎች ተልኳል። እባክዎ 1 ደቂቃ ይጠብቁ።*\n\n_(Wait one minute, your deposit has been sent to admins for confirmation.)_")
+        .replace(/{amount}/g, amount.toLocaleString());
+      bot.sendMessage(chatId, pendingDepMsg, { parse_mode: "Markdown" });
 
       // Clear state
       userStates.set(userId, { step: 'idle' });
