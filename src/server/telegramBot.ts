@@ -393,22 +393,17 @@ const DEFAULT_PROMPTS_CONFIG: PromptsConfig = {
     "Telebirr": {
       name: "📱 Telebirr",
       account: "0931503559",
-      owner_name: "Tadese"
+      owner_name: "Dawit Tamiru"
     },
     "CBE": {
       name: "🏦 CBE (የኢትዮጵያ ንግድ ባንክ)",
-      account: "1000123456789",
-      owner_name: "Tadese"
+      account: "1000181932938",
+      owner_name: "Dawit Tamiru"
     },
     "Abyssinia": {
       name: "🏦 Abyssinia Bank",
-      account: "987654321",
-      owner_name: "Tadese"
-    },
-    "Dashen": {
-      name: "🏦 Dashen Bank",
-      account: "555444332",
-      owner_name: "Tadese"
+      account: "71109623",
+      owner_name: "Tsion Mekonnen"
     }
   }
 };
@@ -669,10 +664,42 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
   ]));
 
   for (const bankId of allBankIds) {
-    if (merged.banks[bankId] === undefined && local.banks?.[bankId] !== undefined) {
-      logBot(`[CONFIG-MERGE] New bank '${bankId}' missing in DB. Adding from local.`);
-      merged.banks[bankId] = JSON.parse(JSON.stringify(local.banks[bankId]));
+    const localBank = local.banks?.[bankId];
+    const dbBank = db.banks?.[bankId];
+    const defaultBank = defaults.banks?.[bankId];
+
+    if (localBank === undefined) {
+      if (dbBank !== undefined && defaultBank !== undefined) {
+        logBot(`[CONFIG-MERGE] Default bank '${bankId}' was removed locally. Deleting from DB.`);
+        delete merged.banks[bankId];
+        changed = true;
+      }
+      continue;
+    }
+
+    if (dbBank === undefined) {
+      logBot(`[CONFIG-MERGE] New bank '${bankId}' added locally. Syncing to DB.`);
+      merged.banks[bankId] = JSON.parse(JSON.stringify(localBank));
       changed = true;
+      continue;
+    }
+
+    // Bank exists in both, merge properties (name, account, owner_name, withdraw_prompt)
+    // ONLY overwrite DB if the local config differs from the default config (meaning the user explicitly edited the code)
+    const props = ['name', 'account', 'owner_name', 'withdraw_prompt'];
+    for (const prop of props) {
+      const localPropVal = (localBank as any)[prop];
+      const dbPropVal = (dbBank as any)[prop];
+      const defaultPropVal = defaultBank ? (defaultBank as any)[prop] : undefined;
+
+      // If the code has been edited away from defaults, the code wins.
+      if (localPropVal !== undefined && !isEqual(localPropVal, defaultPropVal)) {
+        if (!isEqual(localPropVal, dbPropVal)) {
+          logBot(`[CONFIG-MERGE] Bank '${bankId}' prop '${prop}' customized locally in code. Overwriting DB.`);
+          (merged.banks[bankId] as any)[prop] = localPropVal;
+          changed = true;
+        }
+      }
     }
   }
 
