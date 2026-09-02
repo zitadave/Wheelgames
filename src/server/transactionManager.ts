@@ -171,6 +171,7 @@ export function parseReceiptSMS(text: string): { txId: string | null; amount: nu
     /\b(FT[A-Z0-9.]{8,22})\b/i,
     /\b(TXN[A-Z0-9.]{8,22})\b/i,
     /\b(DG[A-Z0-9.]{8,22})\b/i,
+    /cbe\.com\.et\/([a-zA-Z0-9_-]+)/i,
     /(?:ref|reference|transaction\s*id|transaction\s*number|Ref\s*No|የማመሳከሪያ\s*ቁጥር|መለያ|ቁጥር)(?::|\s+is)?[:\s#]*([A-Z0-9.]{8,22})/i,
     /\b([A-Z0-9]{8,22})\b/
   ];

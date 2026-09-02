@@ -13,7 +13,7 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   const isCBE = from.includes("889") || from.includes("CBE") || lowercaseText.includes("cbe") || lowercaseText.includes("ንግድ ባንክ");
   if (isCBE) {
     const amountMatch = text.match(/(?:credited|sent|received|ETB|ብር|amount|amt|deposited|transferred)\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d+)?)/i);
-    const refMatch = text.match(/(?:Ref|ID|Transaction|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9.]{8,22})/i);
+    const refMatch = text.match(/(?:Ref|ID|Transaction|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9.]{8,22})/i) || text.match(/cbe\.com\.et\/([a-zA-Z0-9_-]+)/i);
     if (amountMatch && refMatch) {
       let cleanTxId = refMatch[1].trim().toUpperCase();
       if (cleanTxId.endsWith('.')) cleanTxId = cleanTxId.slice(0, -1);
@@ -60,6 +60,12 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
 export function extractSenderName(text: string): string | null {
   if (!text) return null;
   const cleanText = text.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+
+  // CBE explicit name pattern: "from account 1********7583 (Tsion Mekonnen Getachew) to your account"
+  const cbeMatch = cleanText.match(/\(\s*([a-zA-Z\s]{3,40})\s*\)\s*(?:to\s*your|to\s*account)/i);
+  if (cbeMatch && cbeMatch[1]) {
+    return cbeMatch[1].trim().toUpperCase();
+  }
 
   const patterns = [
     // Matches "from JOHN DOE" or "from: JOHN DOE" or "from JOHN DOE."
