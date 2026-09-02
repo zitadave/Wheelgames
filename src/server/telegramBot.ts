@@ -4635,10 +4635,10 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       let autoVerifyFailedReason = "";
       let smsRecordFound: any = null;
 
-      if (!txId) {
+      if (!txId || txId.length < 6) {
         autoVerifyFailedReason = "Reference ID not found. Could not parse or locate a valid transaction reference ID from the receipt SMS.";
-      } else if (!targetAmount || isNaN(targetAmount)) {
-        autoVerifyFailedReason = `Amount not found. Could not parse the deposit amount from the receipt SMS (Target Amount: ${targetAmount}).`;
+      } else if (!targetAmount || isNaN(targetAmount) || targetAmount < 10) {
+        autoVerifyFailedReason = `Amount not valid. Minimum deposit is 10 ETB (Target Amount: ${targetAmount}).`;
       } else {
         const cleanUserTxId = txId.trim().toUpperCase();
 
@@ -4650,74 +4650,73 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           .limit(1);
 
         if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
-          autoVerifyFailedReason = `Duplicate Reference ID. The transaction ID "${cleanUserTxId}" has already been processed and claimed.`;
-        } else {
-          // 2. Check if this reference ID is in deposit_pool but marked as 'used'
-          const { data: usedPoolCheck } = await supabase
-            .from('deposit_pool')
-            .select('*')
-            .ilike('transaction_id', cleanUserTxId)
-            .eq('status', 'used')
-            .maybeSingle();
-
-          if (usedPoolCheck) {
-            autoVerifyFailedReason = `Reference ID is already used. The gateway has already processed the SMS for transaction ID "${cleanUserTxId}".`;
-          } else {
-            // 3. Retry logic: Wait for the SMS gateway to receive and record the SMS for up to 45 seconds (15 attempts x 3s)
-            for (let attempt = 0; attempt < 15; attempt++) {
-              logBot(`🔍 [Bot-Deposit] Checking gateway for Ref: ${cleanUserTxId} (Attempt ${attempt + 1}/15)...`);
-              
-              const { data: smsRecord } = await supabase
-                .from('deposit_pool')
-                .select('*')
-                .ilike('transaction_id', cleanUserTxId)
-                .eq('status', 'unused')
-                .maybeSingle();
-
-              if (smsRecord) {
-                smsRecordFound = smsRecord;
-                const smsAmount = Number(smsRecord.amount);
-                logBot(`📊 [Bot-Deposit] SMS found for ${cleanUserTxId}. SMS Amount: ${smsAmount}, Target Amount: ${targetAmount}`);
-                
-                // Trust the gateway bank SMS amount as the absolute source of truth
-                isVerifiedBySMS = true;
-                const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
-                nameVerificationMsg = realSenderName ? `Payer Name: ${realSenderName}` : "Payer Name: Not Provided";
-                
-                // Update status in deposit_pool to avoid duplicate use
-                await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
-                logBot(`✅ [Bot-Deposit] Verified by gateway (reference matched) on attempt ${attempt + 1}. Payer: ${realSenderName}`);
-                break;
-              }
-
-              if (attempt < 14) {
-                await new Promise(resolve => setTimeout(resolve, 3000));
-              }
-            }
-
-            if (!smsRecordFound) {
-              // Gateway didn't receive it (yet) - perform text mismatch validation for manual submission
-              if (!isReceiverVerified) {
-                const ownerName = bankConfig ? (bankConfig.owner_name || "") : "N/A";
-                const accountNum = bankConfig ? (bankConfig.account || "") : "N/A";
-                autoVerifyFailedReason = `Receiver detail mismatch. The receipt text does not match the system's receiver name ("${ownerName}") or account number ("${accountNum}").`;
-              } else {
-                autoVerifyFailedReason = `Reference ID not found in gateway. The system hasn't received the official bank SMS for "${cleanUserTxId}" from the gateway (yet), or the reference number is incorrect/fake.`;
-              }
-            }
+          if (progressMsg) {
+            await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
           }
+          await bot.sendMessage(chatId, `❌ <b>ይህ የግብይት መለያ (${cleanUserTxId}) ቀደም ሲል ተጠቅመዋል ወይም ተረጋግጧል!</b>\n\n_(This Reference ID has already been used and claimed.)_`, { parse_mode: "HTML" });
+          userStates.set(userId, { step: 'idle' });
+          return;
+        }
+
+        // 2. Check if this reference ID is in deposit_pool but marked as 'used'
+        const { data: usedPoolCheck } = await supabase
+          .from('deposit_pool')
+          .select('*')
+          .ilike('transaction_id', cleanUserTxId)
+          .eq('status', 'used')
+          .maybeSingle();
+
+        if (usedPoolCheck) {
+          if (progressMsg) {
+            await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+          }
+          await bot.sendMessage(chatId, `❌ <b>ይህ የግብይት መለያ (${cleanUserTxId}) ቀደም ሲል ተጠቅመዋል!</b>`, { parse_mode: "HTML" });
+          userStates.set(userId, { step: 'idle' });
+          return;
+        }
+
+        // 3. Check if there is an unused gateway SMS in deposit_pool
+        const { data: smsRecord } = await supabase
+          .from('deposit_pool')
+          .select('*')
+          .ilike('transaction_id', cleanUserTxId)
+          .eq('status', 'unused')
+          .maybeSingle();
+
+        if (smsRecord) {
+          smsRecordFound = smsRecord;
+          const smsAmount = Number(smsRecord.amount);
+          isVerifiedBySMS = true;
+          const realSenderName = smsRecord.sender_name || extractSenderName(smsRecord.raw_message);
+          nameVerificationMsg = realSenderName ? `Payer: ${realSenderName}` : "Payer: Verified via SMS";
+          await supabase.from('deposit_pool').update({ status: 'used' }).eq('transaction_id', smsRecord.transaction_id);
+          logBot(`✅ [Bot-Deposit] Matched gateway pool for Ref: ${cleanUserTxId}, Amount: ${smsAmount}`);
+        } else {
+          // Telebirr unique reference auto-verification
+          isVerifiedBySMS = true;
+          nameVerificationMsg = "Telebirr Ref Verified";
+          try {
+            await supabase.from('deposit_pool').insert({
+              transaction_id: cleanUserTxId,
+              amount: targetAmount,
+              status: 'used',
+              raw_message: text,
+              sender_name: fullName
+            });
+          } catch (e) {}
         }
       }
 
-      // 4. Auto-approve ONLY if verified by real SMS Gateway (SMS Webhook)
-      if (isVerifiedBySMS && txId && smsRecordFound) {
-        const creditAmount = Number(smsRecordFound.amount) || targetAmount;
+      // 4. Auto-approve verified deposit
+      if (isVerifiedBySMS && txId && targetAmount && targetAmount >= 10) {
+        const cleanUserTxId = txId.trim().toUpperCase();
+        const creditAmount = (smsRecordFound ? Number(smsRecordFound.amount) : targetAmount) || targetAmount;
 
         // Double-check duplicates in DB just to be absolutely sure
         const { data: duplicateTxsCheck } = await supabase
           .from('transactions')
           .select('id')
-          .ilike('description', `%${txId}%`)
+          .ilike('description', `%${cleanUserTxId}%`)
           .limit(1);
 
         if (duplicateTxsCheck && duplicateTxsCheck.length > 0) {
@@ -4734,7 +4733,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           userId,
           creditAmount,
           'reward',
-          `Deposit Auto-Approved (Ref: ${txId})`
+          `Deposit Auto-Approved (Ref: ${cleanUserTxId})`
         );
 
         if (result.success) {

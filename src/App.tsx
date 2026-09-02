@@ -1106,13 +1106,26 @@ export default function App() {
               // DEFAULT HEADER FOR OTHER TABS
               <>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={openWallet}
-                    className="flex items-center gap-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 dark:bg-yellow-500/5 dark:hover:bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-3 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer shrink-0"
-                  >
-                    <Coins className="w-3.5 h-3.5 text-yellow-500" />
-                    <span className="font-mono font-black">{balance === null ? '...' : balance.toLocaleString()}</span>
-                  </button>
+                  <div className="flex items-center bg-amber-500/10 hover:bg-amber-500/15 dark:bg-amber-500/10 border border-amber-500/30 rounded-full pl-2.5 pr-1 py-0.5 text-xs font-bold gap-1.5 shadow-xs transition-colors">
+                    <Coins className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span 
+                      onClick={openWallet}
+                      className="font-mono font-black text-gray-900 dark:text-white cursor-pointer select-none"
+                    >
+                      {balance === null ? '...' : balance.toLocaleString()}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setWalletTab('deposit');
+                        setIsWalletOpen(true);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-full px-2 py-0.5 text-[10px] font-black uppercase flex items-center gap-0.5 shadow-xs transition-transform active:scale-95 cursor-pointer ml-1"
+                      title="Deposit via Telebirr"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>ገቢ</span>
+                    </button>
+                  </div>
 
                   {activeTab === 'bingo' && bingoRoomState && !(!selectedBingoRoomId) && (
                     <div className="flex flex-col items-center justify-center bg-green-500/10 dark:bg-green-500/5 text-green-600 dark:text-green-400 border border-green-500/30 rounded-lg py-1 px-2 select-none shrink-0 text-[9px] font-bold leading-none gap-1 animate-in fade-in duration-300 w-[85px]">
@@ -1735,65 +1748,77 @@ export default function App() {
 
         {/* Modern Bottom Tabbed Menu Bar */}
         {!isJackpotTheaterMode && (
-          <nav id="bottom-navigation-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex justify-around items-center py-1.5 px-1 z-40 transition-colors duration-300 shadow-lg shrink-0 w-full">
+          <nav id="bottom-navigation-bar" className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex justify-around items-center py-1 px-1 z-40 transition-colors duration-300 shadow-lg shrink-0 w-full max-w-lg mx-auto">
             <button
               onClick={() => setActiveTab('even_odd')}
-              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'even_odd' 
-                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
-                  : 'text-gray-400 hover:text-gray-500'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
-              <Binary className="w-5 h-5" />
+              <Binary className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ሞላ/ጎደለ</span>
             </button>
 
             <button
               onClick={() => setActiveTab('jackpot')}
-              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'jackpot' 
-                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
-                  : 'text-gray-400 hover:text-gray-500'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
-              <Trophy className="w-5 h-5" />
+              <Trophy className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ዕድል</span>
             </button>
 
             <button
               onClick={() => setActiveTab('chance')}
-              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'chance' 
-                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
-                  : 'text-gray-400 hover:text-gray-500'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
-              <Dices className="w-5 h-5" />
+              <Dices className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ፈጣን</span>
             </button>
 
             <button
               onClick={() => setActiveTab('keno')}
-              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'keno' 
-                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
-                  : 'text-gray-400 hover:text-gray-500'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
-              <LayoutGrid className="w-5 h-5" />
+              <LayoutGrid className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ኬኖ</span>
             </button>
 
             <button
               onClick={() => setActiveTab('bingo')}
-              className={`flex flex-col items-center gap-0.5 flex-1 py-0.5 transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'bingo' 
-                  ? 'text-blue-600 dark:text-blue-400 scale-105 font-black' 
-                  : 'text-gray-400 hover:text-gray-500'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
-              <Grid3X3 className="w-5 h-5" />
+              <Grid3X3 className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ቢንጎ</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
+                activeTab === 'profile' 
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}
+            >
+              <User className="w-4.5 h-4.5" />
+              <span className="text-[10px] tracking-tight font-black uppercase">ፕሮፋይል</span>
             </button>
           </nav>
         )}
@@ -1849,33 +1874,36 @@ export default function App() {
               <div className="mx-4 mt-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl flex gap-1 shadow-inner shrink-0">
                 <button
                   onClick={() => setWalletTab('deposit')}
-                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                  className={`flex-1 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     walletTab === 'deposit' 
-                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      ? 'bg-green-600 text-white shadow-md shadow-green-600/20 font-extrabold' 
                       : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   }`}
                 >
-                  📥 Deposit (ገቢ)
+                  <ArrowDownLeft className="w-3.5 h-3.5" />
+                  <span>ገቢ (Deposit)</span>
                 </button>
                 <button
                   onClick={() => setWalletTab('withdraw')}
-                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                  className={`flex-1 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     walletTab === 'withdraw' 
-                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20 font-extrabold' 
                       : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   }`}
                 >
-                  📤 Withdraw (ወጪ)
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  <span>ወጪ (Withdraw)</span>
                 </button>
                 <button
                   onClick={() => setWalletTab('history')}
-                  className={`flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                  className={`flex-1 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     walletTab === 'history' 
-                      ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-extrabold' 
+                      ? 'bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 shadow-md font-extrabold' 
                       : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   }`}
                 >
-                  📋 History (ታሪክ)
+                  <History className="w-3.5 h-3.5" />
+                  <span>ታሪክ (History)</span>
                 </button>
               </div>
 
@@ -1887,7 +1915,7 @@ export default function App() {
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.9 }}
-                      className="absolute inset-0 z-50 bg-white/95 dark:bg-gray-900/95 flex flex-col items-center justify-center p-6 text-center"
+                      className="absolute inset-0 z-50 bg-white/98 dark:bg-gray-900/98 flex flex-col items-center justify-center p-6 text-center rounded-2xl"
                     >
                       <motion.div
                         initial={{ scale: 0 }}
@@ -1897,15 +1925,15 @@ export default function App() {
                       >
                         <Check className="w-10 h-10 text-white stroke-[3px]" />
                       </motion.div>
-                      <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">Request Successful!</h2>
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400 max-w-[240px] leading-relaxed">
+                      <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">ተሳክቷል! (Success)</h2>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-300 max-w-[280px] leading-relaxed">
                         {walletSuccessMessage}
                       </p>
                       <button
                         onClick={() => setWalletSuccessStep(false)}
-                        className="mt-8 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white font-black py-3 px-8 rounded-2xl text-xs transition-all active:scale-95 cursor-pointer"
+                        className="mt-6 bg-gray-900 dark:bg-gray-100 hover:bg-gray-800 text-white dark:text-gray-900 font-black py-3 px-8 rounded-xl text-xs transition-all active:scale-95 cursor-pointer"
                       >
-                        Back to Wallet
+                        ተመለስ (Back)
                       </button>
                     </motion.div>
                   )}
@@ -1913,206 +1941,322 @@ export default function App() {
 
                 {walletTab === 'deposit' && (
                   <div className="space-y-4">
-                    {/* Step 1: Transfer Details */}
-                    <div className="bg-blue-50/50 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl p-4">
-                      <h3 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 mb-2 flex items-center gap-1.5">
-                        <ArrowDownLeft className="w-4 h-4" /> Step 1: Send Money to Bank
-                      </h3>
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
-                        Please transfer the amount you wish to deposit to any of our official accounts below.
-                      </p>
-                      
-                      <div className="space-y-2.5">
-                        {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([key, details]) => (
-                          <div key={key} className="bg-white dark:bg-gray-900 rounded-xl p-3 border border-gray-150 dark:border-gray-800 flex justify-between items-center">
-                            <div className="space-y-0.5 text-left">
-                              <span className="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase">{details.name}</span>
-                              <div className="text-xs font-mono font-bold text-gray-500 dark:text-gray-400 select-all">
-                                Acc: <span className="text-gray-950 dark:text-white">{details.account}</span>
+                    {/* Bank Selection Tabs */}
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {Object.entries(dynamicBanks).map(([bankKey, b]) => {
+                        const bankObj = b as { name?: string; account?: string; owner?: string };
+                        const isSelected = depositBank === bankKey;
+                        const isTelebirr = bankKey.toLowerCase().includes('telebirr');
+                        return (
+                          <button
+                            key={bankKey}
+                            type="button"
+                            onClick={() => setDepositBank(bankKey)}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 border ${
+                              isSelected
+                                ? isTelebirr
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm shadow-emerald-600/30'
+                                  : 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-600/30'
+                                : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            <span>{isTelebirr ? '📱' : '🏦'}</span>
+                            <span>{bankObj.name || bankKey}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Selected Bank Account Details Card */}
+                    {(() => {
+                      const currentBank = dynamicBanks[depositBank] || dynamicBanks['Telebirr'] || Object.values(dynamicBanks)[0] || { name: depositBank, account: "0931503559", owner: "Dawit Tamiru" };
+                      const isTelebirr = depositBank.toLowerCase().includes('telebirr');
+
+                      return (
+                        <div className={`border-2 rounded-2xl p-4 shadow-xs ${
+                          isTelebirr 
+                            ? 'bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-cyan-500/10 border-emerald-500/30' 
+                            : 'bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-purple-500/10 border-blue-500/30'
+                        }`}>
+                          <div className="flex justify-between items-center mb-3">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-sm ${
+                                isTelebirr ? 'bg-emerald-500' : 'bg-blue-600'
+                              }`}>
+                                {isTelebirr ? '📱' : '🏦'}
                               </div>
-                              <div className="text-[10px] text-gray-400">Name: {details.owner}</div>
+                              <div>
+                                <div className={`text-xs font-black uppercase tracking-wide ${
+                                  isTelebirr ? 'text-emerald-800 dark:text-emerald-300' : 'text-blue-800 dark:text-blue-300'
+                                }`}>
+                                  {currentBank.name || depositBank}
+                                </div>
+                                <div className="text-[10px] text-gray-500 dark:text-gray-400 font-bold">
+                                  ስም (Name): {currentBank.owner || "Official Account"}
+                                </div>
+                              </div>
+                            </div>
+                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                              isTelebirr 
+                                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' 
+                                : 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
+                            }`}>
+                              {isTelebirr ? 'ፈጣን / Instant' : 'ባንክ / Bank'}
+                            </span>
+                          </div>
+
+                          <div className="bg-white dark:bg-gray-900 rounded-xl p-3 border border-gray-200 dark:border-gray-800 flex justify-between items-center mb-3">
+                            <div>
+                              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                                {isTelebirr ? 'የቴሌብር ስልክ ቁጥር (Phone)' : 'የሂሳብ ቁጥር (Account Number)'}
+                              </span>
+                              <span className="text-base font-mono font-black text-gray-950 dark:text-white select-all">
+                                {currentBank.account || "0931503559"}
+                              </span>
                             </div>
                             
                             <button
                               type="button"
                               onClick={() => {
-                                navigator.clipboard.writeText(details.account);
-                                showNotification(`Copied account: ${details.account}`, 'success');
+                                const acc = currentBank.account || "0931503559";
+                                navigator.clipboard.writeText(acc);
+                                showNotification(`Copied: ${acc}`, 'success');
                               }}
-                              className="bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-black uppercase text-gray-700 dark:text-gray-300 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 transition-colors active:scale-95 cursor-pointer"
+                              className={`text-white text-xs font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer shadow-sm flex items-center gap-1.5 ${
+                                isTelebirr 
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20' 
+                                  : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/20'
+                              }`}
                             >
-                              📋 Copy Acc
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>ኮፒ (Copy)</span>
                             </button>
                           </div>
-                        ))}
-                      </div>
-                    </div>
 
-                    {/* Step 2: Instant Auto-Verification Form */}
-                    <form onSubmit={handleInlineDeposit} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-4">
-                      <h3 className="text-xs font-black uppercase text-green-600 dark:text-green-400 flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 text-green-500" /> Step 2: Instant Receipt Verification
-                      </h3>
-                      
-                      <div className="grid grid-cols-2 gap-3 text-left">
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Select Bank</label>
-                          <select
-                            value={depositBank}
-                            onChange={(e) => setDepositBank(e.target.value)}
-                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none cursor-pointer"
-                          >
-                            {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([id, b]) => (
-                              <option key={id} value={id}>{b.name}</option>
-                            ))}
-                          </select>
+                          <p className="text-[11px] text-gray-600 dark:text-gray-300 leading-snug">
+                            💡 <b>አሰራር:</b> ወደ ላይኛው ቁጥር ብር ያስተላልፉ። በመቀጠል የደረሰዎትን የባንክ ወይም ቴሌብር SMS ከታች ለጥፈው <b>"ገቢ አረጋግጥ"</b> ይጫኑ።
+                          </p>
                         </div>
+                      );
+                    })()}
+
+                    {/* Simple Deposit Form */}
+                    <form onSubmit={handleInlineDeposit} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-3.5">
+                      {/* Amount Selection */}
+                      <div>
+                        <label className="block text-[11px] font-black uppercase text-gray-700 dark:text-gray-300 mb-1.5 flex justify-between items-center">
+                          <span>የገንዘብ መጠን (Deposit Amount)</span>
+                          <span className="text-[10px] text-gray-400 font-bold">ዝቅተኛ 10 ብር (Min 10 ETB)</span>
+                        </label>
                         
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Amount (ETB)</label>
+                        {/* Quick Presets */}
+                        <div className="grid grid-cols-5 gap-1.5 mb-2">
+                          {[50, 100, 200, 500, 1000].map(amt => (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => setDepositAmount(amt.toString())}
+                              className={`py-2 text-xs font-mono font-black rounded-lg transition-all border cursor-pointer ${
+                                depositAmount === amt.toString()
+                                  ? 'bg-emerald-600 text-white border-emerald-600'
+                                  : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400'
+                              }`}
+                            >
+                              {amt}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="relative">
                           <input
                             type="number"
-                            placeholder="Min: 10 ETB"
+                            placeholder="ወይም እዚህ ያስገቡ (e.g. 100)"
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
-                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-sm font-bold text-gray-900 dark:text-gray-100 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none focus:border-emerald-500"
                             required
                             min="10"
                           />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-gray-400">ETB</span>
                         </div>
                       </div>
 
-                      <div className="text-left">
-                        <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 flex justify-between items-center">
-                          <span>Receipt Confirmation Message (Paste SMS)</span>
-                          <span className="text-green-500 font-bold lowercase">⭐ Auto-verified instantly</span>
-                        </label>
+                      {/* SMS Paste Text Area */}
+                      <div>
+                        <div className="flex justify-between items-center mb-1.5">
+                          <label className="text-[11px] font-black uppercase text-gray-700 dark:text-gray-300">
+                            የደረሰዎት የባንክ/ቴሌብር SMS መልዕክት (Paste SMS Receipt)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const text = await navigator.clipboard.readText();
+                                if (text) {
+                                  setDepositReceiptText(text);
+                                  showNotification("Pasted from clipboard!", "success");
+                                }
+                              } catch (e) {
+                                showNotification("Please paste manually into the box", "info");
+                              }
+                            }}
+                            className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1 hover:underline cursor-pointer"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>ለጥፍ (Paste)</span>
+                          </button>
+                        </div>
                         <textarea
                           rows={3}
-                          placeholder="Paste the full SMS confirmation receipt here. E.g. 'MT210712... You have received Birr 500.00...'"
+                          placeholder="የደረሰዎትን SMS ሙሉውን እዚህ Past ያድርጉ... (E.g. Dear customer, you have transferred Birr 100.00 to ... Transaction ID: RA...)"
                           value={depositReceiptText}
                           onChange={(e) => setDepositReceiptText(e.target.value)}
-                          className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-medium text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none font-mono resize-none"
+                          className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-medium text-gray-900 dark:text-gray-100 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none font-mono resize-none focus:border-emerald-500"
                           required
                         />
                       </div>
 
-                      <div className="p-3 bg-green-50/50 dark:bg-green-950/10 rounded-xl border border-green-100/50 dark:border-green-900/10 flex gap-2 items-start text-left">
-                        <div className="p-1 bg-green-500 text-white rounded-full text-[10px] uppercase font-black tracking-tight mt-0.5 shrink-0">AI</div>
-                        <p className="text-[10px] font-medium text-green-700 dark:text-green-400 leading-snug">
-                          <b>Auto-Approval Active:</b> Our system extracts the transaction ID and amount directly from the text to fund your account <b>instantly (0 seconds wait)</b>. Duplicate receipts are strictly rejected.
-                        </p>
-                      </div>
-
+                      {/* Instant verification button */}
                       <button
                         type="submit"
                         disabled={isSubmittingDeposit}
-                        className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-400 text-white font-black py-3 px-4 rounded-xl text-xs transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-1.5 shadow-md shadow-green-600/10"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-400 text-white font-black py-3.5 px-4 rounded-xl text-sm transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-2 shadow-lg shadow-emerald-600/20"
                       >
-                        {isSubmittingDeposit ? "Verifying Transaction..." : <><Zap className="w-4 h-4" /> Submit & Verify Deposit</>}
+                        {isSubmittingDeposit ? (
+                          <span>በማረጋገጥ ላይ... (Verifying...)</span>
+                        ) : (
+                          <>
+                            <Zap className="w-4 h-4 fill-white" />
+                            <span>ገቢ አረጋግጥ (Verify & Add Funds)</span>
+                          </>
+                        )}
                       </button>
                     </form>
-
-                    {/* Fallback Option */}
-                    <div className="bg-gray-50 dark:bg-gray-950/40 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 flex justify-between items-center gap-3">
-                      <div className="space-y-0.5 text-left">
-                        <span className="text-xs font-black text-gray-800 dark:text-gray-200">Alternative Verification</span>
-                        <p className="text-[10px] text-gray-500 leading-tight">Can't copy your SMS receipt? Use our quick Telegram bot verification flow instead.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleTriggerFlow('deposit')}
-                        disabled={isTriggeringFlow}
-                        className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-2 rounded-lg cursor-pointer transition-all active:scale-95"
-                      >
-                        {isTriggeringFlow ? "Loading..." : "Open Bot 🤖"}
-                      </button>
-                    </div>
                   </div>
                 )}
 
                 {walletTab === 'withdraw' && (
                   <div className="space-y-4">
-                    <form onSubmit={handleInlineWithdraw} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-4">
-                      <h3 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                        <ArrowUpRight className="w-4 h-4" /> Express Cashout Request
-                      </h3>
-                      
-                      <p className="text-xs text-gray-600 dark:text-gray-400 text-left">
-                        Funds will be securely sent directly to your registered bank account or phone number.
-                      </p>
-
-                      <div className="text-left">
-                        <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Select Receiving Bank</label>
-                        <select
-                          value={withdrawBank}
-                          onChange={(e) => setWithdrawBank(e.target.value)}
-                          className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none cursor-pointer"
-                        >
-                          {(Object.entries(dynamicBanks) as [string, { name: string; account: string; owner: string }][]).map(([id, b]) => (
-                            <option key={id} value={id}>{b.name}</option>
-                          ))}
-                        </select>
+                    {/* Available Balance Box */}
+                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-4 text-white shadow-md shadow-blue-600/15 flex justify-between items-center">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-blue-200 block">የእርስዎ ሂሳብ (Balance)</span>
+                        <div className="text-2xl font-black font-mono">
+                          {(balance || 0).toLocaleString()} <span className="text-xs font-bold text-blue-200">ETB</span>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawAmount(Math.floor(balance || 0).toString())}
+                        className="bg-white/20 hover:bg-white/30 text-white text-xs font-black px-3 py-1.5 rounded-xl border border-white/20 active:scale-95 cursor-pointer"
+                      >
+                        ሙሉውን አውጣ (All)
+                      </button>
+                    </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-left">
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Amount to Cashout</label>
+                    {/* Bank Selection for Withdraw */}
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {Object.entries(dynamicBanks).map(([bankKey, b]) => {
+                        const bankObj = b as { name?: string; account?: string; owner?: string };
+                        const isSelected = withdrawBank === bankKey;
+                        const isTelebirr = bankKey.toLowerCase().includes('telebirr');
+                        return (
+                          <button
+                            key={bankKey}
+                            type="button"
+                            onClick={() => setWithdrawBank(bankKey)}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 border ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-600/30'
+                                : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            <span>{isTelebirr ? '📱' : '🏦'}</span>
+                            <span>{bankObj.name || bankKey}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <form onSubmit={handleInlineWithdraw} className="bg-white dark:bg-gray-900 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 space-y-4">
+                      {/* Amount to cash out */}
+                      <div>
+                        <label className="block text-[11px] font-black uppercase text-gray-700 dark:text-gray-300 mb-1.5 flex justify-between items-center">
+                          <span>የሚወጣው የገንዘብ መጠን (Amount)</span>
+                          <span className="text-[10px] text-gray-400 font-bold">ዝቅተኛ 100 ብር (Min 100 ETB)</span>
+                        </label>
+                        
+                        {/* Quick Presets */}
+                        <div className="grid grid-cols-4 gap-1.5 mb-2">
+                          {[100, 200, 500, 1000].map(amt => (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => setWithdrawAmount(amt.toString())}
+                              className={`py-2 text-xs font-mono font-black rounded-lg transition-all border cursor-pointer ${
+                                withdrawAmount === amt.toString()
+                                  ? 'bg-blue-600 text-white border-blue-600'
+                                  : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-blue-400'
+                              }`}
+                            >
+                              {amt}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="relative">
                           <input
                             type="number"
-                            placeholder="Min: 100 ETB"
+                            placeholder="የብር መጠን ያስገቡ (e.g. 500)"
                             value={withdrawAmount}
                             onChange={(e) => setWithdrawAmount(e.target.value)}
-                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
+                            className="w-full bg-gray-50 dark:bg-gray-950 text-sm font-bold text-gray-900 dark:text-gray-100 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none focus:border-blue-500"
                             required
                             min="100"
                           />
-                        </div>
-                        
-                        <div>
-                          <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Account / Phone No</label>
-                          <input
-                            type="text"
-                            placeholder="09... / 1000..."
-                            value={withdrawAccount}
-                            onChange={(e) => setWithdrawAccount(e.target.value)}
-                            className="w-full bg-gray-50 dark:bg-gray-950 text-xs font-mono font-bold text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none"
-                            required
-                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-gray-400">ETB</span>
                         </div>
                       </div>
 
-                      <div className="p-3 bg-amber-50/50 dark:bg-amber-950/10 rounded-xl border border-amber-100/50 dark:border-amber-900/10 flex gap-2 items-start text-left">
-                        <Clock className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                        <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 leading-snug">
-                          <b>Double-check details:</b> Payouts are made instantly by administrators upon review (typically less than 1 minute). Ensure the account or phone matches your registered name.
+                      {/* Account/Phone Number */}
+                      <div>
+                        <label className="block text-[11px] font-black uppercase text-gray-700 dark:text-gray-300 mb-1.5">
+                          {withdrawBank.toLowerCase().includes('telebirr') 
+                            ? 'የቴሌብር ስልክ ቁጥርዎ (Telebirr Phone)' 
+                            : `${withdrawBank} የሂሳብ ቁጥር (Account Number)`}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={withdrawBank.toLowerCase().includes('telebirr') ? "09... ወይም 07..." : "የሂሳብ ቁጥር ያስገቡ..."}
+                          value={withdrawAccount}
+                          onChange={(e) => setWithdrawAccount(e.target.value)}
+                          className="w-full bg-gray-50 dark:bg-gray-950 text-sm font-mono font-bold text-gray-900 dark:text-gray-100 p-3 rounded-xl border border-gray-200 dark:border-gray-800 outline-none focus:border-blue-500"
+                          required
+                        />
+                      </div>
+
+                      <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-xl border border-blue-100 dark:border-blue-900/30 flex gap-2 items-center text-left">
+                        <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+                        <p className="text-[10px] font-medium text-blue-700 dark:text-blue-300 leading-snug">
+                          ገንዘቡ በደቂቃዎች ውስጥ በቀጥታ ወደ አካውንትዎ ይላካል። (Fast processed cashout).
                         </p>
                       </div>
 
                       <button
                         type="submit"
                         disabled={isSubmittingWithdraw}
-                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-400 text-white font-black py-3 px-4 rounded-xl text-xs transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-1.5 shadow-md shadow-blue-600/10"
+                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-400 text-white font-black py-3.5 px-4 rounded-xl text-sm transition-all active:scale-[0.98] cursor-pointer flex justify-center items-center gap-2 shadow-lg shadow-blue-600/20"
                       >
-                        {isSubmittingWithdraw ? "Submitting Request..." : <><ArrowUpRight className="w-4 h-4" /> Request Express Withdrawal</>}
+                        {isSubmittingWithdraw ? (
+                          <span>በመላክ ላይ... (Processing...)</span>
+                        ) : (
+                          <>
+                            <ArrowUpRight className="w-4 h-4" />
+                            <span>ብር አውጣ (Submit Withdrawal)</span>
+                          </>
+                        )}
                       </button>
                     </form>
-
-                    {/* Fallback Option */}
-                    <div className="bg-gray-50 dark:bg-gray-950/40 rounded-2xl p-4 border border-gray-150 dark:border-gray-800 flex justify-between items-center gap-3">
-                      <div className="space-y-0.5 text-left">
-                        <span className="text-xs font-black text-gray-800 dark:text-gray-200">Alternative Verification</span>
-                        <p className="text-[10px] text-gray-500 leading-tight">Prefer using our secure chatbot? Start the Telegram withdrawal flow instantly.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleTriggerFlow('withdraw')}
-                        disabled={isTriggeringFlow}
-                        className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase px-3 py-2 rounded-lg cursor-pointer transition-all active:scale-95"
-                      >
-                        {isTriggeringFlow ? "Loading..." : "Open Bot 🤖"}
-                      </button>
-                    </div>
                   </div>
                 )}
 

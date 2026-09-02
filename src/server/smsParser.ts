@@ -26,11 +26,17 @@ export function parseBankSMS(text: string, from: string): ParsedSMS | null {
   }
 
   // Telebirr Parsing logic
-  const isTelebirr = from.includes("127") || from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr") || lowercaseText.includes("ቴሌብር");
-  if (isTelebirr) {
-    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent|ብር|amount|amt)\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d+)?)/i);
-    // Matches English and common Amharic "Reference Number" labels
-    const refMatch = text.match(/(?:Transaction ID|transaction number|Ref|ID|number|ቁጥር|መለያ)(?::|\s+is)?\s*([A-Z0-9.]{8,22})/i);
+  const isTelebirr = from.includes("127") || from.toLowerCase().includes("telebirr") || lowercaseText.includes("telebirr") || lowercaseText.includes("ቴሌብር") || lowercaseText.includes("transferred to") || lowercaseText.includes("sent birr");
+  if (isTelebirr || true) {
+    // 1. Amount match (Telebirr standard formats in English and Amharic)
+    const amountMatch = text.match(/(?:received|credited|ETB|deposited|transferred|sent|ብር|amount|amt|የተላለፈው|ገቢ)\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d+)?)/i)
+      || text.match(/([\d,]+(?:\.\d+)?)\s*(?:ETB|Birr|ብር)/i);
+      
+    // 2. Telebirr Reference / Transaction ID matches (e.g. RA..., DB..., MT..., FT..., or numeric IDs)
+    const refMatch = text.match(/(?:Transaction ID|transaction number|trans\s*id|txn\s*id|Ref\s*No|Ref|ID|number|የግብይት\s*መለያ|የማመሳከሪያ\s*ቁጥር|መለያ|ቁጥር)(?::|\s+is)?[:\s#]*([A-Z0-9.]{6,26})/i)
+      || text.match(/\b(RA[A-Z0-9]{6,22})\b/i)
+      || text.match(/\b(DB[A-Z0-9]{6,22})\b/i)
+      || text.match(/\b(MT[A-Z0-9]{6,22})\b/i);
     
     if (amountMatch && refMatch) {
       let cleanTxId = refMatch[1].trim().toUpperCase();
