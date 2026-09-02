@@ -33,6 +33,7 @@ async function startServer() {
     }
   }));
   app.use(express.urlencoded({ extended: true }));
+  app.use(express.text({ type: 'text/plain' }));
   const PORT = 3000;
   
   const httpServer = createServer(app);
@@ -141,6 +142,20 @@ async function startServer() {
       }
     }
 
+    let payload = req.body || {};
+    if (typeof req.body === 'string') {
+      try {
+        payload = JSON.parse(req.body);
+      } catch (e) {
+        // Try parsing custom plain text format
+        const phoneMatch = req.body.match(/PHONE:\s*(.*?)\n/i);
+        const textMatch = req.body.match(/TEXT:\s*([\s\S]*)/i);
+        if (phoneMatch && textMatch) {
+          payload = { phone: phoneMatch[1].trim(), raw_message: textMatch[1].trim() };
+        }
+      }
+    }
+
     const { 
       from, 
       text, 
@@ -153,16 +168,16 @@ async function startServer() {
       msg,
       sender_name,
       senderName
-    } = req.body || {};
+    } = payload;
     const { from: queryFrom, text: queryText, sender: qSender, message: qMessage } = req.query || {};
 
     const sender = (from || bodySender || sender_phone || phone || queryFrom || qSender || "Unknown").toString();
     const smsText = (text || bodyMessage || raw_message || body || msg || queryText || qMessage || "").toString();
 
     // Prioritize pre-parsed data from JSON if present
-    let finalTxId = (req.body?.transaction_id || req.body?.transactionId || "").toString().trim().toUpperCase();
-    let finalAmount = Number(req.body?.amount);
-    let finalBank = (req.body?.bank || req.body?.bank_name || "").toString().trim();
+    let finalTxId = (payload.transaction_id || payload.transactionId || "").toString().trim().toUpperCase();
+    let finalAmount = Number(payload.amount);
+    let finalBank = (payload.bank || payload.bank_name || "").toString().trim();
     let finalSenderName = (sender_name || senderName || "").toString().trim();
 
     let isFullyParsed = !!(finalTxId && !isNaN(finalAmount) && finalAmount > 0);
