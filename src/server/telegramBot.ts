@@ -325,6 +325,7 @@ interface PromptsConfig {
 
   weekly_jackpot_amount?: number;
   automated_jackpot_broadcast_enabled?: boolean;
+  deleted_banks?: string[];
   banks: {
     [bankId: string]: BankConfig;
   };
@@ -626,7 +627,7 @@ function loadPromptsConfig(): PromptsConfig {
       
       // Explicitly overwrite properties from file data
       Object.keys(data).forEach(key => {
-        if (['banks', 'custom_commands', 'welcome_buttons', 'referral_buttons'].includes(key)) {
+        if (['banks', 'custom_commands', 'welcome_buttons', 'referral_buttons', 'deleted_banks'].includes(key)) {
           // Complex objects/arrays must be completely replaced to allow deletion to persist
           (config as any)[key] = JSON.parse(JSON.stringify(data[key]));
         } else {
@@ -668,6 +669,11 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
 
   // 2. Merge banks bank-by-bank
   merged.banks = merged.banks || {};
+  
+  const dbDeleted = db.deleted_banks || [];
+  const localDeleted = local.deleted_banks || [];
+  const allDeletedBankIds = Array.from(new Set([...dbDeleted, ...localDeleted]));
+
   const allBankIds = Array.from(new Set([
     ...Object.keys(local.banks || {}),
     ...Object.keys(db.banks || {}),
@@ -678,6 +684,18 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
     const localBank = local.banks?.[bankId];
     const dbBank = db.banks?.[bankId];
     const defaultBank = defaults.banks?.[bankId];
+
+    // If the bank was deleted by the user/admin (exists in deleted list), do NOT resurrect it!
+    const isDeletedByAdmin = allDeletedBankIds.includes(bankId) || (dbBank === undefined && defaultBank !== undefined);
+    
+    if (isDeletedByAdmin) {
+      if (merged.banks[bankId] !== undefined) {
+        logBot(`[CONFIG-MERGE] Bank '${bankId}' is deleted. Removing from active list.`);
+        delete merged.banks[bankId];
+        changed = true;
+      }
+      continue;
+    }
 
     if (localBank === undefined) {
       // Bank was deleted or not present locally
@@ -713,6 +731,15 @@ function mergeConfigs(local: PromptsConfig, db: PromptsConfig, defaults: Prompts
         }
       }
     }
+  }
+
+  // Sync deleted_banks list
+  merged.deleted_banks = Array.from(new Set([
+    ...dbDeleted,
+    ...localDeleted
+  ])).filter(bankId => merged.banks[bankId] === undefined);
+  if (!isEqual(merged.deleted_banks, db.deleted_banks)) {
+    changed = true;
   }
 
   // 3. Merge custom_commands command-by-command
@@ -1035,7 +1062,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
       interval: 100, // Faster polling (100ms instead of 300ms) for snappy responses
       autoStart: true,
       params: {
-        timeout: 50 // Longer timeout for long polling (standard practice)
+        timeout: 10 // Safer and faster polling timeout for quick recovery from drops/conflicts
       }
     }
   });
@@ -3978,6 +4005,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         owner_name: "Required",
         withdraw_prompt: ""
       };
+      if (promptsConfig.deleted_banks) {
+        promptsConfig.deleted_banks = promptsConfig.deleted_banks.filter(id => id !== bankId);
+      }
       savePromptsConfig(promptsConfig);
       userStates.set(userId, { step: 'idle' });
 
@@ -8528,6 +8558,12 @@ const withdrawalCooldowns = new Map<string, number>();
       const bankId = data.replace("delete_bank_exec_", "");
       if (promptsConfig.banks[bankId]) {
         delete promptsConfig.banks[bankId];
+        if (!promptsConfig.deleted_banks) {
+          promptsConfig.deleted_banks = [];
+        }
+        if (!promptsConfig.deleted_banks.includes(bankId)) {
+          promptsConfig.deleted_banks.push(bankId);
+        }
         savePromptsConfig(promptsConfig);
         await bot.answerCallbackQuery(query.id, { text: "✅ Bank Deleted Permanently", show_alert: true });
         

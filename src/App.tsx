@@ -1815,18 +1815,6 @@ export default function App() {
               <Grid3X3 className="w-4.5 h-4.5" />
               <span className="text-[10px] tracking-tight font-black uppercase">ቢንጎ</span>
             </button>
-
-            <button
-              onClick={() => setActiveTab('profile')}
-              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'profile' 
-                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
-                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-              }`}
-            >
-              <User className="w-4.5 h-4.5" />
-              <span className="text-[10px] tracking-tight font-black uppercase">ፕሮፋይል</span>
-            </button>
           </nav>
         )}
 
