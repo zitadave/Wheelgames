@@ -48,6 +48,14 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
     return cards;
   }, [roomState?.players, userId]);
 
+  const hasPlayerBingo = useMemo(() => {
+    if (!roomState?.calledBalls || selectedCards.length === 0) return false;
+    return selectedCards.some(cardId => {
+      const cardData = getDeterministicCard(cardId);
+      return getWinningCells(cardData, roomState.calledBalls).size > 0;
+    });
+  }, [roomState?.calledBalls, selectedCards]);
+
 
   useEffect(() => {
     if (!selectedRoomId) {
@@ -361,6 +369,18 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                 <div className="flex flex-col">
                   <span className="text-[18px] font-black text-gray-900 dark:text-white">ባለ 10 መደብ</span>
                   <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Standard 10 ETB Bet</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="flex items-center gap-1 text-[10px] font-black text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                      <Users className="w-2.5 h-2.5" />
+                      {bingoRoomsMeta?.['bingo-10']?.playersCount || 0} ተጫዋቾች
+                    </span>
+                    {(bingoRoomsMeta?.['bingo-10']?.jackpot || 0) > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-mono">
+                        <Coins className="w-2.5 h-2.5" />
+                        {bingoRoomsMeta['bingo-10'].jackpot.toLocaleString()} ETB
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex flex-col items-end text-right shrink-0 gap-1">
@@ -390,6 +410,18 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                 <div className="flex flex-col">
                   <span className="text-[18px] font-black text-gray-900 dark:text-white">ባለ 20 መደብ</span>
                   <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Premium 20 ETB Bet</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="flex items-center gap-1 text-[10px] font-black text-orange-600 dark:text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                      <Users className="w-2.5 h-2.5" />
+                      {bingoRoomsMeta?.['bingo-20']?.playersCount || 0} ተጫዋቾች
+                    </span>
+                    {(bingoRoomsMeta?.['bingo-20']?.jackpot || 0) > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-mono">
+                        <Coins className="w-2.5 h-2.5" />
+                        {bingoRoomsMeta['bingo-20'].jackpot.toLocaleString()} ETB
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="flex flex-col items-end text-right shrink-0 gap-1">
@@ -420,45 +452,60 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
         {/* Selection Area */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative w-full">
           {/* Dense Grid - smaller buttons, full width, 8 columns */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 custom-scrollbar">
-            <div className={`grid grid-cols-8 gap-1 ${selectedCards.length > 0 ? 'pb-52' : 'pb-16'}`}>
-              {Array.from({ length: 400 }, (_, i) => i + 1).map(id => {
+          <div className="flex-1 overflow-y-auto px-4 py-3 custom-scrollbar">
+            <div className={`grid grid-cols-8 gap-1 ${selectedCards.length > 0 ? 'pb-52' : 'pb-4'}`}>
+              {Array.from({ length: 500 }, (_, i) => i + 1).map(id => {
                 const isTaken = allSelectedCards.has(id);
                 const isSelectedByMe = selectedCards.includes(id);
-                return (
-                  <button
-                    key={id}
-                    disabled={isTaken && !isSelectedByMe}
-                    onClick={() => {
-                      if (!isTaken || isSelectedByMe) {
-                        toggleCard(id);
-                      }
-                    }}
-                    className={`h-9 rounded-md font-medium text-[10px] transition-all border flex items-center justify-center shadow-sm ${
-                      isSelectedByMe
-                        ? 'bg-gradient-to-br from-yellow-400 to-amber-600 border-yellow-300 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-110 z-20 active:scale-90 cursor-pointer font-black ring-2 ring-yellow-400'
-                        : isTaken
-                        ? 'bg-red-600 border-red-500 text-white cursor-not-allowed'
-                        : 'bg-white dark:bg-[#1a1c2e] border-gray-200 dark:border-gray-800/50 text-gray-400 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#252841] active:scale-90 cursor-pointer'
-                    }`}
-                  >
-                    <span>{id}</span>
-                  </button>
-                );
-              })}
+                  return (
+                    <button
+                      key={id}
+                      disabled={isTaken && !isSelectedByMe}
+                      onClick={() => {
+                        if (!isTaken || isSelectedByMe) {
+                          toggleCard(id);
+                        }
+                      }}
+                      className={`h-9 rounded-md font-medium text-[10px] transition-all border flex items-center justify-center shadow-sm ${
+                        isSelectedByMe
+                          ? 'bg-gradient-to-br from-yellow-400 to-amber-600 border-yellow-300 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-110 z-20 active:scale-90 cursor-pointer font-black ring-2 ring-yellow-400'
+                          : isTaken
+                          ? 'bg-red-600/80 dark:bg-red-700/60 border-red-600/40 text-red-200 text-[9px] cursor-not-allowed opacity-60'
+                          : 'bg-white dark:bg-[#1a1c2e] border-gray-200 dark:border-gray-800/50 text-gray-700 dark:text-gray-300 hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-[#252841] active:scale-90 cursor-pointer font-bold'
+                      }`}
+                    >
+                      <span>{id}</span>
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
-          {selectedCards.length > 0 ? (
+          {selectedCards.length > 0 && (
             /* Fixed Bottom Container - Side-by-side selected cards, maximized size */
             <div className="absolute bottom-0 left-0 right-0 pt-2 pb-3 px-4 bg-gradient-to-t from-gray-50 via-gray-50 dark:from-[#121421] dark:via-[#121421] to-gray-50/90 dark:to-[#121421]/90 border-t border-gray-200 dark:border-white/5 z-50 backdrop-blur-md">
-              <div className="flex flex-col items-center gap-2 w-full max-w-lg mx-auto">
+              <div className="flex flex-col items-center gap-1.5 w-full max-w-lg mx-auto">
+                <div className="flex items-center justify-between w-full px-1 text-[11px] font-bold text-gray-700 dark:text-gray-300">
+                  <span className="text-amber-500 font-black flex items-center gap-1">
+                    <span>✅ {selectedCards.length} {selectedCards.length === 1 ? 'ካርቴላ' : 'ካርቴላዎች'} ተመርጧል</span>
+                    <span className="text-[10px] text-gray-400">({selectedCards.join(', ')})</span>
+                  </span>
+                  <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                    መደብ: {selectedCards.length * (roomState.betAmount || 10)} ETB
+                  </span>
+                </div>
                 <div className="flex flex-row justify-center gap-3 w-full">
-                  {selectedCards.map((cardId, idx) => (
-                    <div key={cardId} className="flex-1 max-w-[175px] ">
+                  {selectedCards.map((cardId) => (
+                    <div key={cardId} className="flex-1 max-w-[175px]">
                       <div className="bg-white dark:bg-[#1a1c2e] rounded-lg overflow-hidden border border-purple-500/20 shadow-2xl">
-                        <div className="bg-orange-500 px-1.5 py-0.5 border-b border-black/10">
+                        <div className="bg-orange-500 px-1.5 py-0.5 border-b border-black/10 flex items-center justify-between">
                            <span className="text-[9.5px] font-black text-black uppercase tracking-wider block text-center truncate">NO: {cardId}</span>
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); toggleCard(cardId); }}
+                             className="text-[9px] font-black text-white hover:text-red-200 bg-black/20 px-1.5 py-0.5 rounded active:scale-95 cursor-pointer"
+                           >
+                             ቀይር ✕
+                           </button>
                         </div>
                         <div className="p-0.5">
                            <BingoCardView card={getDeterministicCard(cardId)} calledBalls={[]} compact />
@@ -468,13 +515,6 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                   ))}
                 </div>
               </div>
-            </div>
-          ) : (
-            /* Simple thin bar with text only, doesn't block the grid layout */
-            <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 bg-white/95 dark:bg-[#121421]/95 border-t border-gray-200 dark:border-white/10 z-50 backdrop-blur-sm flex items-center justify-center">
-              <span className="text-purple-600 dark:text-purple-300 font-black text-[10px] uppercase tracking-[0.2em] text-center">
-                ለመጫወት ካርድ ይምረጡ
-              </span>
             </div>
           )}
         </div>
@@ -558,7 +598,11 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                     ['bg-blue-600', 'bg-purple-600', 'bg-pink-600', 'bg-green-600', 'bg-orange-600'][i]
                   }`}>{letter}</div>
                 ))}
-                {Array.from({ length: 75 }, (_, i) => i + 1).map(num => {
+                {Array.from({ length: 75 }, (_, i) => {
+                  const row = Math.floor(i / 5);
+                  const col = i % 5;
+                  return col * 15 + row + 1;
+                }).map(num => {
                   const isCalled = roomState.calledBalls.includes(num);
                   const isLastCalled = roomState.calledBalls[roomState.calledBalls.length - 1] === num;
                   return (
@@ -765,12 +809,12 @@ export const BingoGame = React.memo(function BingoGame({ socket, userId, usernam
                         roomState.winners.map((w, i) => (
                           <div
                             key={i}
-                            className="flex items-center gap-1.5 px-3 py-1 bg-white/5 text-gray-300 border border-white/10 rounded-full text-[9px] font-black"
+                            className="flex items-center gap-1.5 px-3 py-1 bg-white/10 text-gray-300 border border-white/15 rounded-full text-[10px] font-black shadow-xs"
                           >
                             <div className="w-3 h-3 rounded-full bg-white/20 flex items-center justify-center text-[7.5px] font-black uppercase text-white">
                               {w.username.charAt(0)}
                             </div>
-                            <span className="truncate max-w-[100px] text-white font-bold">
+                            <span className="truncate max-w-[120px] text-white font-bold">
                               {w.username} #{w.cardId || w.cards?.[0] || '??'}
                             </span>
                           </div>
@@ -858,7 +902,7 @@ const BingoCardPreview: React.FC<{ id: number }> = ({ id }) => {
   );
 };
 
-const getWinningCells = (card: number[][], calledBalls: number[]): Set<string> => {
+function getWinningCells(card: number[][], calledBalls: number[]): Set<string> {
   const winning = new Set<string>();
   const marked = card.map(col => col.map(num => num === 0 || calledBalls.includes(num)));
 

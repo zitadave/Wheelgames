@@ -15,6 +15,7 @@ import { handleUsersReport, handleFinancialReport, generateDummyUsersExcelBuffer
 import PDFDocument from "pdfkit";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, WidthType, BorderStyle } from "docx";
 import { getGameSettingsSync, saveGameSettings, isGameEnabled, getGameConfig } from "./gameSettings.js";
+import { getBingoBotSettingsSync, updateBingoBotSettings, loadBingoBotSettings } from "./bingoBotManager.js";
 
 
 let botInfo: any = (globalThis as any).telegramBotInfo || null;
@@ -1521,6 +1522,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
   function renderGameSettingsPanel(chatId: number, messageId?: number) {
     const settings = getGameSettingsSync();
+    const botSettings = getBingoBotSettingsSync();
     let text = "🎮 <b>የጨዋታዎች መቆጣጠሪያ ፓናል (Game Settings)</b>\n\n" +
                "በቦቱ ላይ ያሉትን ጨዋታዎች በጊዜያዊነት ማገድ (Toggle on/off)፣ አነስተኛ እና ከፍተኛ የውርርድ መጠን (Min/Max limits) ማስተካከል፣ እንዲሁም የአሸናፊነት ማባዣ ክፍያዎችን (Payout Multipliers) በቀጥታ ከዚህ ማስተካከል ይችላሉ።\n\n" +
                "<i>የሚፈለገውን ጨዋታ በመምረጥ ማስተካከያ ያድርጉ:</i>";
@@ -1528,6 +1530,11 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const keyboard = {
       inline_keyboard: [] as any[]
     };
+
+    // Dedicated Bingo AI Bots control button
+    keyboard.inline_keyboard.push([
+      { text: `🤖 የቢንጎ AI ቦቶች (${botSettings.enabled ? "🟢 ንቁ" : "🔴 የታገደ"} - ${botSettings.winProbability}% Win)`, callback_data: "control_bingo_bots" }
+    ]);
 
     const keys = Object.keys(settings);
     for (const key of keys) {
@@ -1541,6 +1548,50 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     keyboard.inline_keyboard.push([
       { text: "🔙 ወደ ዋናው ማውጫ (Back to Main)", callback_data: "game_set_back_main" }
     ]);
+
+    if (messageId) {
+      bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
+        .catch(() => bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard }));
+    } else {
+      bot.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: keyboard });
+    }
+  }
+
+  function renderBingoBotControlPanel(chatId: number, messageId?: number) {
+    const s = getBingoBotSettingsSync();
+    const statusEmoji = s.enabled ? "🟢" : "🔴";
+    const statusText = s.enabled ? "ንቁ (Active)" : "የታገደ (Disabled)";
+
+    let text = `🤖 <b>የቢንጎ AI ቦቶች መቆጣጠሪያ ፓናል (Bingo AI Control)</b>\n\n` +
+               `👉 <b>ሁኔታ (Status):</b> ${statusEmoji} ${statusText}\n` +
+               `👉 <b>የቦቶች ብዛት (Bot Count):</b> <code>${s.botCount >= 180 && s.botCount <= 260 ? "200 - 250 ተጫዋቾች (በጨዋታው ተለዋዋጭ)" : `${s.botCount} ተጫዋቾች`}</code>\n` +
+               `👉 <b>የ2 ካርቴላ ምጣኔ (2-Card Selection):</b> <code>${s.twoCardsRatio || 55}%+</code>\n` +
+               `👉 <b>የማሸነፍ እድል (Win Probability):</b> <code>${s.winProbability}% (1 የሰው ድል በየ 70-80 ጨዋታ)</code>\n` +
+               `👉 <b>አሸናፊ ኳስ ክልል (Win Ball Range):</b> <code>${s.minWinBall} - ${s.maxWinBall} ኳሶች (70% በ15-22)</code>\n` +
+               `👉 <b>የወንዶች ስም ምጣኔ (Male Names):</b> <code>${s.maleRatio}%</code>\n\n` +
+               `<i>ከታች ያሉትን ቁልፎች በመጫን ፈጣን ማስተካከያ ማድረግ ይችላሉ:</i>`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: s.enabled ? "🔴 ቦቶችን አግድ (Turn OFF)" : "🟢 ቦቶችን አንቃ (Turn ON)", callback_data: "b_bot_toggle" }
+        ],
+        [
+          { text: s.botCount === 235 ? "✅ 200-250 (ተለዋዋጭ)" : "🎲 200-250", callback_data: "b_bot_count:235" },
+          { text: s.botCount === 200 ? "✅ 200 ቦቶች" : "👥 200", callback_data: "b_bot_count:200" },
+          { text: s.botCount === 250 ? "✅ 250 ቦቶች" : "👥 250", callback_data: "b_bot_count:250" }
+        ],
+        [
+          { text: s.winProbability === 85 ? "✅ 85%" : "🎯 85%", callback_data: "b_bot_win:85" },
+          { text: s.winProbability === 95 ? "✅ 95%" : "🎯 95%", callback_data: "b_bot_win:95" },
+          { text: s.winProbability === 98 ? "✅ 98%" : "🎯 98%", callback_data: "b_bot_win:98" },
+          { text: s.winProbability === 99 ? "✅ 99%" : "🎯 99%", callback_data: "b_bot_win:99" }
+        ],
+        [
+          { text: "🔙 ወደ ዝርዝር", callback_data: "game_set_back_list" }
+        ]
+      ]
+    };
 
     if (messageId) {
       bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: keyboard })
@@ -5612,6 +5663,7 @@ const withdrawalCooldowns = new Map<string, number>();
                               data?.startsWith("game_set_") ||
                               data?.startsWith("autocamp_") ||
                               data?.startsWith("cmd_") ||
+                              data?.startsWith("b_bot_") ||
                               ownerOnlyPrefixes.some(p => data?.startsWith(p)) ||
                               generalAdminPrefixes.some(p => data?.startsWith(p));
 
@@ -5622,6 +5674,59 @@ const withdrawalCooldowns = new Map<string, number>();
         } catch (e) {}
         return;
       }
+    }
+
+    if (data === "control_bingo_bots") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      renderBingoBotControlPanel(chatId, messageId);
+      return;
+    }
+
+    if (data === "b_bot_toggle") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const s = getBingoBotSettingsSync();
+      const newEnabled = !s.enabled;
+      await updateBingoBotSettings({ enabled: newEnabled });
+      await bot.answerCallbackQuery(query.id, { 
+        text: `✅ የቢንጎ ቦቶች ${newEnabled ? "ተከፍተዋል (Turned ON)" : "ተዘግተዋል (Turned OFF)"}` 
+      });
+      renderBingoBotControlPanel(chatId, messageId);
+      return;
+    }
+
+    if (data?.startsWith("b_bot_count:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const count = parseInt(data.substring("b_bot_count:".length), 10);
+      await updateBingoBotSettings({ botCount: count });
+      await bot.answerCallbackQuery(query.id, { 
+        text: `✅ የቦቶች ብዛት ወደ ${count} ተቀይሯል!` 
+      });
+      renderBingoBotControlPanel(chatId, messageId);
+      return;
+    }
+
+    if (data?.startsWith("b_bot_win:")) {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied", show_alert: true });
+        return;
+      }
+      const win = parseInt(data.substring("b_bot_win:".length), 10);
+      await updateBingoBotSettings({ winProbability: win });
+      await bot.answerCallbackQuery(query.id, { 
+        text: `✅ የማሸነፍ እድል ወደ ${win}% ተቀይሯል!` 
+      });
+      renderBingoBotControlPanel(chatId, messageId);
+      return;
     }
 
     if (data === "control_game_settings" || data === "game_set_back_list") {

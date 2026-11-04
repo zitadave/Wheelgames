@@ -587,7 +587,9 @@ export default function App() {
     }
   }, [activeTab]);
 
-  const totalActivePlayersCount = activeTab === 'bingo' ? (bingoRoomState?.onlineCount || 0) : (roomState?.onlineCount || 0);
+  const totalActivePlayersCount = activeTab === 'bingo' 
+    ? Math.max(Object.keys(bingoRoomState?.players || {}).length, bingoRoomState?.onlineCount || 0) 
+    : (roomState?.onlineCount || 0);
 
   const vipPlayersList = React.useMemo(() => {
     const isBingo = activeTab === 'bingo';
@@ -1064,51 +1066,121 @@ export default function App() {
         
         {/* Top Header Panel */}
         {!isJackpotTheaterMode && (
-          <header className="flex justify-between items-center px-4 py-2 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shrink-0 transition-colors duration-300 z-40 fixed top-0 left-0 right-0 w-full">
-            {activeTab === 'bingo' && selectedBingoRoomId && bingoRoomState?.status === 'lobby' ? (
-              // BINGO LOBBY HEADER: Equal space between balance, timer, label, and profile
-              <div className="flex items-center justify-between w-full">
-                <button 
-                  onClick={() => {
-                    socket?.emit('bingo_leave', { roomId: selectedBingoRoomId, userId });
-                    setSelectedBingoRoomId(null);
-                    setBingoRoomState(null);
-                  }}
-                  className="flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-purple-500 active:scale-95 transition-transform border border-gray-200 dark:border-gray-700 shrink-0"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
+          <header className="flex justify-between items-center px-2 py-1 sm:px-4 sm:py-1.5 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shrink-0 transition-colors duration-300 z-40 fixed top-0 left-0 right-0 w-full">
+            {activeTab === 'bingo' && selectedBingoRoomId ? (
+              bingoRoomState?.status === 'playing' || bingoRoomState?.status === 'result' ? (
+                // ACTIVE PLAYING/RESULT HEADER
+                <div className="flex items-center justify-between w-full gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-0.5">
+                  {/* 1. BALANCE PILL WITH + ገቢ */}
+                  <div className="flex items-center bg-[#131622] border border-[#d97706]/70 rounded-full pl-2 pr-0.5 py-0.5 text-[11px] font-bold gap-1 shadow-xs shrink-0">
+                    <Coins className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span 
+                      onClick={openWallet}
+                      className="font-mono font-black text-white text-[11px] sm:text-[12px] cursor-pointer tracking-tight"
+                    >
+                      {balance === null ? '...' : balance.toLocaleString()}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setWalletTab('deposit');
+                        setIsWalletOpen(true);
+                      }}
+                      className="bg-[#059669] hover:bg-[#047857] text-white rounded-full px-1.5 py-0.5 text-[9.5px] font-black flex items-center gap-0.5 shadow-xs transition-transform active:scale-95 cursor-pointer ml-0.5 shrink-0"
+                      title="Deposit"
+                    >
+                      <span>+ ገቢ</span>
+                    </button>
+                  </div>
 
-                <button
-                  onClick={openWallet}
-                  className="flex items-center gap-1 bg-yellow-500/10 hover:bg-yellow-500/20 dark:bg-yellow-500/5 dark:hover:bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-1.5 py-1 rounded-full text-[11px] font-bold transition-all active:scale-95 cursor-pointer shrink-0"
-                >
-                  <Coins className="w-3 h-3 text-yellow-500 shrink-0" />
-                  <span className="font-mono font-black">{balance === null ? '...' : balance.toLocaleString()}</span>
-                </button>
+                  {/* 2. DERASH BOX */}
+                  <div className="flex flex-col items-center justify-center bg-[#071d18]/90 border border-emerald-600/70 rounded-lg px-2 py-0.5 min-w-[62px] sm:min-w-[72px] h-[34px] shrink-0">
+                    <span className="text-[9px] font-black text-[#10b981] uppercase tracking-wider leading-none">DERASH</span>
+                    <div className="w-full h-px bg-[#065f46]/70 my-0.5" />
+                    <span className="text-[11px] font-mono font-black text-[#10b981] leading-none">
+                      {getDerashAmount().toLocaleString()}
+                    </span>
+                  </div>
 
-                <div className="flex items-center gap-1.5 bg-orange-500/10 px-2 py-1.5 rounded-full border border-orange-500/30 shadow-lg shadow-orange-500/10 shrink-0">
-                   <Clock className="w-3.5 h-3.5 text-orange-500 animate-pulse shrink-0" />
-                   <span className={`font-mono text-[14px] font-black tracking-tighter ${(bingoRoomState?.timeLeft || 0) < 10 ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>
-                    {(bingoRoomState?.timeLeft || 0)}s
-                  </span>
+                  {/* 3. PLAYERS / CALLED BOX */}
+                  <div 
+                    onClick={() => setIsPlayersDrawerOpen(true)}
+                    className="flex flex-col items-center justify-center bg-[#121929]/90 border border-slate-700/80 rounded-lg px-2 py-0.5 min-w-[75px] sm:min-w-[85px] h-[34px] shrink-0 cursor-pointer active:scale-98 transition-transform"
+                  >
+                    <div className="flex items-center justify-between w-full leading-none gap-1">
+                      <span className="text-[#f97316] font-black text-[8.5px] uppercase tracking-wider">PLAYERS</span>
+                      <span className="text-white font-mono font-black text-[10px]">{totalActivePlayersCount || 1}</span>
+                    </div>
+                    <div className="w-full h-px bg-slate-700/60 my-0.5" />
+                    <div className="flex items-center justify-between w-full leading-none gap-1">
+                      <span className="text-[#a855f7] font-black text-[8.5px] uppercase tracking-wider">CALLED</span>
+                      <span className="text-white font-mono font-black text-[10px]">{bingoRoomState?.calledBalls?.length || 0}</span>
+                    </div>
+                  </div>
+
+                  {/* 4. SOUND TOGGLE BUTTON */}
+                  <button
+                    onClick={() => {
+                      if ((window as any).voiceEngine) (window as any).voiceEngine.initPipeline();
+                      setBingoSoundEnabled(!bingoSoundEnabled);
+                    }}
+                    className="w-[34px] h-[34px] rounded-xl bg-[#121929]/90 border border-slate-700/80 flex items-center justify-center text-[#10b981] hover:text-emerald-300 transition-all active:scale-95 cursor-pointer shrink-0 shadow-xs"
+                    title={bingoSoundEnabled ? "ድምፅ አጥፋ (Mute)" : "ድምፅ ክፈት (Unmute)"}
+                  >
+                    {bingoSoundEnabled ? <Volume2 className="w-4 h-4 text-[#10b981]" /> : <VolumeX className="w-4 h-4 text-gray-500" />}
+                  </button>
                 </div>
+              ) : (
+                // CARD SELECTION PAGE HEADER: EXACT MATCH TO USER SCREENSHOT
+                <div className="flex items-center justify-between w-full max-w-md mx-auto gap-1 sm:gap-2 py-0.5">
+                  {/* 1. BACK / LEAVE BUTTON */}
+                  <button
+                    onClick={() => {
+                      socket?.emit('bingo_leave', { roomId: selectedBingoRoomId, userId });
+                      setSelectedBingoRoomId(null);
+                      setBingoRoomState(null);
+                    }}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#181d2d] border border-slate-700/70 flex items-center justify-center text-purple-400 hover:text-purple-300 active:scale-95 transition-transform cursor-pointer shrink-0 shadow-xs"
+                    title="Leave Room"
+                  >
+                    <ChevronLeft className="w-5 h-5 text-purple-400 stroke-[3]" />
+                  </button>
 
-                <div className="text-[11px] font-black text-orange-400 uppercase tracking-widest px-1.5 py-1 bg-orange-500/10 border border-orange-500/30 rounded-lg whitespace-nowrap shrink-0">
-                  {selectedBingoRoomId === 'bingo-10' ? 'ባለ 10' : 'ባለ 20'}
+                  {/* 2. BALANCE PILL */}
+                  <div 
+                    onClick={openWallet}
+                    className="flex items-center gap-1.5 bg-[#141824] border border-amber-500/80 rounded-full px-2.5 sm:px-3.5 py-1 text-amber-400 font-mono font-black text-xs sm:text-[13px] cursor-pointer hover:bg-[#1a2030] active:scale-95 transition-transform shrink-0 shadow-xs"
+                    title="Wallet Balance"
+                  >
+                    <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+                    <span>{balance === null ? '...' : balance.toLocaleString()}</span>
+                  </div>
+
+                  {/* 3. COUNTDOWN TIMER PILL */}
+                  <div className="flex items-center gap-1.5 bg-[#1e1518] border border-orange-500/90 rounded-full px-3 sm:px-4 py-1 text-orange-500 font-mono font-black text-xs sm:text-[13px] shrink-0 shadow-[0_0_12px_rgba(249,115,22,0.3)]">
+                    <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-orange-500 animate-pulse shrink-0" />
+                    <span className={(bingoRoomState?.timeLeft || 0) < 10 ? 'text-red-500 animate-pulse' : 'text-orange-500'}>
+                      {(bingoRoomState?.timeLeft || 0)}s
+                    </span>
+                  </div>
+
+                  {/* 4. GAME BET AMOUNT BADGE */}
+                  <div className="flex items-center justify-center bg-[#1e1518] border border-orange-500/80 rounded-full px-3 sm:px-4 py-1 text-orange-400 font-black text-xs sm:text-[13px] shrink-0 whitespace-nowrap">
+                    <span>ባለ {selectedBingoRoomId === 'bingo-10' ? '10' : '20'}</span>
+                  </div>
+
+                  {/* 5. DEPOSIT / D AVATAR CIRCLE */}
+                  <button
+                    onClick={() => {
+                      setWalletTab('deposit');
+                      setIsWalletOpen(true);
+                    }}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-b from-sky-300 via-sky-400 to-blue-500 text-white font-black text-sm flex items-center justify-center shadow-md hover:brightness-110 active:scale-95 transition-transform cursor-pointer shrink-0 border border-sky-300/50"
+                    title="Deposit (ገቢ)"
+                  >
+                    <span>D</span>
+                  </button>
                 </div>
-
-                <button
-                  onClick={() => setActiveTab('profile')}
-                  className="p-0 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer relative w-7 h-7 flex items-center justify-center overflow-hidden shrink-0"
-                >
-                  {photoUrl ? (
-                    <img src={photoUrl} alt="Avatar" className="w-full h-full object-cover rounded-full" referrerPolicy="no-referrer" />
-                  ) : (
-                    <User className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </div>
+              )
             ) : (
               // DEFAULT HEADER FOR OTHER TABS
               <>
@@ -1133,17 +1205,6 @@ export default function App() {
                       <span>ገቢ</span>
                     </button>
                   </div>
-
-                  {activeTab === 'bingo' && bingoRoomState && !(!selectedBingoRoomId) && (
-                    <div className="flex flex-col items-center justify-center bg-green-500/10 dark:bg-green-500/5 text-green-600 dark:text-green-400 border border-green-500/30 rounded-lg py-1 px-2 select-none shrink-0 text-[9px] font-bold leading-none gap-1 animate-in fade-in duration-300 w-[85px]">
-                      <span className="text-[9px] font-black tracking-wider text-green-600/70 dark:text-green-400/70 uppercase font-bold">DERASH</span>
-                      <div className="border-t border-green-500/20 pt-1 w-full text-center">
-                        <span className="font-mono font-black text-[10px] text-green-600 dark:text-green-400">
-                          {getDerashAmount().toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center justify-center">
@@ -1166,24 +1227,7 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {activeTab === 'bingo' ? (
-                    bingoRoomState && (bingoRoomState.status === 'playing' || bingoRoomState.status === 'result') && !(!selectedBingoRoomId) && (
-                      <div className="flex flex-col items-center justify-center bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg py-1 px-2 select-none shrink-0 text-[9px] font-bold leading-none gap-1 animate-in fade-in duration-300 w-[85px]">
-                        <button 
-                          id="players-portal-btn-top"
-                          onClick={() => setIsPlayersDrawerOpen(true)}
-                          className="flex items-center justify-center gap-1 font-black text-orange-500 active:scale-95 transition-transform w-full"
-                        >
-                          <span>PLAYERS</span>
-                          <span className="font-mono font-black text-gray-800 dark:text-gray-100">{totalActivePlayersCount}</span>
-                        </button>
-                        <div className="flex items-center justify-center gap-1 font-black text-purple-500 border-t border-gray-300/30 dark:border-gray-700/30 pt-1 w-full">
-                          <span>CALLED</span>
-                          <span className="font-mono font-black text-gray-800 dark:text-gray-100">{bingoRoomState.calledBalls?.length || 0}</span>
-                        </div>
-                      </div>
-                    )
-                  ) : activeTab === 'keno' ? (
+                  {activeTab === 'keno' ? (
                     <div className="bg-[#1a2525]/80 px-2.5 py-1 rounded-lg border border-[#2ecc71]/20 flex flex-col items-center leading-none shrink-0 animate-in zoom-in duration-300 min-w-[70px]">
                       <span className="text-[8px] text-gray-500 font-black uppercase tracking-widest mb-0.5">ID</span>
                       <span className="text-[11px] font-mono font-black text-gray-300">{kenoRoundId}</span>
@@ -1199,24 +1243,8 @@ export default function App() {
                     </button>
                   )}
                   
-                  {activeTab === 'bingo' && bingoRoomState && (bingoRoomState.status === 'playing' || bingoRoomState.status === 'result') && !(!selectedBingoRoomId) && (
-                    <button
-                      onClick={() => {
-                        if ((window as any).voiceEngine) {
-                          (window as any).voiceEngine.initPipeline();
-                        }
-                        setBingoSoundEnabled(!bingoSoundEnabled);
-                      }}
-                      className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer flex items-center justify-center w-8 h-8 shrink-0 select-none animate-in fade-in duration-300"
-                      title={bingoSoundEnabled ? "Mute Caller Voice" : "Unmute Caller Voice"}
-                    >
-                      {bingoSoundEnabled ? <Volume2 className="w-4.5 h-4.5" /> : <VolumeX className="w-4.5 h-4.5 text-gray-400" />}
-                    </button>
-                  )}
-                  
-                  {activeTab !== 'keno' && !(activeTab === 'bingo' && selectedBingoRoomId && bingoRoomState?.status !== 'lobby') && (
-                    <button
-                      onClick={() => setActiveTab('profile')}
+                  <button
+                    onClick={() => setActiveTab('profile')}
                       className="p-0 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 transition-all active:scale-95 cursor-pointer relative w-8 h-8 flex items-center justify-center overflow-hidden shrink-0"
                     >
                       {photoUrl ? (
@@ -1225,7 +1253,6 @@ export default function App() {
                         <User className="w-4 h-4" />
                       )}
                     </button>
-                  )}
                 </div>
               </>
             )}
@@ -1805,7 +1832,15 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab('bingo')}
+              onClick={() => {
+                if (activeTab === 'bingo' && selectedBingoRoomId) {
+                  socket?.emit('bingo_leave', { roomId: selectedBingoRoomId, userId });
+                  setSelectedBingoRoomId(null);
+                  setBingoRoomState(null);
+                } else {
+                  setActiveTab('bingo');
+                }
+              }}
               className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 px-1 rounded-xl transition-all cursor-pointer ${
                 activeTab === 'bingo' 
                   ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-black' 
