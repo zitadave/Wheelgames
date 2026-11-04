@@ -26,7 +26,7 @@ let cachedBotSettings: BingoBotSettings = { ...DEFAULT_BINGO_BOT_SETTINGS };
 let isSettingsLoaded = false;
 
 // Rich & diverse Ethiopian Male names, Amharic fidels, funny phrases, and mixed styles
-const MALE_NAMES = [
+export const MALE_NAMES = [
   // --- Pure Amharic Fidels (የተለያዩ የአማርኛ ስሞች) ---
   "ዳዊት", "ዮሐንስ", "ሰለሞን", "ናትናኤል", "ቢንያም", "ሮቤል", "ኤርምያስ", "ካሌብ", "በረከት", "እዮብ",
   "ቴዎድሮስ", "ሄኖክ", "ሱራፌል", "ብሩክ", "አማኑኤል", "ያሬድ", "ኪዱስ", "አቤል", "ናሆም", "ተመስገን",
@@ -75,7 +75,7 @@ const MALE_NAMES = [
 ];
 
 // Rich & diverse Ethiopian Female names, Amharic fidels, funny & mixed styles
-const FEMALE_NAMES = [
+export const FEMALE_NAMES = [
   // --- Pure Amharic Fidels ---
   "ሰላም", "ቤተልሔም", "ሃና", "ትዕግስት", "ሔለን", "ራሔል", "ሊዲያ", "ሜሮን", "ጽዮን", "ሳሮን",
   "ሩት", "ኤደን", "ማርታ", "ህይወት", "ማህሌት", "ሶሲና", "ፍቅርተ", "ገነት", "ቅድስት", "ሄሊና",

