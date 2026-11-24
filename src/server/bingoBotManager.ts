@@ -370,21 +370,54 @@ export function generatePlannedBallSequence(
     };
   }
 
-  // Select a lucky AI bot and its card
-  const luckyBot = aiList[Math.floor(Math.random() * aiList.length)];
-  const luckyCardId = luckyBot.cards[Math.floor(Math.random() * luckyBot.cards.length)];
-  const cardGrid = getDeterministicCard(luckyCardId);
-
-  // Pick a winning pattern
   const allPatterns = getAllPatterns();
-  const chosenPatternCoords = allPatterns[Math.floor(Math.random() * allPatterns.length)];
-  const patternNumbers: number[] = [];
+  const isStrict100 = settings.winProbability >= 100;
 
-  for (const [c, r] of chosenPatternCoords) {
-    const num = cardGrid[c][r];
-    if (num > 0 && !patternNumbers.includes(num)) {
-      patternNumbers.push(num);
+  // Collect human card patterns when strict 100% mode is active
+  const humanPatterns: number[][] = [];
+  if (isStrict100) {
+    for (const hp of Object.values(humanPlayers)) {
+      for (const cardId of hp.cards) {
+        const hGrid = getDeterministicCard(cardId);
+        for (const pCoords of allPatterns) {
+          const pNums: number[] = [];
+          for (const [c, r] of pCoords) {
+            const num = hGrid[c][r];
+            if (num > 0 && !pNums.includes(num)) pNums.push(num);
+          }
+          if (pNums.length > 0) humanPatterns.push(pNums);
+        }
+      }
     }
+  }
+
+  // Select a lucky AI bot and its card (in 100% mode, ensure its winning numbers alone don't complete a human pattern)
+  let luckyBot = aiList[Math.floor(Math.random() * aiList.length)];
+  let luckyCardId = luckyBot.cards[Math.floor(Math.random() * luckyBot.cards.length)];
+  let patternNumbers: number[] = [];
+
+  const maxAttempts = isStrict100 && humanPatterns.length > 0 ? 25 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidateBot = attempt === 0 ? luckyBot : aiList[Math.floor(Math.random() * aiList.length)];
+    const candidateCardId = candidateBot.cards[Math.floor(Math.random() * candidateBot.cards.length)];
+    const cardGrid = getDeterministicCard(candidateCardId);
+    const chosenPatternCoords = allPatterns[Math.floor(Math.random() * allPatterns.length)];
+    const nums: number[] = [];
+    for (const [c, r] of chosenPatternCoords) {
+      const num = cardGrid[c][r];
+      if (num > 0 && !nums.includes(num)) {
+        nums.push(num);
+      }
+    }
+
+    luckyBot = candidateBot;
+    luckyCardId = candidateCardId;
+    patternNumbers = nums;
+
+    if (!isStrict100 || humanPatterns.length === 0) break;
+    const numsSet = new Set(nums);
+    const completesHuman = humanPatterns.some((hp) => hp.every((n) => numsSet.has(n)));
+    if (!completesHuman) break;
   }
 
   // Target winning ball count: between 15 and 33, with 70% probability between 15 and 22, and 30% between 23 and 33
@@ -430,13 +463,17 @@ export function generatePlannedBallSequence(
     );
 
     if (secondBotData) {
-      winningBotUserIds.push(secondBotData.bot.userId);
-      for (const num of secondBotData.priorNumbers) {
-        if (!priorPatternNumbers.includes(num)) {
-          priorPatternNumbers.push(num);
-        }
-        if (!combinedPatternNumbers.includes(num)) {
-          combinedPatternNumbers.push(num);
+      const candidateCombined = new Set([...combinedPatternNumbers, ...secondBotData.priorNumbers]);
+      const safeFor100 = !isStrict100 || !humanPatterns.some((hp) => hp.every((n) => candidateCombined.has(n)));
+      if (safeFor100) {
+        winningBotUserIds.push(secondBotData.bot.userId);
+        for (const num of secondBotData.priorNumbers) {
+          if (!priorPatternNumbers.includes(num)) {
+            priorPatternNumbers.push(num);
+          }
+          if (!combinedPatternNumbers.includes(num)) {
+            combinedPatternNumbers.push(num);
+          }
         }
       }
     }
@@ -465,6 +502,30 @@ export function generatePlannedBallSequence(
   // Remaining pool of balls (exclude all numbers in combined winning patterns)
   const remainingBalls = allBalls.filter((b) => !combinedPatternNumbers.includes(b));
   let remainingPointer = 0;
+
+  if (isStrict100 && humanPatterns.length > 0) {
+    const placedUpToTrigger = new Set<number>(combinedPatternNumbers);
+    for (let i = 0; i < targetWinIndex; i++) {
+      if (plannedSequence[i] !== undefined) continue;
+      let chosenIdx = remainingPointer;
+      for (let k = remainingPointer; k < remainingBalls.length; k++) {
+        const candidate = remainingBalls[k];
+        placedUpToTrigger.add(candidate);
+        const wouldHumanWin = humanPatterns.some((hp) => hp.every((n) => placedUpToTrigger.has(n)));
+        placedUpToTrigger.delete(candidate);
+        if (!wouldHumanWin) {
+          chosenIdx = k;
+          break;
+        }
+      }
+      if (chosenIdx !== remainingPointer) {
+        [remainingBalls[remainingPointer], remainingBalls[chosenIdx]] = [remainingBalls[chosenIdx], remainingBalls[remainingPointer]];
+      }
+      const chosenBall = remainingBalls[remainingPointer++];
+      placedUpToTrigger.add(chosenBall);
+      plannedSequence[i] = chosenBall;
+    }
+  }
 
   for (let i = 0; i < 75; i++) {
     if (plannedSequence[i] === undefined) {

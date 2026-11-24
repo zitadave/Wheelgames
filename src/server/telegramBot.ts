@@ -1462,8 +1462,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
 
 
   function renderMainControlPanel(chatId: number, messageId?: number) {
-    if (!isStartingAdmin(chatId)) {
-      bot.sendMessage(chatId, "❌ <b>Access Denied.</b>\n\nThis panel is restricted to the starting administrator of this bot.", { parse_mode: "HTML" });
+    if (!isAnyAdmin(chatId)) {
+      bot.sendMessage(chatId, "❌ <b>Access Denied.</b>\n\nThis panel is restricted to the administrator of this bot.", { parse_mode: "HTML" });
       return;
     }
     const channelId = getChannelId() || "⚠️ <b>NOT CONFIGURED</b>";
@@ -1489,6 +1489,9 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         [
           { text: "📢 Announcements", callback_data: "control_announcement_menu" },
           { text: "📌 Unpin All Broadcasts", callback_data: "control_unpin_all" }
+        ],
+        [
+          { text: "🗑 Delete All Channel Posts", callback_data: "control_channel_del_prompt" }
         ],
         [
           { text: "🔗 Command Links", callback_data: "control_links" },
@@ -1562,11 +1565,17 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
     const statusEmoji = s.enabled ? "🟢" : "🔴";
     const statusText = s.enabled ? "ንቁ (Active)" : "የታገደ (Disabled)";
 
+    const winProbNote = s.winProbability >= 100
+      ? "AI ሁልጊዜ ያሸንፋል / 0% የሰው ድል"
+      : s.winProbability >= 99
+        ? "1 የሰው ድል በየ ~100 ጨዋታ"
+        : "1 የሰው ድል በየ 70-80 ጨዋታ";
+
     let text = `🤖 <b>የቢንጎ AI ቦቶች መቆጣጠሪያ ፓናል (Bingo AI Control)</b>\n\n` +
                `👉 <b>ሁኔታ (Status):</b> ${statusEmoji} ${statusText}\n` +
                `👉 <b>የቦቶች ብዛት (Bot Count):</b> <code>${s.botCount >= 180 && s.botCount <= 260 ? "200 - 250 ተጫዋቾች (በጨዋታው ተለዋዋጭ)" : `${s.botCount} ተጫዋቾች`}</code>\n` +
                `👉 <b>የ2 ካርቴላ ምጣኔ (2-Card Selection):</b> <code>${s.twoCardsRatio || 55}%+</code>\n` +
-               `👉 <b>የማሸነፍ እድል (Win Probability):</b> <code>${s.winProbability}% (1 የሰው ድል በየ 70-80 ጨዋታ)</code>\n` +
+               `👉 <b>የማሸነፍ እድል (Win Probability):</b> <code>${s.winProbability}% (${winProbNote})</code>\n` +
                `👉 <b>አሸናፊ ኳስ ክልል (Win Ball Range):</b> <code>${s.minWinBall} - ${s.maxWinBall} ኳሶች (70% በ15-22)</code>\n` +
                `👉 <b>የወንዶች ስም ምጣኔ (Male Names):</b> <code>${s.maleRatio}%</code>\n\n` +
                `<i>ከታች ያሉትን ቁልፎች በመጫን ፈጣን ማስተካከያ ማድረግ ይችላሉ:</i>`;
@@ -1585,7 +1594,8 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
           { text: s.winProbability === 85 ? "✅ 85%" : "🎯 85%", callback_data: "b_bot_win:85" },
           { text: s.winProbability === 95 ? "✅ 95%" : "🎯 95%", callback_data: "b_bot_win:95" },
           { text: s.winProbability === 98 ? "✅ 98%" : "🎯 98%", callback_data: "b_bot_win:98" },
-          { text: s.winProbability === 99 ? "✅ 99%" : "🎯 99%", callback_data: "b_bot_win:99" }
+          { text: s.winProbability === 99 ? "✅ 99%" : "🎯 99%", callback_data: "b_bot_win:99" },
+          { text: s.winProbability === 100 ? "✅ 100%" : "🎯 100%", callback_data: "b_bot_win:100" }
         ],
         [
           { text: "🔙 ወደ ዝርዝር", callback_data: "game_set_back_list" }
@@ -2034,6 +2044,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
               `<i>(Ensure the bot is an administrator in this channel)</i>`;
 
       buttons.push([{ text: "🆔 Set Channel ID", callback_data: "cmd_ann_set_channel" }, { text: "📌 Unpin All Broadcasts", callback_data: "control_unpin_all" }]);
+      buttons.push([{ text: "🗑 Delete All Channel Posts", callback_data: "control_channel_del_prompt" }]);
       buttons.push([{ text: "⚙️ Manage Full Announcements Dashboard", callback_data: "control_announcements" }]);
       buttons.push([{ text: "🔙 Back to Control Panel", callback_data: "control_back" }]);
 
@@ -3206,19 +3217,25 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         await renderAnnouncementCmdPanel(chatId);
         return;
       }
-      if (cmdName === "announcement_delete") {
+      if (cmdName === "delete_all_channel_posts" || cmdName === "clear_channel" || cmdName === "delete_channel_posts") {
         if (!isAnyAdmin(userIdNum)) return bot.sendMessage(chatId, "❌ Access Denied.");
-        const id = commandParts[1];
-        if (!id) return bot.sendMessage(chatId, "Please specify an ID. Usage: /announcement_delete <id>");
-        let anns = loadAnnouncements();
-        const initialLen = anns.length;
-        anns = anns.filter(a => a.id !== id);
-        if (anns.length < initialLen) {
-          saveAnnouncements(anns);
-          await bot.sendMessage(chatId, `✅ Announcement ${id} deleted.`);
-        } else {
-          await bot.sendMessage(chatId, `❌ Announcement ${id} not found.`);
-        }
+        const channelId = getChannelId() || "<i>Not Set</i>";
+        const confirmText = `⚠️ <b>WARNING: DELETE ALL CHANNEL POSTS</b> ⚠️\n\n` +
+          `🎯 <b>Target Channel:</b> <code>${channelId}</code>\n\n` +
+          `ይህ ትዕዛዝ በቻናሉ ላይ የተለጠፉትን ማስታወቂያዎች፣ የማሸነፊያ ማረጋገጫዎችና ፖስቶች በሙሉ ጠራርጎ ያጠፋቸዋል (ለተጠቃሚዎች በሙሉ ይጠፋል)።\n\n` +
+          `<i>Are you sure you want to permanently delete all announcements and messages in this channel?</i>`;
+
+        const confirmKeyboard = {
+          inline_keyboard: [
+            [
+              { text: "🔴 አዎ አጥፋ (Yes, Delete All)", callback_data: "control_channel_del_confirm" }
+            ],
+            [
+              { text: "🔙 Cancel / Back", callback_data: "control_announcement_menu" }
+            ]
+          ]
+        };
+        await bot.sendMessage(chatId, confirmText, { parse_mode: "HTML", reply_markup: confirmKeyboard });
         return;
       }
       if (cmdName === "broadcast") {
@@ -3270,7 +3287,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
         const isAdmin = isAnyAdmin(userIdNum);
         
         if (cmdName === "control") {
-           if (isActuallyStartingAdmin) {
+           if (isAdmin) {
              renderMainControlPanel(chatId);
            } else {
              // Security Alert for non-admins trying to access control
@@ -3278,7 +3295,7 @@ export async function initTelegramBot(io: Server): Promise<string | null> {
              const startingAdminId = getPrimaryOwnerId();
              const alertMsg = `🚨 <b>Security Alert!</b>\n\nNon-admin user <b>${username}</b> with UserId: <code>${userId}</code> tried to access <code>/control</code> command.\n\nThis attempt has been blocked.`;
              await bot.sendMessage(startingAdminId, alertMsg, { parse_mode: "HTML" });
-             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to the starting administrator of this bot.`, { parse_mode: "HTML" });
+             await bot.sendMessage(chatId, `❌ <b>Access Denied.</b>\n\nThis command is restricted to administrators of this bot.`, { parse_mode: "HTML" });
            }
         } else if (cmdName === "reload_config") {
            if (isAnyAdmin(userId)) {
@@ -6204,6 +6221,163 @@ const withdrawalCooldowns = new Map<string, number>();
         logBot(`Error unpinning: ${e}`);
         await bot.answerCallbackQuery(query.id, { text: `❌ Error unpinning: ${e}` });
       }
+      return;
+    }
+
+    if (data === "control_channel_del_prompt") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      await bot.answerCallbackQuery(query.id);
+      const channelId = getChannelId() || "<i>Not Set</i>";
+      const confirmText = `⚠️ <b>WARNING: DELETE ALL CHANNEL POSTS</b> ⚠️\n\n` +
+        `🎯 <b>Target Channel:</b> <code>${channelId}</code>\n\n` +
+        `ይህ ትዕዛዝ በቻናሉ ላይ የተለጠፉትን ማስታወቂያዎች፣ የማሸነፊያ ማረጋገጫዎችና ፖስቶች በሙሉ ጠራርጎ ያጠፋቸዋል (ለተጠቃሚዎች በሙሉ ይጠፋል)።\n\n` +
+        `<i>Are you sure you want to permanently delete all announcements and messages in this channel?</i>`;
+
+      const confirmKeyboard = {
+        inline_keyboard: [
+          [
+            { text: "🔴 አዎ አጥፋ (Yes, Delete All)", callback_data: "control_channel_del_confirm" }
+          ],
+          [
+            { text: "🔙 Cancel / Back", callback_data: "control_announcement_menu" }
+          ]
+        ]
+      };
+
+      if (messageId) {
+        await bot.editMessageText(confirmText, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: confirmKeyboard })
+          .catch(() => bot.sendMessage(chatId, confirmText, { parse_mode: "HTML", reply_markup: confirmKeyboard }));
+      } else {
+        await bot.sendMessage(chatId, confirmText, { parse_mode: "HTML", reply_markup: confirmKeyboard });
+      }
+      return;
+    }
+
+    if (data === "control_channel_del_confirm") {
+      if (!isAnyAdmin(userId)) {
+        bot.answerCallbackQuery(query.id, { text: "❌ Access Denied" });
+        return;
+      }
+      const channelId = getChannelId();
+      if (!channelId || channelId === "⚠️ <b>NOT CONFIGURED</b>") {
+        await bot.answerCallbackQuery(query.id, { text: "❌ Channel not configured" });
+        return;
+      }
+
+      await bot.answerCallbackQuery(query.id, { text: "🧹 Deleting channel posts..." });
+      
+      const statusMsg = await bot.sendMessage(chatId, `⏳ <b>Scanning and deleting all channel posts...</b>\n\n` +
+        `🎯 <b>Channel:</b> <code>${channelId}</code>\n` +
+        `• Deleted so far: <code>0</code>\n` +
+        `<i>Please wait while posts are being removed...</i>`, { parse_mode: "HTML" });
+
+      // Run bulk deletion in background
+      (async () => {
+        let totalDeleted = 0;
+        let highestMsgId = 0;
+
+        // Step 1: Verify Bot Admin and Deletion Rights in Channel
+        try {
+          const me = await bot.getMe();
+          const member = await bot.getChatMember(channelId, me.id);
+          logBot(`[ChannelDel] Bot status in ${channelId}: ${member.status}, can_delete_messages: ${member.can_delete_messages}`);
+          if (member.status !== "administrator" && member.status !== "creator") {
+            await bot.editMessageText(`❌ <b>ቦቱ በቻናሉ አድሚን አይደለም!</b>\n\nእባክዎ ቦቱን በቻናሉ (<code>${channelId}</code>) ውስጥ አድሚን አድርገው <b>"Delete messages"</b> ፍቃድ ይስጡት።`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" }).catch(() => {});
+            return;
+          }
+          if (member.status === "administrator" && member.can_delete_messages === false) {
+            await bot.editMessageText(`❌ <b>የመልዕክት ማጥፋት ፍቃድ የለም!</b>\n\nቦቱ በቻናሉ ውስጥ አድሚን ነው ነገር ግን <b>"Delete messages"</b> ፍቃድ አልተሰጠውም። እባክዎ ፍቃዱን ያብሩለት።`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" }).catch(() => {});
+            return;
+          }
+        } catch (memberErr: any) {
+          logBot(`[ChannelDel] Warning checking bot status: ${memberErr.message}`);
+          // Proceed anyway in case getChatMember is restricted
+        }
+
+        try {
+          // Send a temporary beacon message to the channel to get current latest message ID
+          const beacon = await bot.sendMessage(channelId, "🧹 <i>Clearing channel announcements...</i>", { parse_mode: "HTML", disable_notification: true });
+          highestMsgId = beacon.message_id;
+          logBot(`[ChannelDel] Highest message ID found: ${highestMsgId}`);
+          
+          // Delete beacon
+          await bot.deleteMessage(channelId, beacon.message_id).catch(() => {});
+          totalDeleted++;
+        } catch (beaconErr: any) {
+          logBot(`[ChannelDel] Failed to send beacon to channel ${channelId}: ${beaconErr.message}`);
+          await bot.editMessageText(`❌ <b>ወደ ቻናሉ መድረስ አልተቻለም:</b>\n<code>${beaconErr.message}</code>\n\n<i>እባክዎ ቦቱ በቻናሉ ውስጥ አድሚን መሆኑን እና መልዕክት የመለጠፍ እንዲሁም የማጥፋት ፍቃድ እንዳለው ያረጋግጡ።</i>`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" }).catch(() => {});
+          return;
+        }
+
+        // Step 2: Delete backwards using small concurrent chunks with deleteMessage
+        // We scan thoroughly from highestMsgId down to message 1 so no posts are missed.
+        const CONCURRENT_CHUNK = 20;
+        let lastReportedCount = 0;
+        let reportedTotal = 0; // Exclude the beacon from user-facing deletion count
+
+        for (let currentId = highestMsgId - 1; currentId >= 1; currentId -= CONCURRENT_CHUNK) {
+          const chunkIds: number[] = [];
+          for (let i = 0; i < CONCURRENT_CHUNK && (currentId - i) >= 1; i++) {
+            chunkIds.push(currentId - i);
+          }
+
+          if (chunkIds.length === 0) break;
+
+          const results = await Promise.allSettled(
+            chunkIds.map(async id => {
+              try {
+                await bot.deleteMessage(channelId, id);
+                return true;
+              } catch (delErr: any) {
+                const errStr = delErr?.message || String(delErr);
+                if (!errStr.includes("message to delete not found") && !errStr.includes("Bad Request: message can't be deleted")) {
+                  logBot(`[ChannelDel] Notice on msgId ${id}: ${errStr}`);
+                }
+                return false;
+              }
+            })
+          );
+
+          for (const res of results) {
+            if (res.status === "fulfilled" && res.value === true) {
+              totalDeleted++;
+              reportedTotal++;
+            }
+          }
+
+          // Update admin progress every ~20 messages checked
+          if (reportedTotal !== lastReportedCount && (reportedTotal % 10 === 0 || currentId <= 20)) {
+            lastReportedCount = reportedTotal;
+            await bot.editMessageText(`⏳ <b>Scanning and deleting channel posts...</b>\n\n` +
+              `🎯 <b>Channel:</b> <code>${channelId}</code>\n` +
+              `• Current Message ID: <code>#${currentId}</code>\n` +
+              `• Successfully Deleted: <b>${reportedTotal}</b>`, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML" }).catch(() => {});
+          }
+
+          // 20ms delay to stay well within Telegram limits (30 req/sec)
+          await new Promise(r => setTimeout(r, 20));
+        }
+
+        const finishText = `✅ <b>Channel Clean-Up Completed!</b> 🗑\n\n` +
+          `🎯 <b>Channel:</b> <code>${channelId}</code>\n` +
+          `• Total Posts & Messages Deleted: <b>${totalDeleted}</b>\n\n` +
+          `<i>All matching announcements, proofs, and channel messages have been cleared for all users.</i>`;
+
+        const returnKeyboard = {
+          inline_keyboard: [
+            [{ text: "🔙 Return to Announcements Panel", callback_data: "control_announcement_menu" }],
+            [{ text: "🏠 Control Panel", callback_data: "control_back" }]
+          ]
+        };
+
+        await bot.editMessageText(finishText, { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "HTML", reply_markup: returnKeyboard }).catch(() => {});
+      })().catch(err => {
+        logBot(`[ChannelDel] Critical Error during channel deletion: ${err.message || err}`);
+      });
+
       return;
     }
 
