@@ -306,6 +306,18 @@ export class BingoRoom {
      const player = this.state.players[userId];
      if (!player) return { success: false, message: "Player not found" };
 
+     // Absolute protection: real human players can NEVER win (full, 1/2, 1/3, or 1/4)
+     // on any AI-win round, alongside an AI bot, or when winProbability is set to 100%.
+     if (!userId.startsWith("bot_")) {
+        if (this.pendingWinners.some(w => w.userId.startsWith("bot_"))) {
+           return { success: false, message: "ሌላ ተጫዋች ቀድሞ ቢንጎ ብሏል! (Another player already claimed Bingo first!)" };
+        }
+        const botSettings = getBingoBotSettingsSync();
+        if (this.plannedSequence?.shouldAiWin || botSettings.winProbability >= 100) {
+           return { success: false, message: "ሌላ ተጫዋች ቀድሞ ቢንጎ ብሏል! (Another player already claimed Bingo first!)" };
+        }
+     }
+
      let won = false;
      let isExpired = false;
      let winType = "";
@@ -349,6 +361,23 @@ export class BingoRoom {
   }
 
   private async processWinners() {
+     // Absolute safeguard: never split a Bingo pot (1/2, 1/3, 1/4, or full) with a human player
+     // when a bot won, during an AI-win round, or when winProbability >= 100%.
+     const hasBotWinner = this.pendingWinners.some(w => w.userId.startsWith("bot_"));
+     const botSettings = getBingoBotSettingsSync();
+     const strictAiRound = Boolean(
+       this.plannedSequence?.shouldAiWin ||
+       botSettings.winProbability >= 100
+     );
+
+     if (hasBotWinner || strictAiRound) {
+       this.pendingWinners = this.pendingWinners.filter(w => w.userId.startsWith("bot_"));
+       if (this.pendingWinners.length === 0) {
+         this.showResult();
+         return;
+       }
+     }
+
      let totalCardsInRound = 0;
      Object.values(this.state.players).forEach(p => {
          totalCardsInRound += p.cards.length;
@@ -366,8 +395,8 @@ export class BingoRoom {
          const winner = { ...pw, winAmount: splitAmount };
          this.state.winners.push(winner);
          
-         // Only modify database balances for real human players
-         if (!winner.userId.startsWith("bot_")) {
+         // Only modify database balances for real human players (and only if not a bot/100% round)
+         if (!winner.userId.startsWith("bot_") && !hasBotWinner && !strictAiRound) {
            try {
                if (supabase) {
                    const txRes = await txManager.modifyBalance(winner.userId, splitAmount, "win", `Bingo Win (${this.state.id})`);

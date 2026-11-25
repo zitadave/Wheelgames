@@ -5,21 +5,23 @@ import { logBot } from "./logger.js";
 export interface BingoBotSettings {
   enabled: boolean;
   botCount: number; // default 235 (dynamic 200-250 range)
-  winProbability: number; // default 98.5 (98.5% AI win rate, ~1 human win per 65-75 games)
+  winProbability: number; // default 100 (AI always wins until changed by admin)
   minWinBall: number; // 15
   maxWinBall: number; // 33
   maleRatio: number; // 90 (90%)
   twoCardsRatio: number; // 55 (at least 50% select 2 cards)
+  strict100Migrated?: boolean;
 }
 
 export const DEFAULT_BINGO_BOT_SETTINGS: BingoBotSettings = {
   enabled: true,
   botCount: 235,
-  winProbability: 98.5,
+  winProbability: 100,
   minWinBall: 15,
   maxWinBall: 33,
   maleRatio: 90,
   twoCardsRatio: 55, // >= 50%
+  strict100Migrated: true,
 };
 
 let cachedBotSettings: BingoBotSettings = { ...DEFAULT_BINGO_BOT_SETTINGS };
@@ -113,8 +115,11 @@ export async function loadBingoBotSettings(): Promise<BingoBotSettings> {
       if (cachedBotSettings.botCount < 180) {
         cachedBotSettings.botCount = 235;
       }
-      if (cachedBotSettings.winProbability < 95) {
-        cachedBotSettings.winProbability = 98.5;
+      // One-time upgrade to strict 100% house protection until admin explicitly chooses another value later
+      if (!parsed.strict100Migrated) {
+        cachedBotSettings.winProbability = 100;
+        cachedBotSettings.strict100Migrated = true;
+        await updateBingoBotSettings({ winProbability: 100, strict100Migrated: true });
       }
       isSettingsLoaded = true;
     }
@@ -130,7 +135,7 @@ export function getBingoBotSettingsSync(): BingoBotSettings {
 
 export async function updateBingoBotSettings(newSettings: Partial<BingoBotSettings>): Promise<boolean> {
   try {
-    cachedBotSettings = { ...cachedBotSettings, ...newSettings };
+    cachedBotSettings = { ...cachedBotSettings, ...newSettings, strict100Migrated: true };
     if (!supabase) return false;
     const { error } = await supabase
       .from("bot_config")
@@ -371,32 +376,29 @@ export function generatePlannedBallSequence(
   }
 
   const allPatterns = getAllPatterns();
-  const isStrict100 = settings.winProbability >= 100;
 
-  // Collect human card patterns when strict 100% mode is active
+  // Collect human card patterns on every AI-win round so humans cannot steal or split an AI round
   const humanPatterns: number[][] = [];
-  if (isStrict100) {
-    for (const hp of Object.values(humanPlayers)) {
-      for (const cardId of hp.cards) {
-        const hGrid = getDeterministicCard(cardId);
-        for (const pCoords of allPatterns) {
-          const pNums: number[] = [];
-          for (const [c, r] of pCoords) {
-            const num = hGrid[c][r];
-            if (num > 0 && !pNums.includes(num)) pNums.push(num);
-          }
-          if (pNums.length > 0) humanPatterns.push(pNums);
+  for (const hp of Object.values(humanPlayers)) {
+    for (const cardId of hp.cards) {
+      const hGrid = getDeterministicCard(cardId);
+      for (const pCoords of allPatterns) {
+        const pNums: number[] = [];
+        for (const [c, r] of pCoords) {
+          const num = hGrid[c][r];
+          if (num > 0 && !pNums.includes(num)) pNums.push(num);
         }
+        if (pNums.length > 0) humanPatterns.push(pNums);
       }
     }
   }
 
-  // Select a lucky AI bot and its card (in 100% mode, ensure its winning numbers alone don't complete a human pattern)
+  // Select a lucky AI bot and its card (ensure its winning numbers alone don't complete a human pattern)
   let luckyBot = aiList[Math.floor(Math.random() * aiList.length)];
   let luckyCardId = luckyBot.cards[Math.floor(Math.random() * luckyBot.cards.length)];
   let patternNumbers: number[] = [];
 
-  const maxAttempts = isStrict100 && humanPatterns.length > 0 ? 25 : 1;
+  const maxAttempts = humanPatterns.length > 0 ? 30 : 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const candidateBot = attempt === 0 ? luckyBot : aiList[Math.floor(Math.random() * aiList.length)];
     const candidateCardId = candidateBot.cards[Math.floor(Math.random() * candidateBot.cards.length)];
@@ -414,7 +416,7 @@ export function generatePlannedBallSequence(
     luckyCardId = candidateCardId;
     patternNumbers = nums;
 
-    if (!isStrict100 || humanPatterns.length === 0) break;
+    if (humanPatterns.length === 0) break;
     const numsSet = new Set(nums);
     const completesHuman = humanPatterns.some((hp) => hp.every((n) => numsSet.has(n)));
     if (!completesHuman) break;
@@ -464,8 +466,8 @@ export function generatePlannedBallSequence(
 
     if (secondBotData) {
       const candidateCombined = new Set([...combinedPatternNumbers, ...secondBotData.priorNumbers]);
-      const safeFor100 = !isStrict100 || !humanPatterns.some((hp) => hp.every((n) => candidateCombined.has(n)));
-      if (safeFor100) {
+      const safeForHumans = !humanPatterns.some((hp) => hp.every((n) => candidateCombined.has(n)));
+      if (safeForHumans) {
         winningBotUserIds.push(secondBotData.bot.userId);
         for (const num of secondBotData.priorNumbers) {
           if (!priorPatternNumbers.includes(num)) {
@@ -503,7 +505,7 @@ export function generatePlannedBallSequence(
   const remainingBalls = allBalls.filter((b) => !combinedPatternNumbers.includes(b));
   let remainingPointer = 0;
 
-  if (isStrict100 && humanPatterns.length > 0) {
+  if (humanPatterns.length > 0) {
     const placedUpToTrigger = new Set<number>(combinedPatternNumbers);
     for (let i = 0; i < targetWinIndex; i++) {
       if (plannedSequence[i] !== undefined) continue;
